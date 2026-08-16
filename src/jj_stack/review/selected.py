@@ -286,7 +286,6 @@ def _project_rows(
             selected_revset=selected_revset,
             selector_revisions=candidates,
             select_mutable_copy=select_mutable_copy,
-            tracked_change_ids=frozenset(state.review_identities),
             trunk=trunk,
         )
     )
@@ -343,7 +342,6 @@ def _replace_selected_revset(
     return SelectedReviewPath(
         is_maximal=path.is_maximal,
         stack=path.stack.model_copy(update={"selected_revset": selected_revset}),
-        tracked_change_ids=path.tracked_change_ids,
     )
 
 

@@ -298,6 +298,33 @@ class JjClient:
                     grouped.setdefault(revision.change_id, []).append(projected)
         return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
 
+    def query_revisions_by_change_ids_with_off_trunk(
+        self,
+        change_ids: Sequence[str],
+    ) -> tuple[
+        dict[str, tuple[LocalRevision, ...]],
+        dict[str, tuple[LocalRevision, ...]],
+    ]:
+        """Return all visible copies and the subset outside trunk in one scan."""
+
+        ordered = tuple(dict.fromkeys(change_ids))
+        all_copies: dict[str, list[LocalRevision]] = {change_id: [] for change_id in ordered}
+        off_trunk: dict[str, list[LocalRevision]] = {change_id: [] for change_id in ordered}
+        for chunk in _chunked(ordered):
+            rows = self._query_revisions_with_membership(
+                _change_ids_revset(chunk),
+                membership_revsets=("~first_ancestors(trunk())",),
+            )
+            for revision, (is_off_trunk,) in rows:
+                if projected := self._project(revision):
+                    all_copies.setdefault(revision.change_id, []).append(projected)
+                    if is_off_trunk:
+                        off_trunk.setdefault(revision.change_id, []).append(projected)
+        return (
+            {change_id: tuple(all_copies[change_id]) for change_id in ordered},
+            {change_id: tuple(off_trunk[change_id]) for change_id in ordered},
+        )
+
     def query_revisions_by_commit_ids(
         self,
         commit_ids: Sequence[str],
@@ -964,31 +991,23 @@ class JjClient:
 
         self._run_jj(("edit", commit_id), manage_working_copy=True)
 
-    def rebase_revisions_only(
+    def rebase_exact_revisions(
         self,
         *,
         revisions: Sequence[str],
         destination: str,
     ) -> None:
-        """Rebase named revisions and any empty working-copy children together."""
+        """Rebase exactly the named revisions onto one destination."""
 
         ordered_revisions = list(dict.fromkeys(revisions))
         if not ordered_revisions:
             return
-        selected_head = ordered_revisions[-1]
-        ordered_revisions.extend(
-            revision.commit_id
-            for revision in self.query_descendant_revisions((selected_head,))
-            if revision.is_working_copy
-            and revision.empty
-            and revision.parents == (selected_head,)
-        )
         self._run_jj(
             ("rebase", "-r", "|".join(ordered_revisions), "-d", destination),
             manage_working_copy=True,
         )
 
-    def prepare_rebase_revisions_only(
+    def prepare_rebase_exact_revisions(
         self,
         *,
         revisions: Sequence[str],
@@ -999,14 +1018,6 @@ class JjClient:
         ordered_revisions = list(dict.fromkeys(revisions))
         if not ordered_revisions:
             raise ValueError("speculative rebase requires at least one revision")
-        selected_head = ordered_revisions[-1]
-        ordered_revisions.extend(
-            revision.commit_id
-            for revision in self.query_descendant_revisions((selected_head,))
-            if revision.is_working_copy
-            and revision.empty
-            and revision.parents == (selected_head,)
-        )
         output = self._run_jj(
             (
                 "--no-integrate-operation",

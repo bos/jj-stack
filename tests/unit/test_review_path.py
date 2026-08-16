@@ -12,7 +12,7 @@ from jj_stack.review.path import (
 )
 
 
-def test_selected_path_is_order_independent_and_tracking_only_annotates() -> None:
+def test_selected_path_is_order_independent() -> None:
     trunk = _revision("trunk", "trunk-change", parents=("root",), immutable=True)
     bottom = _revision("bottom", "bottom-change", parents=("trunk",))
     head = _revision("head", "head-change", parents=("bottom",))
@@ -22,7 +22,6 @@ def test_selected_path_is_order_independent_and_tracking_only_annotates() -> Non
         _observation(
             head=head,
             revisions=(unrelated, head, trunk, bottom),
-            tracked_change_ids=frozenset({"head-change"}),
             trunk=trunk,
         )
     )
@@ -30,15 +29,12 @@ def test_selected_path_is_order_independent_and_tracking_only_annotates() -> Non
         _observation(
             head=head,
             revisions=(bottom, trunk, unrelated, head),
-            tracked_change_ids=frozenset({"bottom-change", "other-change"}),
             trunk=trunk,
         )
     )
 
     assert [revision.commit_id for revision in first.stack.revisions] == ["bottom", "head"]
     assert [revision.commit_id for revision in reordered.stack.revisions] == ["bottom", "head"]
-    assert first.tracked_change_ids == frozenset({"head-change"})
-    assert reordered.tracked_change_ids == frozenset({"bottom-change"})
 
 
 def test_selected_path_uses_mutable_copy_beside_fetched_rebase_result() -> None:
@@ -200,7 +196,6 @@ def _observation(
     fetched_trunk_commit_ids: frozenset[str] | None = None,
     select_mutable_copy: bool = False,
     selector_revisions: tuple[LocalRevision, ...] | None = None,
-    tracked_change_ids: frozenset[str] = frozenset(),
 ) -> SelectedPathObservation:
     return SelectedPathObservation(
         candidate_commit_ids=frozenset(
@@ -212,7 +207,6 @@ def _observation(
         selected_revset=head.change_id,
         selector_revisions=selector_revisions or (head,),
         select_mutable_copy=select_mutable_copy,
-        tracked_change_ids=tracked_change_ids,
         trunk=trunk,
     )
 

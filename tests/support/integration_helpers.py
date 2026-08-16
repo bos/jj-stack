@@ -45,7 +45,6 @@ _SUBMIT_CONFIG_MODULES = (
     "jj_stack.commands.unstack",
     "jj_stack.commands.cleanup.command",
     "jj_stack.commands.merge.command",
-    "jj_stack.review.finish",
     "jj_stack.review.status",
 )
 

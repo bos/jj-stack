@@ -7,6 +7,7 @@ them, since that says nothing about the trunk this repository fetched.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -125,21 +126,15 @@ def classify_rewritten_result(
     return TrunkEvidence.proven()
 
 
-def collect_trunk_evidence(
+def classify_proven_kind(
     *,
+    ancestries: Mapping[str, CommitAncestry],
     candidate: TrackedReview,
-    context: CommandContext,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
-    trunk_commit_id: str,
-) -> tuple[TrunkEvidence, TrunkEvidence]:
-    """Collect both distinct classifications from one current PR and trunk."""
+) -> tuple[TrunkEvidenceKind | None, Message]:
+    """Classify both proof routes from one previously batched ancestry observation."""
 
-    ancestries = classify_commit_ancestries(
-        commit_ids=(candidate.submitted_baseline.commit_id, pull_request.merge_commit_sha),
-        context=context,
-        trunk_commit_id=trunk_commit_id,
-    )
     exact = classify_exact_snapshot(
         ancestry=ancestries[candidate.submitted_baseline.commit_id],
         candidate=candidate,
@@ -151,30 +146,6 @@ def collect_trunk_evidence(
         merge_result_ancestry=ancestries.get(pull_request.merge_commit_sha or ""),
         pull_request=pull_request,
         repository=repository,
-    )
-    return exact, rewritten
-
-
-def proven_kind(
-    *,
-    candidate: TrackedReview,
-    context: CommandContext,
-    pull_request: GithubPullRequest,
-    repository: GithubRepoAddress,
-    trunk_commit_id: str,
-) -> tuple[TrunkEvidenceKind | None, Message]:
-    """Return which route proves the work is on trunk, plus why none of them did.
-
-    Both sync paths ask this and then decide for themselves whether an unproven answer is fatal,
-    so the routes are ranked here rather than in each of them.
-    """
-
-    exact, rewritten = collect_trunk_evidence(
-        candidate=candidate,
-        context=context,
-        pull_request=pull_request,
-        repository=repository,
-        trunk_commit_id=trunk_commit_id,
     )
     if exact.on_trunk:
         return "exact", ""

@@ -43,52 +43,50 @@ Use plain `jj rebase` when trunk merely advanced and GitHub did not rewrite the 
 from __future__ import annotations
 
 import asyncio
-from contextlib import nullcontext
+import shlex
+import sys
 from pathlib import Path
 
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands.cleanup.command import cleanup_tracked_reviews
-from jj_stack.commands.submit.command import run_submit_async
-from jj_stack.commands.submit.models import SubmitOptions
-from jj_stack.commands.submit.render import print_selected_line, print_submit_result
-from jj_stack.commands.sync_global import run_global_recovery
+from jj_stack.commands.submit.render import print_selected_line
+from jj_stack.commands.sync_apply import apply_review_finishes, apply_selected_convergence
 from jj_stack.errors import (
     CliError,
-    ConflictedStackError,
     UsageError,
     error_hint,
     error_message,
     resolve_exit_code,
 )
-from jj_stack.github.client import GithubClient, build_github_client
-from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
+from jj_stack.github.client import GithubClientError, build_github_client
+from jj_stack.github.resolution import GithubTarget, resolve_github_target, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import UnsupportedStackError
-from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import SubmittedBaseline
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.convergence import (
-    SelectedConvergencePlan,
+    CheckedOutMergedChangeError,
     build_selected_convergence_plan,
-    rewritten_removal_blocker,
 )
-from jj_stack.review.finish import (
-    FinishContext,
-    ReviewFinishResult,
-    finish_reviews,
-    render_finish_results,
+from jj_stack.review.convergence_models import GithubStackRebasePlan, SelectedConvergencePlan
+from jj_stack.review.convergence_observation import (
+    complete_sync_observation,
+    queued_pull_numbers,
 )
-from jj_stack.review.github_stack_rebase import recover_github_stack_rebase
-from jj_stack.review.github_stack_sync import (
+from jj_stack.review.global_convergence import (
+    build_global_convergence_plan,
+    observe_global_sync,
+)
+from jj_stack.review.observation import (
+    RepositoryObservation,
     observe_github_stacks,
-    resolve_selected_github_stack_observation,
+    observe_reviews,
 )
-from jj_stack.review.observation import RepositoryObservation, observe_reviews
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
-from jj_stack.review.trunk_evidence import TrackedReview
+from jj_stack.review.trunk_evidence import classify_commit_ancestries
 from jj_stack.state.operation_lock import acquire_operation_lock
+from jj_stack.ui import Message
 
 HELP = "Apply completed GitHub merges locally and refresh the pull requests that remain"
 
@@ -120,9 +118,35 @@ def sync(
 
 
 def _run_all_convergence(*, context: CommandContext, dry_run: bool) -> int:
-    result = asyncio.run(run_global_recovery(context=context, dry_run=dry_run))
-    exit_code = result.exit_code
-    for change_id in result.sync_change_ids:
+    target = resolve_github_target(context.jj_client.list_git_remotes())
+    if not isinstance(target, GithubTarget):
+        raise CliError(
+            target.github_repository_error or "Could not resolve GitHub target.",
+            hint=t"Point jj-stack at a GitHub remote, then rerun. "
+            t"{ui.cmd('jj-stack doctor')} reports what it found.",
+        )
+    with console.spinner(description="Fetching trunk") as progress:
+        previous_trunk = context.jj_client.resolve_revision("trunk()")
+        branches = tuple(
+            branch
+            for branch in context.jj_client.remote_bookmarks_at_revision(
+                remote=target.remote.name,
+                revision=previous_trunk.commit_id,
+            )
+            if not context.review_namespace.contains(branch)
+        )
+        context.jj_client.fetch_remote(branches=branches, remote=target.remote.name)
+        progress.update("Comparing pull requests with trunk")
+        trunk = context.jj_client.resolve_revision("trunk()")
+    exit_code, change_ids, trunk_branch = asyncio.run(
+        _run_global_plan(
+            context=context,
+            dry_run=dry_run,
+            target=target,
+            trunk_commit_id=trunk.commit_id,
+        )
+    )
+    for change_id in change_ids:
         console.output(t"Syncing local stack {ui.change_id(change_id[:8])}:")
         try:
             stack_exit_code = run_stack_convergence(
@@ -130,7 +154,7 @@ def _run_all_convergence(*, context: CommandContext, dry_run: bool) -> int:
                 dry_run=dry_run,
                 fetch_remote_state=False,
                 revset=change_id,
-                trunk_branch=result.trunk_branch,
+                trunk_branch=trunk_branch,
             )
         except CliError as error:
             console.error(
@@ -148,6 +172,77 @@ def _run_all_convergence(*, context: CommandContext, dry_run: bool) -> int:
             if exit_code == 0:
                 exit_code = stack_exit_code
     return exit_code
+
+
+async def _run_global_plan(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    target: GithubTarget,
+    trunk_commit_id: str,
+) -> tuple[int, tuple[str, ...], str | None]:
+    async with build_github_client(repository=target.repository) as github:
+        try:
+            facts = await observe_global_sync(
+                context=context,
+                github=github,
+                remote_name=target.remote.name,
+                trunk_commit_id=trunk_commit_id,
+            )
+        except GithubClientError as error:
+            raise CliError("Could not inspect pull requests") from error
+        state = context.state_store.load()
+        plan = build_global_convergence_plan(
+            facts=facts,
+            repository=target.repository,
+            state=state,
+        )
+        for candidate, reason in plan.blocked:
+            console.warning(
+                t"Skipped PR #{candidate.review_identity.pr_number} for "
+                t"{ui.change_id(candidate.change_id)}: {reason}."
+            )
+        required = bool(plan.finishes or plan.sync_change_ids)
+        trunk_branch = None
+        if required:
+            repository_state = facts.reviews.github_repository
+            if repository_state is None:
+                raise AssertionError("Global sync requires GitHub repository state.")
+            trunk_branch, _targets = resolve_trunk_branch(
+                client=context.jj_client,
+                github_repository_state=repository_state,
+                namespace=context.review_namespace,
+                remote=target.remote,
+                trunk_commit_id=trunk_commit_id,
+            )
+        results = (
+            await apply_review_finishes(
+                plans=plan.finishes,
+                dry_run=dry_run,
+                github=github,
+                trunk_branch=trunk_branch,
+            )
+            if trunk_branch is not None
+            else ()
+        )
+        cleanup = await cleanup_tracked_reviews(
+            change_ids=tuple(
+                result.candidate.change_id for result in results if result.outcome != "skipped"
+            ),
+            context=context,
+            dry_run=dry_run,
+            github_client=github,
+            github_target=target,
+            planned_detached_dependents=frozenset(
+                result.candidate.review_identity.pr_number for result in results
+            ),
+        )
+    blocked = (
+        bool(plan.blocked)
+        or any(result.outcome == "skipped" for result in results)
+        or any(action.status == "blocked" for action in cleanup.actions)
+    )
+    return 1 if blocked else 0, plan.sync_change_ids, trunk_branch
 
 
 def run_stack_convergence(
@@ -171,14 +266,23 @@ def run_stack_convergence(
     if print_selected and prepared_status.prepared.stack.revisions:
         head = prepared_status.prepared.stack.head
         print_selected_line(head.change_id, head.subject)
-    return asyncio.run(
-        _run_selected_convergence(
-            context=context,
-            dry_run=dry_run,
-            prepared_status=prepared_status,
-            trunk_branch=trunk_branch,
+    try:
+        return asyncio.run(
+            _run_selected_convergence(
+                context=context,
+                dry_run=dry_run,
+                prepared_status=prepared_status,
+                trunk_branch=trunk_branch,
+            )
         )
-    )
+    except CheckedOutMergedChangeError as error:
+        raise CliError(
+            error.message,
+            hint=_checked_out_workspace_hint(
+                workspaces=error.workspaces,
+                context=context,
+            ),
+        ) from error
 
 
 async def _run_selected_convergence(
@@ -204,10 +308,10 @@ async def _run_selected_convergence(
             ),
             observe_github_stacks(github=github),
         )
-        if queued_pull_numbers := _queued_pull_numbers(observation, selected):
-            _render_queued_sync(queued_pull_numbers)
+        if queued := queued_pull_numbers(observation, selected):
+            _render_queued_sync(queued)
             return 0
-        observation, github_stacks, complete = await resolve_selected_github_stack_observation(
+        observation, github_stacks, complete = await complete_sync_observation(
             context=context,
             github=github,
             initial=observation,
@@ -216,8 +320,8 @@ async def _run_selected_convergence(
             selected=selected,
             stacks=observed_stacks,
         )
-        if queued_pull_numbers := _queued_pull_numbers(observation, selected):
-            _render_queued_sync(queued_pull_numbers)
+        if queued := queued_pull_numbers(observation, selected):
+            _render_queued_sync(queued)
             return 0
         if not complete:
             console.output("No merged changes in this stack need rebasing.")
@@ -233,7 +337,13 @@ async def _run_selected_convergence(
                 remote=target.remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )
+        ancestries = _classify_observed_ancestries(
+            context=context,
+            observation=observation,
+            trunk_commit_id=prepared.stack.trunk.commit_id,
+        )
         plan = build_selected_convergence_plan(
+            ancestries=ancestries,
             context=context,
             github_stacks=github_stacks,
             observation=observation,
@@ -242,17 +352,11 @@ async def _run_selected_convergence(
             trunk_branch=trunk_branch,
         )
         _render_selected_plan(dry_run=dry_run, plan=plan)
-        return await _apply_selected_plan(
+        return await apply_selected_convergence(
             context=context,
             dry_run=dry_run,
             github=github,
             plan=plan,
-            pull_requests={
-                pull_request.number: pull_request
-                for change in plan.on_trunk
-                if (pull_request := observation.reviews[change.candidate.change_id].pull_request)
-                is not None
-            },
             target=target,
             trunk_branch=trunk_branch,
             trunk_commit_id=prepared.stack.trunk.commit_id,
@@ -263,19 +367,6 @@ def _render_queued_sync(pull_numbers: tuple[int, ...]) -> None:
     console.output(
         t"Nothing to sync while the selected review is in the merge queue "
         t"({ui.join(lambda number: f'PR #{number}', pull_numbers)})."
-    )
-
-
-def _queued_pull_numbers(
-    observation: RepositoryObservation,
-    selected: tuple[LocalRevision, ...],
-) -> tuple[int, ...]:
-    return tuple(
-        pull_request.number
-        for revision in selected
-        if (pull_request := observation.reviews[revision.change_id].pull_request) is not None
-        and pull_request.normalize_state().state == "open"
-        and pull_request.is_queued
     )
 
 
@@ -292,269 +383,100 @@ def _selected_target(
     return target, prepared_status.prepared.stack.revisions
 
 
-async def _apply_selected_plan(
-    *,
-    context: CommandContext,
-    dry_run: bool,
-    github: GithubClient,
-    plan: SelectedConvergencePlan,
-    pull_requests: dict[int, GithubPullRequest],
-    target: GithubTarget,
-    trunk_branch: str,
-    trunk_commit_id: str,
-) -> int:
-    rewrite = plan.github_stack_rewrite
-    if rewrite is not None and rewrite.mode == "rebase":
-        return recover_github_stack_rebase(
-            context=context,
-            dry_run=dry_run,
-            plan=plan,
-            remote_name=target.remote.name,
-            rewrite=rewrite,
-            trunk_commit_id=trunk_commit_id,
-        )
-    finish_context = FinishContext(
-        dry_run=dry_run,
-        github=github,
-        trunk_branch=trunk_branch,
-    )
-    results = await finish_reviews(
-        candidates=tuple(change.candidate for change in plan.on_trunk),
-        finish=finish_context,
-        pull_requests=pull_requests,
-        skip_finish=frozenset(
-            change.candidate.change_id
-            for change in plan.on_trunk
-            if change.evidence_kind != "exact" or change.requires_terminal_pull_request
-        ),
-    )
-    rebase_revision_ids = (
-        tuple(revision.commit_id for revision in plan.survivors) if plan.on_trunk else ()
-    )
-
-    if not dry_run:
-        github_stack_survivors = rewrite.active if rewrite is not None else ()
-        if github_stack_survivors:
-            top = github_stack_survivors[-1]
-            rebase_revision_ids = rebase_revision_ids[len(github_stack_survivors) :]
-            replaced = tuple(
-                revision.commit_id
-                for revision, survivor in zip(
-                    plan.survivors[: len(github_stack_survivors)],
-                    github_stack_survivors,
-                    strict=False,
-                )
-                if revision.commit_id != survivor.remote_head_commit_id
-            )
-            destination = top.remote_head_commit_id
-            attachment = context.jj_client.import_remote_review_ref(
-                remote=target.remote.name,
-                branch=top.candidate.review_identity.head_ref,
-                namespace=context.review_namespace,
-                expected_target=destination,
-                expected_change_id=top.candidate.change_id,
-                expected_chain=tuple(
-                    (
-                        survivor.candidate.review_identity.head_ref,
-                        survivor.remote_head_commit_id,
-                        survivor.candidate.change_id,
-                    )
-                    for survivor in github_stack_survivors
-                ),
-                expected_parent_commit_id=trunk_commit_id,
-            )
-        else:
-            replaced = ()
-            destination = trunk_commit_id
-            attachment = nullcontext()
-        if plan.on_trunk and not rebase_revision_ids:
-            rebase_head = (
-                plan.survivors[-1]
-                if plan.survivors
-                else next(
-                    (
-                        item.revision
-                        for item in reversed(plan.on_trunk)
-                        if item.revision is not None
-                    ),
-                    None,
-                )
-            )
-            if rebase_head is not None:
-                rebase_revision_ids = tuple(
-                    revision.commit_id
-                    for revision in context.jj_client.query_descendant_revisions(
-                        (rebase_head.commit_id,)
-                    )
-                    if revision.is_working_copy
-                    and revision.empty
-                    and revision.parents == (rebase_head.commit_id,)
-                )
-        with attachment:
-            if rebase_revision_ids:
-                context.jj_client.rebase_revisions_only(
-                    revisions=rebase_revision_ids,
-                    destination=destination,
-                )
-            if replaced:
-                context.jj_client.abandon_revisions(replaced)
-            abandoned = tuple(
-                change.revision.commit_id
-                for change in plan.on_trunk
-                if change.revision is not None
-                and not change.revision.immutable
-                and rewritten_removal_blocker(
-                    candidate=change.candidate,
-                    context=context,
-                    plan=plan,
-                )
-                is None
-            )
-            if abandoned:
-                context.jj_client.abandon_revisions(abandoned)
-            if github_stack_survivors:
-                context.state_store.relink_reviews(
-                    replacements={
-                        survivor.candidate.change_id: (
-                            survivor.candidate.review_identity,
-                            SubmittedBaseline(commit_id=survivor.remote_head_commit_id),
-                        )
-                        for survivor in github_stack_survivors
-                    },
-                )
-    update_result = await _update_selected_reviews(
-        context=context,
-        dry_run=dry_run,
-        plan=plan,
-    )
-    render_finish_results(dry_run=dry_run, results=results)
-    return await _cleanup_reconciled_reviews(
-        context=context,
-        dry_run=dry_run,
-        finish_results=results,
-        github=github,
-        plan=plan,
-        target=target,
-        update_result=update_result,
-    )
-
-
-async def _cleanup_reconciled_reviews(
-    *,
-    context: CommandContext,
-    dry_run: bool,
-    finish_results: tuple[ReviewFinishResult, ...],
-    github: GithubClient,
-    plan: SelectedConvergencePlan,
-    target: GithubTarget,
-    update_result: int,
-) -> int:
-    """Clean artifacts only after the selected local update has succeeded."""
-
-    if update_result != 0:
-        return update_result
-    cleanup_candidates: list[TrackedReview] = []
-    for result in finish_results:
-        if result.outcome == "skipped":
-            continue
-        blocker = rewritten_removal_blocker(
-            candidate=result.candidate,
-            context=context,
-            plan=plan,
-        )
-        if blocker is not None:
-            console.output(
-                t"  ! kept PR #{result.candidate.review_identity.pr_number} and its review "
-                t"branch for {ui.change_id(result.candidate.change_id)}: {blocker}"
-            )
-            continue
-        cleanup_candidates.append(result.candidate)
-    review_identities = context.state_store.load().review_identities
-    cleanup_result = await cleanup_tracked_reviews(
-        change_ids=tuple(candidate.change_id for candidate in cleanup_candidates),
-        context=context,
-        dry_run=dry_run,
-        github_client=github,
-        github_target=target,
-        planned_detached_dependents=frozenset(
-            identity.pr_number
-            for revision in plan.reviewed_survivors
-            if (identity := review_identities.get(revision.change_id)) is not None
-        ),
-        planned_local_removals=frozenset(candidate.change_id for candidate in cleanup_candidates),
-    )
-    return 1 if any(action.status == "blocked" for action in cleanup_result.actions) else 0
-
-
-async def _update_selected_reviews(
-    *,
-    context: CommandContext,
-    dry_run: bool,
-    plan: SelectedConvergencePlan,
-) -> int:
-    if not plan.on_trunk:
-        return 0
-    if plan.survivors and dry_run:
-        console.output(
-            t"Run {ui.cmd(f'jj-stack sync {plan.survivors[-1].change_id}')} to apply the rebase "
-            t"and then compute updates for the remaining existing PRs."
-        )
-        return 0
-    if not plan.reviewed_survivors:
-        if plan.survivors:
-            console.output("No existing reviews to update; trailing work remains local.")
-        return 0
-    head_change_id = plan.reviewed_survivors[-1].change_id
-    try:
-        result = await run_submit_async(
-            context=context,
-            on_prepared=None,
-            options=_sync_submit_options(
-                dry_run=dry_run,
-                revset=head_change_id,
-            ),
-        )
-    except ConflictedStackError as error:
-        if not plan.on_trunk:
-            raise
-        raise ConflictedStackError(
-            error.message,
-            hint=t"The local rebase is complete. Resolve the conflicts with {ui.cmd('jj')}, "
-            t"then update the remaining reviews with "
-            t"{ui.cmd(f'jj-stack submit {head_change_id}')}",
-        ) from error
-    print_submit_result(result)
-    return 0
-
-
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:
-    rewrite = plan.github_stack_rewrite
-    if rewrite is not None and rewrite.mode == "rebase":
+    if isinstance(plan, GithubStackRebasePlan):
         action = "Would restore" if dry_run else "Restoring"
         console.output(f"{action} the stack's jj change IDs after GitHub rebased it.")
         return
-    if not plan.on_trunk:
+    if not plan.actions.on_trunk:
         console.output("No merged changes in this stack need rebasing.")
         return
     status = "Would remove" if dry_run else "Removing"
     console.output(
         t"{status} merged changes from the bottom of the stack: "
-        t"{ui.join(lambda item: ui.change_id(item.candidate.change_id), plan.on_trunk)}"
+        t"{ui.join(lambda item: ui.change_id(item.candidate.change_id), plan.actions.on_trunk)}"
     )
 
 
-def _sync_submit_options(*, dry_run: bool, revset: str) -> SubmitOptions:
-    return SubmitOptions(
-        base_revset=None,
-        descriptions=(),
-        describe_with=None,
-        draft_mode="default",
-        dry_run=dry_run,
-        edit=False,
-        existing_only=True,
-        labels=None,
-        re_request=False,
-        reviewers=None,
-        revset=revset,
-        team_reviewers=None,
+def _classify_observed_ancestries(
+    *,
+    context: CommandContext,
+    observation: RepositoryObservation,
+    trunk_commit_id: str,
+) -> dict:
+    return classify_commit_ancestries(
+        commit_ids=tuple(
+            commit_id
+            for item in observation.reviews.values()
+            for commit_id in (
+                item.baseline.commit_id if item.baseline is not None else None,
+                item.pull_request.merge_commit_sha if item.pull_request is not None else None,
+            )
+        ),
+        context=context,
+        trunk_commit_id=trunk_commit_id,
     )
+
+
+def _checked_out_workspace_hint(
+    *, workspaces: tuple[str, ...], context: CommandContext
+) -> Message:
+    known = {workspace.name: workspace for workspace in context.jj_client.list_workspaces()}
+    if not workspaces:
+        workspaces = tuple(workspace.name for workspace in known.values() if workspace.current)
+    hint: list[Message] = ["Move off the merged change in each workspace:\n"]
+    disposable: list[tuple[str, str]] = []
+    for name in workspaces:
+        workspace = known.get(name)
+        if workspace is None or (workspace.root is None and not workspace.current):
+            hint.append(
+                t"For {ui.code(name)}, run {ui.cmd("jj new 'trunk()'")} in that workspace.\n"
+            )
+            continue
+        root = str(workspace.root or context.repo_root)
+        shell = " (PowerShell)" if sys.platform == "win32" else ""
+        hint.append(
+            t"For {ui.code(name)} at {ui.code(root)}{shell}:\n  "
+            t"{ui.cmd(_workspace_move_command(root=root, platform=sys.platform))}\n"
+        )
+        if not workspace.current:
+            disposable.append((name, root))
+    if disposable:
+        hint.append(
+            "Alternatively, forget and move to the trash any workspace that is no longer "
+            "needed:\n"
+        )
+        for name, root in disposable:
+            shell = " (PowerShell)" if sys.platform == "win32" else ""
+            command = _workspace_disposal_command(name=name, root=root, platform=sys.platform)
+            hint.append(t"For {ui.code(name)}{shell}:\n  {ui.cmd(command)}\n")
+    hint.append("Then rerun the same sync command.")
+    return tuple(hint)
+
+
+def _workspace_move_command(*, root: str, platform: str) -> str:
+    if platform == "win32":
+        return (
+            f"Push-Location -LiteralPath {_powershell_quote(root)}; try {{ "
+            "jj new 'trunk()' } finally { Pop-Location }"
+        )
+    return f"(cd {shlex.quote(root)} && jj new {shlex.quote('trunk()')})"
+
+
+def _workspace_disposal_command(*, name: str, root: str, platform: str) -> str:
+    if platform == "win32":
+        quoted_name = _powershell_quote(name)
+        quoted = _powershell_quote(root)
+        return (
+            f"jj workspace forget -- {quoted_name}; if ($LASTEXITCODE -eq 0) {{ "
+            "Add-Type -AssemblyName Microsoft.VisualBasic; "
+            "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory("
+            f"{quoted}, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, "
+            "[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin) }"
+        )
+    trash_command = "trash" if platform == "darwin" else "gio trash"
+    return f"(jj workspace forget -- {shlex.quote(name)} && {trash_command} {shlex.quote(root)})"
+
+
+def _powershell_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"

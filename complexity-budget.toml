@@ -1,9 +1,9 @@
 [code]
-production = 20_332
-tests = 21_653
-total = 42_082
+production = 20_272
+tests = 21_638
+total = 42_007
 merge = 1_691
-governed = 3_398
+governed = 3_332
 governed_module = 502
 checker = 182
 
@@ -47,13 +47,14 @@ merge = ["src/jj_stack/commands/merge"]
 governed = [
   "src/jj_stack/commands/merge",
   "src/jj_stack/commands/sync.py",
-  "src/jj_stack/commands/sync_global.py",
+  "src/jj_stack/commands/sync_apply.py",
   "src/jj_stack/models/review_state.py",
   "src/jj_stack/state/store.py",
-  "src/jj_stack/review/finish.py",
   "src/jj_stack/review/trunk_evidence.py",
   "src/jj_stack/review/convergence.py",
-  "src/jj_stack/review/github_stack_sync.py",
+  "src/jj_stack/review/convergence_models.py",
+  "src/jj_stack/review/convergence_observation.py",
+  "src/jj_stack/review/global_convergence.py",
   "src/jj_stack/review/observation.py",
 ]
 fixed_property = [

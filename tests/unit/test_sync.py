@@ -1,7 +1,4 @@
-from jj_stack.review.convergence import (
-    _workspace_disposal_command,
-    _workspace_move_command,
-)
+from jj_stack.commands.sync import _workspace_disposal_command, _workspace_move_command
 
 
 def test_workspace_disposal_uses_each_platforms_recoverable_delete() -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-import jj_stack.commands.sync as sync_command
+import jj_stack.commands.sync_apply as sync_apply
 from jj_stack.errors import EXIT_GITHUB, EXIT_INCOMPLETE, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
@@ -612,12 +612,12 @@ def test_sync_retries_stack_adoption_after_survivor_submit_fails(
     on_trunk, survivor = selected_stack(repo).revisions
     baseline_before = state_store.load().submitted_baselines[survivor.change_id]
     remote_survivor = _simulate_stack_partial_merge(fake_repo)
-    real_run_submit = sync_command.run_submit_async
+    real_run_submit = sync_apply.run_submit_async
 
     async def fail_submit(**_kwargs):
         raise CliError("injected survivor submit failure")
 
-    monkeypatch.setattr(sync_command, "run_submit_async", fail_submit)
+    monkeypatch.setattr(sync_apply, "run_submit_async", fail_submit)
     exit_code = run_main(repo, config_path, "sync", survivor.change_id)
     failed = capsys.readouterr()
 
@@ -629,7 +629,7 @@ def test_sync_retries_stack_adoption_after_survivor_submit_fails(
     assert remote_survivor != baseline_before.commit_id
     assert JjClient(repo).resolve_revision(survivor.change_id).commit_id == remote_survivor
 
-    monkeypatch.setattr(sync_command, "run_submit_async", real_run_submit)
+    monkeypatch.setattr(sync_apply, "run_submit_async", real_run_submit)
     retry_exit_code = run_main(repo, config_path, "sync", survivor.change_id)
     retry = capsys.readouterr()
 

@@ -328,9 +328,6 @@ def _patch_selected_path(
     selected_path = SelectedReviewPath(
         is_maximal=True,
         stack=client.stack,
-        tracked_change_ids=frozenset(state.review_identities).intersection(
-            revision.change_id for revision in client.stack.revisions
-        ),
     )
     monkeypatch.setattr(
         status_module,

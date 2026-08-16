@@ -9,13 +9,16 @@ from dataclasses import dataclass
 
 import jj_stack.github.resolution as github_resolution
 from jj_stack.bootstrap import CommandContext
-from jj_stack.github.client import GithubClient
+from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubPullRequest, GithubRepository
-from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
+from jj_stack.models.github import GithubPullRequest, GithubRepository, GithubStack
+from jj_stack.models.review_state import (
+    ReviewIdentity,
+    SubmittedBaseline,
+)
 from jj_stack.models.stack import LocalRevision
 from jj_stack.review.branches import prepare_visible_review_snapshots
-from jj_stack.state.store import ReviewStateStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,20 +66,19 @@ def duplicate_review_claim_change_ids(
 async def observe_reviews(
     *,
     change_ids: tuple[str, ...],
-    context: CommandContext | None = None,
+    context: CommandContext,
     github_client: GithubClient,
     include_open_dependents: bool = False,
     include_remote_targets: bool = True,
+    github_repository_snapshot: GithubRepository | None = None,
+    local_revisions_snapshot: Mapping[str, tuple[LocalRevision, ...]] | None = None,
     remote_name: str | None = None,
-    state_store: ReviewStateStore | None = None,
 ) -> RepositoryObservation:
     """Reload review facts, optionally deferring exact remote-ref observation."""
 
-    remotes = () if context is None else context.jj_client.list_git_remotes()
+    remotes = context.jj_client.list_git_remotes()
     remote = next((item for item in remotes if item.name == remote_name), None)
-    store = context.state_store if context is not None else state_store
-    assert store is not None
-    state = store.load()
+    state = context.state_store.load()
     identities = {
         change_id: state.review_identities.get(change_id)
         for change_id in dict.fromkeys(change_ids)
@@ -93,23 +95,27 @@ async def observe_reviews(
             if include_open_dependents
             else asyncio.sleep(0, result=None)
         ),
-        github_client.get_repository() if context is not None else asyncio.sleep(0, result=None),
+        (
+            github_client.get_repository()
+            if github_repository_snapshot is None
+            else asyncio.sleep(0, result=github_repository_snapshot)
+        ),
     )
     remote_targets: dict[str, str] = {}
-    if include_remote_targets and context is not None and remote is not None and head_refs:
+    if include_remote_targets and remote is not None and head_refs:
         remote_targets = context.jj_client.list_remote_branches(
             remote=remote.name,
             patterns=tuple(f"refs/heads/{ref}" for ref in head_refs),
         )
-    if context is None:
-        local_revisions = {}
-    else:
+    if local_revisions_snapshot is None:
         prepare_visible_review_snapshots(
             jj_client=context.jj_client,
             namespace=context.review_namespace,
             state=state,
         )
         local_revisions = context.jj_client.query_revisions_by_change_ids(tuple(identities))
+    else:
+        local_revisions = local_revisions_snapshot
     reviews = {
         change_id: ReviewObservation(
             baseline=state.submitted_baselines.get(change_id),
@@ -135,3 +141,13 @@ async def observe_reviews(
         repository=repository,
         reviews=reviews,
     )
+
+
+async def observe_github_stacks(*, github: GithubClient) -> tuple[GithubStack, ...]:
+    try:
+        return await github.list_stacks()
+    except GithubClientError as error:
+        raise CliError(
+            "Could not inspect GitHub stack membership.",
+            hint="Resolve the GitHub error above, then rerun the command.",
+        ) from error

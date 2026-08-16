@@ -19,13 +19,20 @@ class SelectedPathObservation:
     selected_revset: str
     selector_revisions: tuple[LocalRevision, ...]
     select_mutable_copy: bool
-    tracked_change_ids: frozenset[str]
     trunk: LocalRevision
 
 
 @dataclass(frozen=True, slots=True)
 class SelectedReviewPath:
-    """One ordinary selected path annotated by existing tracking."""
+    """One ordinary selected parent path."""
+
+    is_maximal: bool
+    stack: LocalStack
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryReviewPath:
+    """One repository path annotated by existing tracking."""
 
     is_maximal: bool
     stack: LocalStack
@@ -49,7 +56,7 @@ class RepositoryReviewPaths:
     """Ordinary maximal paths observed from one bounded repository scope."""
 
     current_review_commit_id: str | None
-    paths: tuple[SelectedReviewPath, ...]
+    paths: tuple[RepositoryReviewPath, ...]
 
 
 def project_selected_path(observation: SelectedPathObservation) -> SelectedReviewPath:
@@ -67,7 +74,6 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
         return SelectedReviewPath(
             is_maximal=False,
             stack=stack,
-            tracked_change_ids=frozenset(),
         )
 
     revisions_by_commit_id = {
@@ -90,7 +96,6 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
         current = parent
 
     revisions = tuple(reversed(head_first))
-    path_change_ids = frozenset(revision.change_id for revision in revisions)
     candidates = _ordinary_candidates(
         candidate_commit_ids=observation.candidate_commit_ids,
         revisions_by_commit_id=revisions_by_commit_id,
@@ -105,7 +110,6 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
     return SelectedReviewPath(
         is_maximal=selected.commit_id in _maximal_candidate_commit_ids(candidates),
         stack=stack,
-        tracked_change_ids=observation.tracked_change_ids & path_change_ids,
     )
 
 
@@ -125,7 +129,7 @@ def project_repository_paths(
     maximal_commit_ids = _maximal_candidate_commit_ids(candidates)
     heads = tuple(candidates[commit_id] for commit_id in sorted(maximal_commit_ids))
 
-    paths: list[SelectedReviewPath] = []
+    paths: list[RepositoryReviewPath] = []
     for head in heads:
         head_first: list[LocalRevision] = []
         current = head
@@ -135,7 +139,7 @@ def project_repository_paths(
         revisions = tuple(reversed(head_first))
         path_change_ids = frozenset(revision.change_id for revision in revisions)
         paths.append(
-            SelectedReviewPath(
+            RepositoryReviewPath(
                 is_maximal=True,
                 stack=LocalStack(
                     base_parent=current,
