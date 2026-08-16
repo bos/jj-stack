@@ -2275,7 +2275,7 @@ def test_submit_explicit_label_applies_to_unchanged_pull_request(
     assert fake_repo.pull_requests[1].labels == ["needs-review"]
 
 
-def test_submit_re_request_adds_prior_approved_reviewer_through_github(
+def test_submit_re_request_observes_reviews_before_mutation_and_retries(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -2291,29 +2291,49 @@ def test_submit_re_request_adds_prior_approved_reviewer_through_github(
     )
     commit_file(repo, "feature 1", "feature-1.txt")
     app = create_app(FakeGithubState.single_repository(fake_repo))
+    fail_review_load = [True]
+
+    class FailingReviewLoadClient(GithubClient):
+        async def list_pull_request_reviews(self, *, pull_number):
+            if fail_review_load and fail_review_load.pop():
+                raise GithubClientError("Simulated review load failure", status_code=500)
+            return await super().list_pull_request_reviews(pull_number=pull_number)
 
     patch_github_client_builders(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
         modules=("jj_stack.commands.submit.command",),
+        client_type=FailingReviewLoadClient,
     )
 
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
+    submitted_remote_refs = remote_refs(fake_repo.git_dir)
 
     fake_repo.create_pull_request_review(
         pull_number=1,
         reviewer_login="alice",
         state="APPROVED",
     )
+    for reviewer, state in (
+        ("alice", "DISMISSED"),
+        ("erin", "CHANGES_REQUESTED"),
+        ("erin", "APPROVED"),
+        ("dave", "COMMENTED"),
+    ):
+        fake_repo.create_pull_request_review(pull_number=1, reviewer_login=reviewer, state=state)
+    commit_file(repo, "feature 2", "feature-2.txt")
+
+    assert run_main(repo, config_path, "submit", "--re-request") == EXIT_GITHUB
+    assert remote_refs(fake_repo.git_dir) == submitted_remote_refs
 
     assert run_main(repo, config_path, "submit", "--re-request") == 0
     capsys.readouterr()
 
     assert fake_repo.pull_requests[1].requested_reviewers == [
         "pending-reviewer",
-        "alice",
+        "erin",
     ]
 
 

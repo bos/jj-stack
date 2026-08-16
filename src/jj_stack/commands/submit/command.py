@@ -33,14 +33,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY
 from jj_stack.errors import CliError, DriftError
-from jj_stack.github.client import GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.resolution import (
     require_github_repo,
     resolve_trunk_branch,
@@ -50,7 +52,7 @@ from jj_stack.identifiers import short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubPullRequest
+from jj_stack.models.github import GithubPullRequest, GithubRepository, GithubStack
 from jj_stack.models.review_state import ReviewIdentity
 from jj_stack.models.stack import LocalStack
 from jj_stack.review.branches import (
@@ -77,9 +79,10 @@ from .github_stack import (
 from .inputs import prepare_submit_inputs
 from .models import (
     GeneratedDescription,
-    PendingPullRequestSync,
+    PreparedSubmitInputs,
     PreparedSubmitRevision,
-    ResolvedSubmitOptions,
+    PullRequestMetadataAction,
+    PullRequestSyncPlan,
     SubmitDraftMode,
     SubmitMutationRun,
     SubmitOptions,
@@ -91,6 +94,7 @@ from .pull_requests import (
     discover_pull_requests_by_branch,
     ensure_pull_request_link_is_consistent,
     ensure_pull_request_syncs_are_safe,
+    load_re_request_reviewers,
     sync_pull_requests,
 )
 from .render import print_selected_line, print_submit_result
@@ -109,9 +113,6 @@ helper may be interactive or may generate the text noninteractively.
 `helper --stack <revset>` for the selected stack. The helper must output JSON with string `title`
 and `body` fields.
 """
-
-
-_GITHUB_INSPECTION_CONCURRENCY = DEFAULT_BOUNDED_CONCURRENCY
 
 
 def submit(
@@ -244,21 +245,6 @@ def _submit_draft_mode(
     return "default"
 
 
-def _resolve_submit_options(
-    *,
-    context: CommandContext,
-    options: SubmitOptions,
-) -> ResolvedSubmitOptions:
-    config = context.config
-    return ResolvedSubmitOptions(
-        labels=config.labels if options.labels is None else options.labels,
-        reviewers=config.reviewers if options.reviewers is None else options.reviewers,
-        team_reviewers=(
-            config.team_reviewers if options.team_reviewers is None else options.team_reviewers
-        ),
-    )
-
-
 def _build_submit_result(
     *,
     client: JjClient,
@@ -276,28 +262,57 @@ def _build_submit_result(
     )
 
 
-def _pending_pull_request_syncs(
+def _pull_request_sync_plans(
     *,
     bottom_base_branch: str,
+    context: CommandContext,
     discovered_pull_requests: dict[str, GithubPullRequest | None],
     drafts: dict[str, bool],
     generated_descriptions: dict[str, GeneratedDescription],
+    options: SubmitOptions,
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
-) -> tuple[PendingPullRequestSync, ...]:
-    """Build the desired pull-request sync plan for the submitted stack."""
+    prior_reviewers: Mapping[int, list[str]],
+) -> tuple[PullRequestSyncPlan, ...]:
+    """Build one final desired-state plan after optional editing."""
 
-    return tuple(
-        PendingPullRequestSync(
-            base_branch=(
-                prepared_revisions[index - 1].branch if index > 0 else bottom_base_branch
-            ),
-            discovered_pull_request=discovered_pull_requests[prepared_revision.branch],
-            draft=drafts[prepared_revision.revision.change_id],
-            generated_description=generated_descriptions[prepared_revision.revision.change_id],
-            prepared=prepared_revision,
-        )
-        for index, prepared_revision in enumerate(prepared_revisions)
+    config = context.config
+    labels = config.labels if options.labels is None else options.labels
+    reviewers = config.reviewers if options.reviewers is None else options.reviewers
+    team_reviewers = (
+        config.team_reviewers if options.team_reviewers is None else options.team_reviewers
     )
+    explicit_metadata = any(
+        value is not None for value in (options.labels, options.reviewers, options.team_reviewers)
+    )
+    base_branches = (
+        bottom_base_branch,
+        *(revision.branch for revision in prepared_revisions[:-1]),
+    )
+    plans: list[PullRequestSyncPlan] = []
+    for prepared, base_branch in zip(prepared_revisions, base_branches, strict=True):
+        pull_request = discovered_pull_requests[prepared.branch]
+        plan = PullRequestSyncPlan(
+            base_branch=base_branch,
+            discovered_pull_request=pull_request,
+            draft=drafts[prepared.revision.change_id],
+            generated_description=generated_descriptions[prepared.revision.change_id],
+            metadata=None,
+            prepared=prepared,
+        )
+        prior = prior_reviewers.get(pull_request.number, ()) if pull_request else ()
+        merged_reviewers = list(dict.fromkeys((*reviewers, *prior)))
+        full_metadata = plan.action != "unchanged" or explicit_metadata
+        if full_metadata or merged_reviewers != reviewers:
+            plan = replace(
+                plan,
+                metadata=PullRequestMetadataAction(
+                    labels=labels if full_metadata else [],
+                    reviewers=merged_reviewers,
+                    team_reviewers=team_reviewers if full_metadata else [],
+                ),
+            )
+        plans.append(plan)
+    return tuple(plans)
 
 
 def _desired_draft_state(
@@ -314,6 +329,33 @@ def _desired_draft_state(
     if draft_mode == "open":
         return False
     return pull_request.is_draft
+
+
+def _github_inspection_results(
+    *,
+    discovered: dict[str, GithubPullRequest | None] | BaseException,
+    repository: GithubRepository | BaseException,
+    repository_name: str,
+    stacks: tuple[GithubStack, ...] | BaseException,
+) -> tuple[GithubRepository, dict[str, GithubPullRequest | None], tuple[GithubStack, ...]]:
+    for kind, result in (("repository", repository), ("stacks", stacks), ("pulls", discovered)):
+        if not isinstance(result, BaseException):
+            continue
+        if kind == "stacks" and isinstance(result, GithubClientError):
+            unavailable = github_stacks_unavailable_error(
+                error=result,
+                repository=repository_name,
+            )
+            if unavailable is not None:
+                raise unavailable from None
+        if isinstance(result, GithubClientError):
+            raise CliError(f"Could not inspect GitHub repository {repository_name}") from result
+        raise result
+    return (
+        cast(GithubRepository, repository),
+        cast(dict[str, GithubPullRequest | None], discovered),
+        cast(tuple[GithubStack, ...], stacks),
+    )
 
 
 def _recover_interrupted_first_submissions(
@@ -388,6 +430,71 @@ def _recover_interrupted_first_submissions(
     return recovered
 
 
+async def _apply_planned_submit(
+    *,
+    context: CommandContext,
+    github_client: GithubClient,
+    github_stack_plan: GithubStackPlan,
+    prepared_inputs: PreparedSubmitInputs,
+    pull_request_plans: tuple[PullRequestSyncPlan, ...],
+    review_ref_updates: tuple[ReviewRefUpdate, ...],
+    retarget_plans: tuple[PullRequestSyncPlan, ...],
+    run: SubmitMutationRun,
+    stacks_to_dissolve: tuple[GithubStack, ...],
+    trunk_branch: str,
+) -> tuple[SubmittedRevision, ...]:
+    if not run.dry_run:
+        for github_stack in stacks_to_dissolve:
+            await dissolve_github_stack(github_client=github_client, stack=github_stack)
+        # GitHub has no transaction spanning review branches, pull requests, and stack
+        # membership. An external stack edit can race this mutation, and submit accepts that
+        # narrow window rather than pretending another non-atomic observation closes it.
+        if retarget_plans:
+            await retarget_review_bases_before_branch_push(
+                github_client=github_client,
+                plans=retarget_plans,
+                trunk_branch=trunk_branch,
+            )
+        with console.spinner(description="Pushing review branches"):
+            prepared_inputs.client.mutate_remote_review_refs(
+                namespace=context.review_namespace,
+                remote=prepared_inputs.remote.name,
+                updates=review_ref_updates,
+            )
+    with console.progress(
+        description="Syncing pull requests",
+        total=len(pull_request_plans),
+    ) as progress:
+        submitted = await sync_pull_requests(
+            github_client=github_client,
+            on_progress=progress.advance,
+            plans=pull_request_plans,
+            run=run,
+        )
+    if not run.dry_run:
+        pull_numbers = tuple(
+            pull_number
+            for revision in submitted
+            if (pull_number := revision.pull_request_number) is not None
+        )
+        if len(pull_numbers) != len(submitted):
+            raise AssertionError("GitHub stack submit requires concrete pull request numbers.")
+        await apply_github_stack_plan(
+            github_client=github_client,
+            plan=github_stack_plan,
+            pull_numbers=pull_numbers,
+        )
+        await sync_stack_overview_comments(
+            concurrency=DEFAULT_BOUNDED_CONCURRENCY,
+            github_client=github_client,
+            overview_bodies=stack_overview_comment_bodies(
+                generated_stack_description=prepared_inputs.generated_stack_description,
+                revisions=submitted,
+            ),
+        )
+    return submitted
+
+
 async def run_submit_async(
     *,
     context: CommandContext,
@@ -396,10 +503,6 @@ async def run_submit_async(
 ) -> SubmitResult:
     dry_run = options.dry_run
     state_store = context.state_store
-    resolved_options = _resolve_submit_options(
-        context=context,
-        options=options,
-    )
     state = state_store.load()
     with console.spinner(description="Preparing submit"):
         prepared_inputs = prepare_submit_inputs(
@@ -418,8 +521,9 @@ async def run_submit_async(
     state = prepared_inputs.state
     explicit_base = stack.base_parent if options.base_revset is not None else None
     tracked_base = state.tracked_review(explicit_base.change_id) if explicit_base else None
-    if explicit_base is not None and tracked_base is None:
-        raise AssertionError("Prepared explicit base requires a tracked review.")
+    assert explicit_base is None or tracked_base is not None, (
+        "Prepared explicit base requires a tracked review."
+    )
     base_branch = tracked_base.review_identity.head_ref if tracked_base is not None else None
 
     if not stack.revisions:
@@ -510,33 +614,14 @@ async def run_submit_async(
                 github_client.list_stacks(),
                 return_exceptions=True,
             )
-            if isinstance(github_repository_result, GithubClientError):
-                raise CliError(
-                    f"Could not inspect GitHub repository {github_repository.full_name}"
-                ) from github_repository_result
-            if isinstance(github_repository_result, BaseException):
-                raise github_repository_result
-            if isinstance(observed_stacks_result, GithubClientError):
-                unavailable = github_stacks_unavailable_error(
-                    error=observed_stacks_result,
-                    repository=github_repository.full_name,
+            github_repository_state, discovered_pull_requests, observed_stacks = (
+                _github_inspection_results(
+                    discovered=discovered_pull_requests_result,
+                    repository=github_repository_result,
+                    repository_name=github_repository.full_name,
+                    stacks=observed_stacks_result,
                 )
-                if unavailable is not None:
-                    raise unavailable from None
-                raise CliError(
-                    f"Could not inspect GitHub repository {github_repository.full_name}"
-                ) from observed_stacks_result
-            if isinstance(observed_stacks_result, BaseException):
-                raise observed_stacks_result
-            if isinstance(discovered_pull_requests_result, GithubClientError):
-                raise CliError(
-                    f"Could not inspect GitHub repository {github_repository.full_name}"
-                ) from discovered_pull_requests_result
-            if isinstance(discovered_pull_requests_result, BaseException):
-                raise discovered_pull_requests_result
-            github_repository_state = github_repository_result
-            discovered_pull_requests = discovered_pull_requests_result
-            observed_stacks = observed_stacks_result
+            )
             trunk_branch, trunk_targets = resolve_trunk_branch(
                 client=client,
                 github_repository_state=github_repository_state,
@@ -589,16 +674,10 @@ async def run_submit_async(
             )
             for prepared in prepared_revisions
         }
-        pending_syncs = _pending_pull_request_syncs(
-            bottom_base_branch=bottom_base_branch,
-            discovered_pull_requests=discovered_pull_requests,
-            drafts=drafts,
-            generated_descriptions=generated_descriptions,
-            prepared_revisions=prepared_revisions,
-        )
         ensure_pull_request_syncs_are_safe(
-            options=options,
-            pending_syncs=pending_syncs,
+            discovered_pull_requests=discovered_pull_requests,
+            existing_only=options.existing_only,
+            prepared_revisions=prepared_revisions,
             repository_key=github_repository.repository_key,
             state=mutation_run.state,
         )
@@ -609,13 +688,28 @@ async def run_submit_async(
                 jj_client=client,
                 revisions=stack.revisions,
             )
-            pending_syncs = _pending_pull_request_syncs(
-                bottom_base_branch=bottom_base_branch,
-                discovered_pull_requests=discovered_pull_requests,
-                drafts=drafts,
-                generated_descriptions=generated_descriptions,
-                prepared_revisions=prepared_revisions,
+        re_request_reviewers = (
+            await load_re_request_reviewers(
+                github_client=github_client,
+                pull_requests=tuple(
+                    pull_request
+                    for prepared in prepared_revisions
+                    if (pull_request := discovered_pull_requests[prepared.branch]) is not None
+                ),
             )
+            if options.re_request and not dry_run
+            else {}
+        )
+        pull_request_plans = _pull_request_sync_plans(
+            bottom_base_branch=bottom_base_branch,
+            context=context,
+            discovered_pull_requests=discovered_pull_requests,
+            drafts=drafts,
+            generated_descriptions=generated_descriptions,
+            options=options,
+            prepared_revisions=prepared_revisions,
+            prior_reviewers=re_request_reviewers,
+        )
         pushes_review_branches = any(
             revision.remote_action == "pushed" for revision in prepared_revisions
         )
@@ -623,8 +717,8 @@ async def run_submit_async(
         observed_base_refs = tuple(
             dict.fromkeys(
                 pull_request.base.ref
-                for pending in pending_syncs
-                if (pull_request := pending.discovered_pull_request) is not None
+                for plan in pull_request_plans
+                if (pull_request := plan.discovered_pull_request) is not None
                 and pull_request.state == "open"
                 and pull_request.base.ref not in planned_branches
                 and pull_request.base.ref not in trunk_targets
@@ -635,100 +729,60 @@ async def run_submit_async(
             remote=remote.name,
             patterns=tuple(f"refs/heads/{branch}" for branch in observed_base_refs),
         )
-        retarget_syncs = (
+        retarget_plans = (
             auto_close.predict_pull_requests_auto_closed_by_push(
                 jj_client=client,
-                pending_syncs=pending_syncs,
+                plans=pull_request_plans,
                 prepared_revisions=prepared_revisions,
-                remote_targets={
-                    **trunk_targets,
-                    **remote_targets,
-                    **observed_base_targets,
-                },
+                remote_targets={**trunk_targets, **remote_targets, **observed_base_targets},
             )
             if pushes_review_branches
             else ()
         )
-        desired_pull_numbers = tuple(
-            pending.discovered_pull_request.number
-            if pending.discovered_pull_request is not None
-            else None
-            for pending in pending_syncs
-        )
         github_stack_plan = plan_github_stack(
-            desired=desired_pull_numbers,
+            desired=tuple(
+                plan.discovered_pull_request.number
+                if plan.discovered_pull_request is not None
+                else None
+                for plan in pull_request_plans
+            ),
             is_maximal_path=prepared_inputs.is_maximal_path,
             observed_stacks=observed_stacks,
             pull_numbers_requiring_base_update={
                 pull_request.number
-                for pending in pending_syncs
-                if (pull_request := pending.discovered_pull_request) is not None
-                and (pull_request.base.ref != pending.base_branch or pending in retarget_syncs)
+                for plan in pull_request_plans
+                if (pull_request := plan.discovered_pull_request) is not None
+                and (pull_request.base.ref != plan.base_branch or plan in retarget_plans)
             },
         )
-        if github_stack_plan.action == "replace" and not dry_run:
-            for github_stack in github_stack_plan.affected_stacks:
-                await dissolve_github_stack(github_client=github_client, stack=github_stack)
-            github_stack_plan = GithubStackPlan("create" if len(pending_syncs) > 1 else "none")
-        if not dry_run:
-            # GitHub has no transaction spanning review branches, pull requests, and stack
-            # membership. An external stack edit can race this mutation, and submit accepts that
-            # narrow window rather than pretending another non-atomic observation closes it.
-            if pushes_review_branches:
-                await retarget_review_bases_before_branch_push(
-                    github_client=github_client,
-                    pending_syncs=retarget_syncs,
-                    trunk_branch=trunk_branch,
-                )
-            with console.spinner(description="Pushing review branches"):
-                client.mutate_remote_review_refs(
-                    namespace=context.review_namespace,
-                    remote=remote.name,
-                    updates=tuple(
-                        ReviewRefUpdate(
-                            branch=prepared.branch,
-                            expected_target=prepared.expected_remote_target,
-                            desired_target=prepared.revision.commit_id,
-                        )
-                        for prepared in prepared_revisions
-                    ),
-                )
-        with console.progress(
-            description="Syncing pull requests",
-            total=len(prepared_revisions),
-        ) as progress:
-            submitted_revisions = await sync_pull_requests(
-                github_client=github_client,
-                on_progress=progress.advance,
-                options=options,
-                pending_syncs=pending_syncs,
-                resolved_options=resolved_options,
-                run=mutation_run,
+        stacks_to_dissolve = (
+            github_stack_plan.affected_stacks if github_stack_plan.action == "replace" else ()
+        )
+        if stacks_to_dissolve:
+            github_stack_plan = GithubStackPlan(
+                "create" if len(pull_request_plans) > 1 else "none"
             )
+        review_ref_updates = tuple(
+            ReviewRefUpdate(
+                branch=prepared.branch,
+                expected_target=prepared.expected_remote_target,
+                desired_target=prepared.revision.commit_id,
+            )
+            for prepared in prepared_revisions
+        )
 
-        if not dry_run:
-            pull_numbers = tuple(
-                pull_number
-                for revision in submitted_revisions
-                if (pull_number := revision.pull_request_number) is not None
-            )
-            if len(pull_numbers) != len(submitted_revisions):
-                raise AssertionError(
-                    "GitHub stack submit requires concrete pull request numbers."
-                )
-            await apply_github_stack_plan(
-                github_client=github_client,
-                plan=github_stack_plan,
-                pull_numbers=pull_numbers,
-            )
-            await sync_stack_overview_comments(
-                concurrency=_GITHUB_INSPECTION_CONCURRENCY,
-                github_client=github_client,
-                overview_bodies=stack_overview_comment_bodies(
-                    generated_stack_description=prepared_inputs.generated_stack_description,
-                    revisions=submitted_revisions,
-                ),
-            )
+        submitted_revisions = await _apply_planned_submit(
+            context=context,
+            github_client=github_client,
+            github_stack_plan=github_stack_plan,
+            prepared_inputs=prepared_inputs,
+            pull_request_plans=pull_request_plans,
+            review_ref_updates=review_ref_updates,
+            retarget_plans=retarget_plans,
+            run=mutation_run,
+            stacks_to_dissolve=stacks_to_dissolve,
+            trunk_branch=trunk_branch,
+        )
     return _build_submit_result(
         client=client,
         dry_run=dry_run,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 import jj_stack.ui as ui
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
@@ -18,13 +18,23 @@ from jj_stack.models.review_state import (
 from jj_stack.ui import Message
 
 from .models import (
-    PendingPullRequestSync,
-    PullRequestAction,
-    ResolvedSubmitOptions,
+    PreparedSubmitRevision,
+    PullRequestDraftAction,
+    PullRequestSyncPlan,
     SubmitMutationRun,
-    SubmitOptions,
     SubmittedRevision,
 )
+
+
+async def _github_request[Result](
+    request: Awaitable[Result],
+    *,
+    error_message: Message,
+) -> Result:
+    try:
+        return await request
+    except GithubClientError as error:
+        raise CliError(error_message) from error
 
 
 async def discover_pull_requests_by_branch(
@@ -36,12 +46,10 @@ async def discover_pull_requests_by_branch(
     if not branches:
         return {}
 
-    try:
-        discovered_pull_requests = await github_client.get_pull_requests_by_head_refs(
-            head_refs=branches,
-        )
-    except GithubClientError as error:
-        raise CliError("Could not batch pull request discovery for branches") from error
+    discovered_pull_requests = await _github_request(
+        github_client.get_pull_requests_by_head_refs(head_refs=branches),
+        error_message="Could not batch pull request discovery for branches",
+    )
 
     return {
         branch: _select_discovered_pull_request(
@@ -53,10 +61,30 @@ async def discover_pull_requests_by_branch(
     }
 
 
+async def load_re_request_reviewers(
+    *,
+    github_client: GithubClient,
+    pull_requests: tuple[GithubPullRequest, ...],
+) -> dict[int, list[str]]:
+    reviews = await run_bounded_tasks(
+        concurrency=DEFAULT_BOUNDED_CONCURRENCY,
+        items=pull_requests,
+        run_item=lambda pull_request: _github_request(
+            github_client.list_pull_request_reviews(pull_number=pull_request.number),
+            error_message=f"Could not load reviews for pull request #{pull_request.number}",
+        ),
+    )
+    return {
+        pull_request.number: _reviewers_to_re_request(pull_request_reviews)
+        for pull_request, pull_request_reviews in zip(pull_requests, reviews, strict=True)
+    }
+
+
 def ensure_pull_request_syncs_are_safe(
     *,
-    options: SubmitOptions,
-    pending_syncs: Sequence[PendingPullRequestSync],
+    discovered_pull_requests: Mapping[str, GithubPullRequest | None],
+    existing_only: bool,
+    prepared_revisions: Sequence[PreparedSubmitRevision],
     repository_key: tuple[str, str],
     state: ReviewState,
 ) -> None:
@@ -68,13 +96,12 @@ def ensure_pull_request_syncs_are_safe(
     those mutations have already happened.
     """
 
-    for pending_sync in pending_syncs:
-        prepared_revision = pending_sync.prepared
+    for prepared_revision in prepared_revisions:
         change_id = prepared_revision.revision.change_id
         tracked_review = state.tracked_review(change_id)
-        pull_request = pending_sync.discovered_pull_request
+        pull_request = discovered_pull_requests[prepared_revision.branch]
         if pull_request is not None and pull_request.is_queued:
-            head_change_id = pending_syncs[-1].prepared.revision.change_id
+            head_change_id = prepared_revisions[-1].revision.change_id
             raise CliError(
                 t"PR #{pull_request.number} for {ui.change_id(change_id)} is in the merge "
                 t"queue, so submit made no changes. Any new changes above it remain "
@@ -86,12 +113,12 @@ def ensure_pull_request_syncs_are_safe(
         ensure_pull_request_link_is_consistent(
             branch=prepared_revision.branch,
             change_id=change_id,
-            discovered_pull_request=pending_sync.discovered_pull_request,
+            discovered_pull_request=pull_request,
             expected_remote_target=prepared_revision.expected_remote_target,
             repository_key=repository_key,
             tracked_review=tracked_review,
         )
-        if options.existing_only and (tracked_review is None or pull_request is None):
+        if existing_only and (tracked_review is None or pull_request is None):
             raise CliError(
                 t"Cannot sync {ui.change_id(change_id)} without its existing pull request.",
                 hint=t"Repair the review link with {ui.cmd('relink')} before retrying.",
@@ -101,9 +128,7 @@ def ensure_pull_request_syncs_are_safe(
 async def sync_pull_requests(
     *,
     github_client: GithubClient,
-    options: SubmitOptions,
-    pending_syncs: tuple[PendingPullRequestSync, ...],
-    resolved_options: ResolvedSubmitOptions,
+    plans: tuple[PullRequestSyncPlan, ...],
     run: SubmitMutationRun,
     on_progress: Callable[[], None] | None = None,
 ) -> tuple[SubmittedRevision, ...]:
@@ -127,12 +152,10 @@ async def sync_pull_requests(
 
     submitted_revisions = await run_bounded_tasks(
         concurrency=DEFAULT_BOUNDED_CONCURRENCY,
-        items=pending_syncs,
-        run_item=lambda pending_sync: _sync_pull_request(
+        items=plans,
+        run_item=lambda plan: _sync_pull_request(
             github_client=github_client,
-            options=options,
-            pending_sync=pending_sync,
-            resolved_options=resolved_options,
+            plan=plan,
             run=run,
         ),
         on_success=handle_success,
@@ -143,110 +166,59 @@ async def sync_pull_requests(
 async def _sync_pull_request(
     *,
     github_client: GithubClient,
-    options: SubmitOptions,
-    pending_sync: PendingPullRequestSync,
-    resolved_options: ResolvedSubmitOptions,
+    plan: PullRequestSyncPlan,
     run: SubmitMutationRun,
 ) -> tuple[SubmittedRevision, ReviewIdentity | None, SubmittedBaseline | None]:
-    prepared_revision = pending_sync.prepared
+    prepared_revision = plan.prepared
     branch = prepared_revision.branch
     change_id = prepared_revision.revision.change_id
-    discovered_pull_request = pending_sync.discovered_pull_request
+    pull_request = plan.discovered_pull_request
     review_identity = run.state.review_identities.get(change_id)
+    action = plan.action
+    base_update, body_update, title_update = plan.content_updates
 
-    title = pending_sync.generated_description.title
-    body = pending_sync.generated_description.body
-    if discovered_pull_request is None:
-        if options.existing_only:
-            raise AssertionError("Existing-only submit reached pull request creation.")
-        pull_request = None
+    if action == "created":
         if not run.dry_run:
-            pull_request = await _create_pull_request(
-                base_branch=pending_sync.base_branch,
-                body=body,
-                draft=pending_sync.draft,
-                github_client=github_client,
-                head_branch=branch,
-                title=title,
+            pull_request = await _github_request(
+                github_client.create_pull_request(
+                    base=plan.base_branch,
+                    body=plan.generated_description.body,
+                    draft=plan.draft,
+                    head=branch,
+                    title=plan.generated_description.title,
+                ),
+                error_message=t"Could not create a pull request for branch {ui.bookmark(branch)}",
             )
-        action: PullRequestAction = "created"
-    else:
-        base_update = (
-            pending_sync.base_branch
-            if discovered_pull_request.base.ref != pending_sync.base_branch
-            else None
-        )
-        body_update = body if (discovered_pull_request.body or "") != body else None
-        title_update = title if discovered_pull_request.title != title else None
-        pull_request = discovered_pull_request
-        if base_update is None and body_update is None and title_update is None:
-            action = "unchanged"
-        else:
-            if not run.dry_run:
-                pull_request = await _update_pull_request(
-                    base_branch=base_update,
-                    body=body_update,
-                    github_client=github_client,
-                    pull_request=discovered_pull_request,
-                    title=title_update,
-                )
-            action = "updated"
-
-    if (
-        pull_request is not None
-        and pull_request.state == "open"
-        and pull_request.is_draft != pending_sync.draft
+    elif (
+        any(update is not None for update in (base_update, body_update, title_update))
+        and not run.dry_run
     ):
-        if pending_sync.draft:
-            if not run.dry_run:
-                pull_request = await _convert_pull_request_to_draft(
-                    github_client=github_client,
-                    pull_request=pull_request,
-                )
-            action = "updated"
-        else:
-            if not run.dry_run:
-                pull_request = await _mark_pull_request_ready_for_review(
-                    github_client=github_client,
-                    pull_request=pull_request,
-                )
-            action = "updated"
-
-    if (
-        not run.dry_run
-        and pull_request is not None
-        and (
-            action != "unchanged"
-            or options.labels is not None
-            or options.reviewers is not None
-            or options.team_reviewers is not None
+        assert pull_request is not None
+        pull_request = await _github_request(
+            github_client.update_pull_request(
+                pull_number=pull_request.number,
+                base=base_update,
+                body=body_update,
+                title=title_update,
+            ),
+            error_message=f"Could not update pull request #{pull_request.number}",
         )
-    ):
+
+    if pull_request is not None and not run.dry_run:
+        pull_request = await _apply_draft_action(
+            action=plan.draft_action,
+            github_client=github_client,
+            pull_request=pull_request,
+        )
+
+    if not run.dry_run and pull_request is not None and plan.metadata is not None:
         await _sync_pull_request_metadata(
             github_client=github_client,
-            labels=resolved_options.labels,
+            labels=plan.metadata.labels,
             pull_request_number=pull_request.number,
-            reviewers=resolved_options.reviewers,
-            team_reviewers=resolved_options.team_reviewers,
+            reviewers=plan.metadata.reviewers,
+            team_reviewers=plan.metadata.team_reviewers,
         )
-
-    if not run.dry_run and options.re_request and pull_request is not None:
-        re_request_reviewers = await _load_re_request_reviewers(
-            github_client=github_client,
-            pull_request_number=pull_request.number,
-        )
-        merged_reviewers = _merge_re_request_reviewers(
-            reviewers=resolved_options.reviewers,
-            re_request_reviewers=re_request_reviewers,
-        )
-        if merged_reviewers != resolved_options.reviewers:
-            await _sync_pull_request_metadata(
-                github_client=github_client,
-                labels=[],
-                pull_request_number=pull_request.number,
-                reviewers=merged_reviewers,
-                team_reviewers=[],
-            )
 
     next_identity: ReviewIdentity | None = None
     next_baseline: SubmittedBaseline | None = None
@@ -271,20 +243,31 @@ async def _sync_pull_request(
     )
 
 
-async def _load_re_request_reviewers(
+async def _apply_draft_action(
     *,
+    action: PullRequestDraftAction | None,
     github_client: GithubClient,
-    pull_request_number: int,
-) -> list[str]:
-    try:
-        reviews = await github_client.list_pull_request_reviews(
-            pull_number=pull_request_number,
+    pull_request: GithubPullRequest,
+) -> GithubPullRequest:
+    if action is None:
+        return pull_request
+    message = (
+        f"Could not return pull request #{pull_request.number} to draft for "
+        f"{github_client.repository.full_name}"
+        if action == "draft"
+        else f"Could not mark draft pull request #{pull_request.number} ready for review for "
+        f"{github_client.repository.full_name}"
+    )
+    if pull_request.node_id is None:
+        raise CliError(f"{message}: GitHub did not return a node ID.")
+    request = (
+        github_client.convert_pull_request_to_draft(pull_request_id=pull_request.node_id)
+        if action == "draft"
+        else github_client.mark_pull_request_ready_for_review(
+            pull_request_id=pull_request.node_id
         )
-    except GithubClientError as error:
-        raise CliError(
-            f"Could not load reviews for pull request #{pull_request_number}"
-        ) from error
-    return _reviewers_to_re_request(reviews)
+    )
+    return await _github_request(request, error_message=message)
 
 
 def _reviewers_to_re_request(
@@ -309,21 +292,6 @@ def _reviewers_to_re_request(
         key=lambda item: item.id,
     )
     return [review.user.login for review in selected_reviews if review.user is not None]
-
-
-def _merge_re_request_reviewers(
-    *,
-    reviewers: list[str],
-    re_request_reviewers: list[str],
-) -> list[str]:
-    merged = list(reviewers)
-    seen = set(reviewers)
-    for reviewer in re_request_reviewers:
-        if reviewer in seen:
-            continue
-        seen.add(reviewer)
-        merged.append(reviewer)
-    return merged
 
 
 def _select_discovered_pull_request(
@@ -452,29 +420,6 @@ def ensure_pull_request_link_is_consistent(
         )
 
 
-async def _create_pull_request(
-    *,
-    base_branch: str,
-    body: str,
-    draft: bool,
-    github_client: GithubClient,
-    head_branch: str,
-    title: str,
-) -> GithubPullRequest:
-    try:
-        return await github_client.create_pull_request(
-            base=base_branch,
-            body=body,
-            draft=draft,
-            head=head_branch,
-            title=title,
-        )
-    except GithubClientError as error:
-        raise CliError(
-            t"Could not create a pull request for branch {ui.bookmark(head_branch)}"
-        ) from error
-
-
 async def _sync_pull_request_metadata(
     *,
     github_client: GithubClient,
@@ -499,67 +444,6 @@ async def _sync_pull_request_metadata(
         raise CliError(
             f"Could not synchronize metadata for pull request #{pull_request_number}"
         ) from error
-
-
-async def _mark_pull_request_ready_for_review(
-    *,
-    github_client: GithubClient,
-    pull_request: GithubPullRequest,
-) -> GithubPullRequest:
-    if pull_request.node_id is None:
-        raise CliError(
-            f"Could not mark draft pull request #{pull_request.number} ready for review for "
-            f"{github_client.repository.full_name}: GitHub did not return a node ID."
-        )
-    try:
-        return await github_client.mark_pull_request_ready_for_review(
-            pull_request_id=pull_request.node_id,
-        )
-    except GithubClientError as error:
-        raise CliError(
-            f"Could not mark draft pull request #{pull_request.number} ready for review for "
-            f"{github_client.repository.full_name}"
-        ) from error
-
-
-async def _convert_pull_request_to_draft(
-    *,
-    github_client: GithubClient,
-    pull_request: GithubPullRequest,
-) -> GithubPullRequest:
-    if pull_request.node_id is None:
-        raise CliError(
-            f"Could not return pull request #{pull_request.number} to draft for "
-            f"{github_client.repository.full_name}: GitHub did not return a node ID."
-        )
-    try:
-        return await github_client.convert_pull_request_to_draft(
-            pull_request_id=pull_request.node_id,
-        )
-    except GithubClientError as error:
-        raise CliError(
-            f"Could not return pull request #{pull_request.number} to draft for "
-            f"{github_client.repository.full_name}"
-        ) from error
-
-
-async def _update_pull_request(
-    *,
-    base_branch: str | None,
-    body: str | None,
-    github_client: GithubClient,
-    pull_request: GithubPullRequest,
-    title: str | None,
-) -> GithubPullRequest:
-    try:
-        return await github_client.update_pull_request(
-            pull_number=pull_request.number,
-            base=base_branch,
-            body=body,
-            title=title,
-        )
-    except GithubClientError as error:
-        raise CliError(f"Could not update pull request #{pull_request.number}") from error
 
 
 def _submitted_identity(

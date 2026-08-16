@@ -8,23 +8,23 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 
-from .models import PendingPullRequestSync, PreparedSubmitRevision
+from .models import PreparedSubmitRevision, PullRequestSyncPlan
 
 
 async def retarget_review_bases_before_branch_push(
     *,
     github_client: GithubClient,
-    pending_syncs: tuple[PendingPullRequestSync, ...],
+    plans: tuple[PullRequestSyncPlan, ...],
     trunk_branch: str,
 ) -> None:
     """Move PR bases that would auto-close after the push to trunk first."""
 
     await run_bounded_tasks(
         concurrency=DEFAULT_BOUNDED_CONCURRENCY,
-        items=pending_syncs,
-        run_item=lambda pending_sync: _retarget_review_base_before_branch_push(
+        items=plans,
+        run_item=lambda plan: _retarget_review_base_before_branch_push(
             github_client=github_client,
-            pending_sync=pending_sync,
+            plan=plan,
             trunk_branch=trunk_branch,
         ),
     )
@@ -33,10 +33,10 @@ async def retarget_review_bases_before_branch_push(
 def predict_pull_requests_auto_closed_by_push(
     *,
     jj_client: JjClient,
-    pending_syncs: tuple[PendingPullRequestSync, ...],
+    plans: tuple[PullRequestSyncPlan, ...],
     prepared_revisions: tuple[PreparedSubmitRevision, ...],
     remote_targets: dict[str, str],
-) -> tuple[PendingPullRequestSync, ...]:
+) -> tuple[PullRequestSyncPlan, ...]:
     """Pending PRs that GitHub will auto-close (as merged) after the planned push.
 
     GitHub auto-closes an open PR when its head ref becomes contained in its base
@@ -49,9 +49,9 @@ def predict_pull_requests_auto_closed_by_push(
         prepared_revision.branch: prepared_revision.revision.commit_id
         for prepared_revision in prepared_revisions
     }
-    candidates: list[tuple[str, str, PendingPullRequestSync]] = []
-    for pending_sync in pending_syncs:
-        pull_request = pending_sync.discovered_pull_request
+    candidates: list[tuple[str, str, PullRequestSyncPlan]] = []
+    for plan in plans:
+        pull_request = plan.discovered_pull_request
         if pull_request is None or pull_request.state != "open":
             continue
         head_after_push = push_targets.get(pull_request.head.ref)
@@ -64,14 +64,14 @@ def predict_pull_requests_auto_closed_by_push(
         )
         if base_after_push is None:
             continue
-        candidates.append((head_after_push, base_after_push, pending_sync))
+        candidates.append((head_after_push, base_after_push, plan))
 
     if not candidates:
         return ()
     auto_close_heads = jj_client.query_paired_ancestor_membership(
         tuple((head, base) for head, base, _ in candidates),
     )
-    return tuple(pending_sync for head, _, pending_sync in candidates if head in auto_close_heads)
+    return tuple(plan for head, _, plan in candidates if head in auto_close_heads)
 
 
 def _resolve_post_push_commit(
@@ -90,10 +90,10 @@ def _resolve_post_push_commit(
 async def _retarget_review_base_before_branch_push(
     *,
     github_client: GithubClient,
-    pending_sync: PendingPullRequestSync,
+    plan: PullRequestSyncPlan,
     trunk_branch: str,
 ) -> None:
-    pull_request = pending_sync.discovered_pull_request
+    pull_request = plan.discovered_pull_request
     if pull_request is None:
         raise AssertionError("Pre-push retarget requires a discovered pull request.")
     try:

@@ -1,14 +1,14 @@
 [code]
-production = 20_272
+production = 20_251
 tests = 21_638
-total = 42_007
+total = 41_992
 merge = 1_691
 governed = 3_332
 governed_module = 502
 checker = 182
 
 [ruff]
-c901 = 18
+c901 = 16
 governed_c901 = 0
 
 [pytest]

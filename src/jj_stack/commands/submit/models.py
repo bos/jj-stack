@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
@@ -14,6 +14,7 @@ from jj_stack.review.branches import ResolvedReviewBranch
 from jj_stack.state.store import ReviewStateStore
 
 PullRequestAction = Literal["created", "unchanged", "updated"]
+PullRequestDraftAction = Literal["draft", "ready"]
 SubmitDraftMode = Literal["default", "draft", "draft_all", "open"]
 RemoteBranchAction = Literal["pushed", "up to date"]
 
@@ -34,15 +35,6 @@ class SubmitOptions:
     reviewers: list[str] | None
     revset: str | None
     team_reviewers: list[str] | None
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedSubmitOptions:
-    """Submit options after CLI values have been combined with config defaults."""
-
-    labels: list[str]
-    reviewers: list[str]
-    team_reviewers: list[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,15 +82,60 @@ class GeneratedDescription:
     title: str
 
 
+class PullRequestMetadataAction(NamedTuple):
+    """One planned additive metadata write for a pull request."""
+
+    labels: list[str]
+    reviewers: list[str]
+    team_reviewers: list[str]
+
+
 @dataclass(frozen=True, slots=True)
-class PendingPullRequestSync:
-    """One queued PR sync task."""
+class PullRequestSyncPlan:
+    """Complete desired state for one pull request."""
 
     base_branch: str
     discovered_pull_request: GithubPullRequest | None
     draft: bool
     generated_description: GeneratedDescription
+    metadata: PullRequestMetadataAction | None
     prepared: PreparedSubmitRevision
+
+    @property
+    def action(self) -> PullRequestAction:
+        if self.discovered_pull_request is None:
+            return "created"
+        if any(update is not None for update in self.content_updates) or self.draft_action:
+            return "updated"
+        return "unchanged"
+
+    @property
+    def content_updates(self) -> tuple[str | None, str | None, str | None]:
+        pull_request = self.discovered_pull_request
+        if pull_request is None:
+            return None, None, None
+        return (
+            self.base_branch if pull_request.base.ref != self.base_branch else None,
+            (
+                self.generated_description.body
+                if (pull_request.body or "") != self.generated_description.body
+                else None
+            ),
+            (
+                self.generated_description.title
+                if pull_request.title != self.generated_description.title
+                else None
+            ),
+        )
+
+    @property
+    def draft_action(self) -> PullRequestDraftAction | None:
+        pull_request = self.discovered_pull_request
+        if pull_request is None or pull_request.state != "open":
+            return None
+        if pull_request.is_draft == self.draft:
+            return None
+        return "draft" if self.draft else "ready"
 
 
 @dataclass(frozen=True, slots=True)

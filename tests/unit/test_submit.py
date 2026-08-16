@@ -10,16 +10,16 @@ import pytest
 
 from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.submit.command import (
-    _resolve_submit_options,
+    _pull_request_sync_plans,
 )
 from jj_stack.commands.submit.inputs import preflight_private_commits
 from jj_stack.commands.submit.models import (
+    GeneratedDescription,
     PreparedSubmitRevision,
     SubmitOptions,
 )
 from jj_stack.commands.submit.overview_comments import sync_stack_overview_comments
 from jj_stack.commands.submit.pull_requests import (
-    _reviewers_to_re_request,
     _select_discovered_pull_request,
     ensure_pull_request_link_is_consistent,
 )
@@ -32,8 +32,6 @@ from jj_stack.models.github import (
     GithubBranchRef,
     GithubIssueComment,
     GithubPullRequest,
-    GithubPullRequestReview,
-    GithubPullRequestReviewUser,
 )
 from jj_stack.models.review_state import (
     ReviewIdentity,
@@ -252,19 +250,7 @@ def test_discovered_pull_request_must_have_only_one_open_review() -> None:
         )
 
 
-def test_reviewers_to_re_request_uses_latest_actionable_state_per_reviewer() -> None:
-    reviews = _reviews(
-        (1, "alice", "APPROVED"),
-        (2, "alice", "DISMISSED"),
-        (3, "erin", "CHANGES_REQUESTED"),
-        (4, "erin", "APPROVED"),
-        (5, "dave", "COMMENTED"),
-    )
-
-    assert _reviewers_to_re_request(reviews) == ["erin"]
-
-
-def test_resolve_submit_options_prefers_cli_values_over_config() -> None:
+def test_pull_request_plan_prefers_cli_metadata_over_config() -> None:
     context = cast(
         CommandContext,
         SimpleNamespace(
@@ -276,18 +262,42 @@ def test_resolve_submit_options_prefers_cli_values_over_config() -> None:
         ),
     )
 
-    resolved = _resolve_submit_options(
+    revision = make_revision(
+        commit_id="current-commit",
+        change_id="abcdefghijk",
+        description="feature\n",
+    )
+    branch = "jj-stack/feature-abcdefgh"
+    plans = _pull_request_sync_plans(
+        bottom_base_branch="main",
         context=context,
+        discovered_pull_requests={branch: _github_pull_request(number=17, branch=branch)},
+        drafts={revision.change_id: False},
+        generated_descriptions={
+            revision.change_id: GeneratedDescription(body="", title="feature")
+        },
         options=replace(
             _submit_options(),
             labels=["cli-label"],
             reviewers=["cli-user"],
         ),
+        prepared_revisions=(
+            PreparedSubmitRevision(
+                branch=branch,
+                expected_remote_target="old-commit",
+                remote_action="pushed",
+                revision=revision,
+            ),
+        ),
+        prior_reviewers={},
     )
 
-    assert resolved.labels == ["cli-label"]
-    assert resolved.reviewers == ["cli-user"]
-    assert resolved.team_reviewers == ["config-team"]
+    plan = plans[0]
+    assert plan.action == "unchanged"
+    assert plan.metadata is not None
+    assert plan.metadata.labels == ["cli-label"]
+    assert plan.metadata.reviewers == ["cli-user"]
+    assert plan.metadata.team_reviewers == ["config-team"]
 
 
 def _submit_options() -> SubmitOptions:
@@ -319,35 +329,6 @@ def _local_stack(*revisions: LocalRevision) -> LocalStack:
         revisions=revisions,
         selected_revset=revisions[-1].change_id,
         trunk=trunk,
-    )
-
-
-def _prepared_revision(
-    *,
-    branch: str,
-    change_id: str,
-    commit_id: str,
-) -> PreparedSubmitRevision:
-    return PreparedSubmitRevision(
-        branch=branch,
-        expected_remote_target="old-commit",
-        remote_action="pushed",
-        revision=make_revision(
-            commit_id=commit_id,
-            change_id=change_id,
-            description=f"{branch}\n",
-        ),
-    )
-
-
-def _reviews(*specs: tuple[int, str, str]) -> tuple[GithubPullRequestReview, ...]:
-    return tuple(
-        GithubPullRequestReview(
-            id=review_id,
-            state=state,
-            user=GithubPullRequestReviewUser(login=login),
-        )
-        for review_id, login, state in specs
     )
 
 
