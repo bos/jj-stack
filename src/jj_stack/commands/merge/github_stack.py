@@ -217,7 +217,6 @@ def validate_terminal_retry(
     revisions = merge.planned
     error = merge_precondition_error(
         inactive_allowed=frozenset(revision.change_id for revision in revisions),
-        expected_bases={},
         expected_repository=github.repository,
         expected_trunk_branch=execution.trunk_branch,
         observation=observation,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 import jj_stack.ui as ui
 from jj_stack.commands.merge.models import MergeRevision
 from jj_stack.github.resolution import GithubRepoAddress
@@ -14,7 +12,6 @@ from jj_stack.ui import Message
 
 def merge_precondition_error(
     *,
-    expected_bases: Mapping[str, tuple[str, ...]],
     expected_repository: GithubRepoAddress,
     expected_trunk_branch: str,
     observation: RepositoryObservation,
@@ -37,7 +34,6 @@ def merge_precondition_error(
         return "GitHub no longer reports the planned trunk branch as its default"
     for revision in revisions:
         error = _review_precondition_error(
-            expected_bases=expected_bases.get(revision.change_id, ()),
             expected_repository=expected_repository,
             observed=observation.reviews[revision.change_id],
             planned=revision,
@@ -85,7 +81,6 @@ def explain_precondition(reason: str, *, change_id: str, sync_target: str) -> Me
 
 def _review_precondition_error(
     *,
-    expected_bases: tuple[str, ...],
     expected_repository: GithubRepoAddress,
     observed: ReviewObservation,
     planned: MergeRevision,
@@ -96,7 +91,6 @@ def _review_precondition_error(
         observed=observed,
         planned=planned,
     ) or _pull_request_precondition_error(
-        expected_bases=expected_bases,
         observed=observed,
         planned=planned,
         inactive_allowed=inactive_allowed,
@@ -143,7 +137,6 @@ def _local_precondition_error(
 
 def _pull_request_precondition_error(
     *,
-    expected_bases: tuple[str, ...],
     observed: ReviewObservation,
     planned: MergeRevision,
     inactive_allowed: bool,
@@ -165,9 +158,7 @@ def _pull_request_precondition_error(
         return f"the pull request linked to {planned.change_id} changed"
     if pull_request.state == "merged" and not inactive_allowed:
         return f"pull request #{pull_request.number} is already merged"
-    if (pull_request.state != "open" and not inactive_allowed) or (
-        expected_bases and pull_request.base.ref not in expected_bases
-    ):
+    if pull_request.state != "open" and not inactive_allowed:
         return f"pull request #{pull_request.number} state or base branch changed"
     if pull_request.is_draft and not inactive_allowed:
         return f"pull request #{pull_request.number} is now a draft"

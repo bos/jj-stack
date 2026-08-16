@@ -32,7 +32,6 @@ def build_merge_plan(
             boundary = _boundary(local, t"run {ui.cmd('relink')} before merging")
             break
         error = merge_precondition_error(
-            expected_bases={},
             expected_repository=repository,
             expected_trunk_branch=trunk_branch,
             observation=observation,

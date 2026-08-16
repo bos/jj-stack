@@ -1,9 +1,9 @@
 [code]
-production = 20_251
-tests = 21_638
-total = 41_992
-merge = 1_691
-governed = 3_332
+production = 20_243
+tests = 21_637
+total = 41_983
+merge = 1_683
+governed = 3_324
 governed_module = 502
 checker = 182
 

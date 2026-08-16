@@ -181,6 +181,7 @@ def _prepare_merge(
         containing_change_id=target_change_id,
         context=context,
         fetch_remote_state=True,
+        observe_remote_targets=False,
         revset=revset,
     )
     prepared = prepared_status.prepared
@@ -263,6 +264,7 @@ async def _stream_merge_async(
                 change_ids=tuple(revision.change_id for revision in prepared.stack.revisions),
                 context=prepared_merge.context,
                 github_client=github_client,
+                github_repository_snapshot=github_repository_state,
                 remote_name=remote.name,
             )
         except GithubClientError as error:

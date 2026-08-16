@@ -163,7 +163,6 @@ def test_merge_preconditions_reject_repository_drift() -> None:
 
     assert (
         merge_precondition_error(
-            expected_bases={},
             expected_repository=expected_repository,
             expected_trunk_branch="main",
             observation=observation,
