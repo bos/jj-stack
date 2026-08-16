@@ -146,7 +146,7 @@ def _run_list(
     )
     if not ordered:
         if as_json:
-            console.output(
+            console.machine_output(
                 json.dumps(
                     _json_list_payload(orphan_rows=orphan_rows, rows=()),
                     indent=2,
@@ -222,7 +222,7 @@ def _run_list(
     )
     incomplete = bool(duplicate_branches) or any(row.incomplete for row in rows)
     if as_json:
-        console.output(
+        console.machine_output(
             json.dumps(
                 _json_list_payload(orphan_rows=orphan_rows, rows=rows),
                 indent=2,

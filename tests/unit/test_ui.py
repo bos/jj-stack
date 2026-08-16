@@ -71,6 +71,21 @@ def test_time_output_prefix_uses_prefix_and_timestamp_semantic_style(
     assert output.getvalue() == "\x1b[1;36m[2.500000] \x1b[0mtimed\n"
 
 
+def test_machine_output_bypasses_terminal_formatting() -> None:
+    output = StringIO()
+    payload = '{"url":"https://example.test/' + ("long-path/" * 20) + '"}'
+
+    with console_module.configured_console(
+        stdout=output,
+        stderr=StringIO(),
+        color_mode="always",
+        time_output=True,
+    ):
+        console_module.machine_output(payload)
+
+    assert output.getvalue() == f"{payload}\n"
+
+
 def test_semantic_style_uses_machine_readable_jj_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -151,7 +151,7 @@ def _run_status(
             rendered, incomplete = _json_prepared_status(
                 prepared_status=prepared_status,
             )
-            console.output(json.dumps(_view_json_payload(stacks=(rendered,)), indent=2))
+            console.machine_output(json.dumps(_view_json_payload(stacks=(rendered,)), indent=2))
             return EXIT_INCOMPLETE if incomplete else 0
         exit_code = _render_prepared_status(
             prepared_status=prepared_status,
@@ -225,7 +225,7 @@ def _run_status(
         )
         printed_blocks += 1
     if as_json:
-        console.output(
+        console.machine_output(
             json.dumps(
                 _view_json_payload(
                     stacks=tuple(json_stacks),

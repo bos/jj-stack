@@ -352,6 +352,7 @@ _STDERR_CONSOLE: _ConfiguredConsole
 _SEMANTIC_STYLES: SemanticStyles | None
 _REQUESTED_COLOR_MODE: RequestedColorMode | None = None
 _ACTIVE_COLOR_MODE: ColorMode = "auto"
+_STDOUT_STREAM: IO[str] = sys.stdout
 _STDERR_STREAM: IO[str] = sys.stderr
 
 
@@ -383,12 +384,14 @@ def configured_console(
     global _SEMANTIC_STYLES
     global _REQUESTED_COLOR_MODE
     global _ACTIVE_COLOR_MODE
+    global _STDOUT_STREAM
     global _STDERR_STREAM
     previous_stdout = _STDOUT_CONSOLE
     previous_stderr = _STDERR_CONSOLE
     previous_semantic_styles = _SEMANTIC_STYLES
     previous_requested_color_mode = _REQUESTED_COLOR_MODE
     previous_active_color_mode = _ACTIVE_COLOR_MODE
+    previous_stdout_stream = _STDOUT_STREAM
     previous_stderr_stream = _STDERR_STREAM
     _STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles(
         cli_args=cli_args,
@@ -400,6 +403,7 @@ def configured_console(
     )
     _REQUESTED_COLOR_MODE = requested_color_mode
     _ACTIVE_COLOR_MODE = color_mode
+    _STDOUT_STREAM = sys.stdout if stdout is None else stdout
     _STDERR_STREAM = sys.stderr if stderr is None else stderr
     try:
         yield
@@ -409,6 +413,7 @@ def configured_console(
         _SEMANTIC_STYLES = previous_semantic_styles
         _REQUESTED_COLOR_MODE = previous_requested_color_mode
         _ACTIVE_COLOR_MODE = previous_active_color_mode
+        _STDOUT_STREAM = previous_stdout_stream
         _STDERR_STREAM = previous_stderr_stream
 
 
@@ -486,6 +491,15 @@ def output(*objects: ConsoleObject, **kwargs) -> None:
 
     kwargs.setdefault("markup", False)
     _STDOUT_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
+
+
+def machine_output(text: str) -> None:
+    """Write one machine-readable payload without terminal rendering."""
+
+    _STDOUT_STREAM.write(text)
+    if not text.endswith("\n"):
+        _STDOUT_STREAM.write("\n")
+    _STDOUT_STREAM.flush()
 
 
 def error(*objects: ConsoleObject, **kwargs) -> None:
