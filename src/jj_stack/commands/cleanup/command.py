@@ -22,13 +22,13 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._action_recorder import ActionRecorder
 from jj_stack.commands._cleanup_actions import (
     OverviewCommentLookup,
     ReviewMutationAction,
     apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
     check_tracked_review,
+    emit_action_row,
     find_overview_comment,
     github_stack_cleanup_blocker,
     plan_review_cleanup,
@@ -63,17 +63,28 @@ from .shared import (
     CleanupResult,
     PreparedCleanup,
     PreparedCleanupChange,
-    _build_action_streamer,
-    _emit_output_lines,
-    _render_cleanup_action_header,
-    _render_cleanup_postamble,
 )
 from .stale import (
     LocalCleanupObservation,
-    _local_cleanup_observations,
+    local_cleanup_observations,
 )
 
 HELP = "Remove review data that no active pull request needs"
+
+
+def _build_action_streamer(*, header: str) -> Callable[[CleanupAction], None]:
+    """Print the action header once, then stream actions as they arrive."""
+
+    header_printed = False
+
+    def emit_action(action: CleanupAction) -> None:
+        nonlocal header_printed
+        if not header_printed:
+            console.output(header)
+            header_printed = True
+        emit_action_row(kind=action.kind, status=action.status, body=action.body)
+
+    return emit_action
 
 
 def cleanup(
@@ -135,7 +146,7 @@ def _run_cleanup_command(
         if selected_change_ids is None
         else selected_change_ids
     )
-    local_observations = _local_cleanup_observations(
+    local_observations = local_cleanup_observations(
         change_ids=observed_change_ids,
         context=prepared_cleanup.context,
     )
@@ -147,13 +158,18 @@ def _run_cleanup_command(
     result = asyncio.run(
         _run_cleanup_async(
             on_action=_build_action_streamer(
-                header=_render_cleanup_action_header(dry_run=prepared_cleanup.dry_run),
+                header=(
+                    "Planned cleanup actions:"
+                    if prepared_cleanup.dry_run
+                    else "Applied cleanup actions:"
+                ),
             ),
             prepared_cleanup=prepared_cleanup,
             local_observations=local_observations,
         )
     )
-    _emit_output_lines(_render_cleanup_postamble(result=result))
+    if not result.actions:
+        console.output("No cleanup actions needed.")
     return 1 if any(action.status == "blocked" for action in result.actions) else 0
 
 
@@ -180,7 +196,7 @@ async def cleanup_tracked_reviews(
         selected_change_ids=change_ids,
         state=state,
     )
-    local_observations = _local_cleanup_observations(
+    local_observations = local_cleanup_observations(
         change_ids=change_ids,
         context=context,
     )
@@ -197,7 +213,7 @@ async def cleanup_tracked_reviews(
     return await _run_cleanup_async(
         github_client=github_client,
         on_action=_build_action_streamer(
-            header=_render_cleanup_action_header(dry_run=dry_run),
+            header="Planned cleanup actions:" if dry_run else "Applied cleanup actions:",
         ),
         prepared_cleanup=prepared_cleanup,
         preview_detached_dependents=(planned_detached_dependents if dry_run else frozenset()),
@@ -294,10 +310,15 @@ async def _run_cleanup_async(
     preview_detached_dependents: frozenset[int] = frozenset(),
     local_observations: dict[str, LocalCleanupObservation],
 ) -> CleanupResult:
-    recorder = ActionRecorder[CleanupAction](on_action=on_action)
+    actions: list[CleanupAction] = []
+
+    def record_action(action: CleanupAction) -> None:
+        actions.append(action)
+        if on_action is not None:
+            on_action(action)
+
     prepared_changes = _run_local_cleanup_pass(
         prepared_cleanup=prepared_cleanup,
-        record_action=recorder.record,
         local_observations=local_observations,
     )
     github_target = prepared_cleanup.github_target
@@ -308,7 +329,7 @@ async def _run_cleanup_async(
                 prepared_changes=prepared_changes,
                 prepared_cleanup=prepared_cleanup,
                 preview_detached_dependents=preview_detached_dependents,
-                record_action=recorder.record,
+                record_action=record_action,
             )
         else:
             async with build_github_client(repository=github_target.repository) as client:
@@ -317,11 +338,11 @@ async def _run_cleanup_async(
                     prepared_changes=prepared_changes,
                     prepared_cleanup=prepared_cleanup,
                     preview_detached_dependents=preview_detached_dependents,
-                    record_action=recorder.record,
+                    record_action=record_action,
                 )
     elif prepared_changes:
         for prepared_change in prepared_changes:
-            recorder.record(
+            record_action(
                 CleanupAction(
                     kind="tracking",
                     status="blocked",
@@ -330,13 +351,12 @@ async def _run_cleanup_async(
                     t"cannot be resolved",
                 )
             )
-    return CleanupResult(actions=recorder.as_tuple())
+    return CleanupResult(actions=tuple(actions))
 
 
 def _run_local_cleanup_pass(
     *,
     prepared_cleanup: PreparedCleanup,
-    record_action: Callable[[CleanupAction], None],
     local_observations: dict[str, LocalCleanupObservation],
 ) -> tuple[PreparedCleanupChange, ...]:
     prepared_changes: list[PreparedCleanupChange] = []

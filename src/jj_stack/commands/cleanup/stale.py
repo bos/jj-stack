@@ -16,7 +16,7 @@ class LocalCleanupObservation:
     stale_reason: str | None
 
 
-def _local_cleanup_observations(
+def local_cleanup_observations(
     *,
     change_ids: tuple[str, ...],
     context: CommandContext,

@@ -94,7 +94,7 @@ from .pull_requests import (
     ensure_pull_request_syncs_are_safe,
     sync_pull_requests,
 )
-from .render import print_submit_result, render_selected_line
+from .render import print_selected_line, print_submit_result
 from .revisions import prepare_submit_revisions
 
 HELP = "Send a `jj` stack to GitHub for review"
@@ -185,15 +185,6 @@ def run_submit(
             on_prepared=on_prepared,
             options=options,
         ),
-    )
-
-
-def print_selected_line(selected_change_id: str, selected_subject: str) -> None:
-    console.output(
-        render_selected_line(
-            selected_change_id=selected_change_id,
-            selected_subject=selected_subject,
-        )
     )
 
 

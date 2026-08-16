@@ -27,7 +27,6 @@ from jj_stack.commands._json_status import (
     review_change_json,
     saved_pull_request_json,
 )
-from jj_stack.commands._stale_stacks import emit_stale_stacks_advisory
 from jj_stack.console import requested_color_mode
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, ErrorMessage, error_message
 from jj_stack.github.resolution import (
@@ -44,6 +43,7 @@ from jj_stack.review.change_status import (
     ReviewChangeStatus,
     classify_review_status_revision,
     enumerate_orphaned_records,
+    submitted_state_disagreement,
 )
 from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.status import (
@@ -329,11 +329,31 @@ def _emit_stale_stacks_advisory(
     than naming one mutation.
     """
 
-    emit_stale_stacks_advisory(
-        stacks=discovered,
-        state=state,
-        single_subject="Tracked stack",
-        plural_subject="Tracked stacks",
+    stale_heads = tuple(
+        stack.head.change_id
+        for stack in discovered
+        if submitted_state_disagreement(state, (stack,))
+    )
+    if not stale_heads:
+        return
+    if len(stale_heads) == 1:
+        head = stale_heads[0][:8]
+        console.warning(
+            (
+                "Tracked stack has changed since its last submit; ",
+                t"inspect with {ui.cmd(f'jj-stack view {head}')} or refresh with "
+                t"{ui.cmd(f'jj-stack submit {head}')}.",
+            )
+        )
+        return
+    heads_fragments = ui.join(ui.change_id, stale_heads)
+    console.warning(
+        (
+            "Tracked stacks have changed since their last submit; ",
+            t"inspect with {ui.cmd('jj-stack view <head>')} or refresh with "
+            t"{ui.cmd('jj-stack submit <head>')}: ",
+            *heads_fragments,
+        )
     )
 
 

@@ -21,7 +21,7 @@ from jj_stack.models.github import GithubIssueComment, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
 from jj_stack.review.branches import review_branch_matches_change
 from jj_stack.review.observation import RepositoryObservation
-from jj_stack.ui import Message, plain_text
+from jj_stack.ui import Message
 
 ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
 ReviewMutationActionStatus = Literal["applied", "blocked", "planned"]
@@ -35,12 +35,6 @@ class ReviewMutationAction:
     kind: str
     status: ReviewMutationActionStatus
     body: ReviewMutationActionBody
-
-    @property
-    def message(self) -> str:
-        """Return the plain-text form of this action body."""
-
-        return plain_text(self.body)
 
 
 def check_tracked_review(

@@ -869,7 +869,9 @@ def _parse_view_command_args(argv: Sequence[str]) -> _ParsedViewCommandArgs | No
                 )
             index += 1
             continue
-        if arg in _VIEW_SELECTOR_FLAGS or _is_grouped_view_flag(arg):
+        if arg in _VIEW_SELECTOR_FLAGS or (
+            arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) <= {"f", "v", "h"}
+        ):
             options.append(arg)
             index += 1
             continue
@@ -911,10 +913,6 @@ def _find_subcommand_index(argv: Sequence[str]) -> int | None:
             continue
         return index
     return None
-
-
-def _is_grouped_view_flag(arg: str) -> bool:
-    return arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) <= {"f", "v", "h"}
 
 
 def _add_command_parser(

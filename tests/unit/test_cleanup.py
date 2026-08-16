@@ -17,6 +17,7 @@ from jj_stack.review.observation import (
     duplicate_review_claim_change_ids,
 )
 from jj_stack.state.store import ReviewStateStore
+from jj_stack.ui import plain_text
 from tests.support.revision_helpers import make_revision
 
 CHANGE_ID = "aaaaaaaaabcdefgh"
@@ -70,7 +71,7 @@ def test_local_cleanup_observations_flag_changes_outside_review_stacks(
         ),
     )
 
-    observations = stale_module._local_cleanup_observations(
+    observations = stale_module.local_cleanup_observations(
         change_ids=("live-change", "stale-change"),
         context=_fake_context(jj_client=cast(JjClient, FakeJjClient())),
     )
@@ -115,7 +116,7 @@ def test_cleanup_blocks_when_the_exact_remote_branch_drifted() -> None:
     assert update is None
     assert blocker is not None
     assert blocker.kind == "remote branch"
-    assert "different revision" in blocker.message
+    assert "different revision" in plain_text(blocker.body)
 
 
 def _fake_context(

@@ -210,10 +210,6 @@ class JjClient:
     def repo_root(self) -> Path:
         return self._repo_root
 
-    @property
-    def cli_args(self) -> JjCliArgs:
-        return self._cli_args
-
     def resolve_revision(self, revset: str) -> LocalRevision:
         """Resolve a revset to exactly one revision."""
 

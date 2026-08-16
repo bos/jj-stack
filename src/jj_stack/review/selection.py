@@ -12,8 +12,6 @@ from jj_stack.github.pull_request_refs import (
 )
 from jj_stack.github.resolution import parse_github_repo, select_submit_remote
 from jj_stack.jj.client import JjClient
-from jj_stack.models.review_state import ReviewIdentity, ReviewState
-from jj_stack.review.repository import observe_repository_paths
 from jj_stack.state.store import ReviewStateStore
 
 
@@ -53,76 +51,6 @@ def parse_comma_separated_flag_values(
     return parsed_values
 
 
-def resolve_orphaned_pull_request(
-    *,
-    jj_client: JjClient,
-    pull_request_reference: str,
-    state: ReviewState,
-) -> tuple[int, str] | None:
-    """Resolve `--pull-request` to a saved record whose change is not in any live stack.
-
-    Returns `(pull_request_number, change_id)` only when:
-    - exactly one tracked record matches the pull request number, and
-    - that change is absent from every currently supported review stack.
-
-    Returns `None` when the change still participates in a live stack (let the
-    live-link path handle it) or when no matching tracked record exists (let
-    the live-link path raise its targeted diagnostic).
-
-    Raises `CliError` when two or more tracked records claim the same pull request number. This
-    can happen when tracking remains from a repository used before the remote was retargeted.
-
-    The membership check matches what `list` renders as an `orphan` row: a visible revision
-    outside the supported review stacks should still be cleaned up through this path rather than
-    routed back through the live-link selector.
-    """
-
-    pull_request_number = _parse_repo_pull_request_number(
-        jj_client=jj_client,
-        pull_request_reference=pull_request_reference,
-    )
-    matching_change_ids = _active_change_ids_for_pull_request(
-        pull_request_number=pull_request_number,
-        state=state,
-    )
-    if not matching_change_ids:
-        return None
-    if len(matching_change_ids) > 1:
-        rendered = ", ".join(change_id[:8] for change_id in sorted(matching_change_ids))
-        raise AmbiguousSelectionError(
-            t"PR #{pull_request_number} is claimed by multiple tracked records ({rendered}).",
-            hint=(
-                t"Use the change ID to select the intended review, or point the remote at its "
-                t"repository before retrying."
-            ),
-        )
-    change_id = matching_change_ids[0]
-    repository_paths = observe_repository_paths(
-        jj_client=jj_client,
-        state=state,
-    )
-    if any(
-        revision.change_id == change_id
-        for path in repository_paths.paths
-        for revision in path.stack.revisions
-    ):
-        return None
-    return pull_request_number, change_id
-
-
-def resolve_pull_request_number(
-    *,
-    jj_client: JjClient,
-    pull_request_reference: str,
-) -> int:
-    """Resolve a pull-request selector as a pull request number for this repo."""
-
-    return _parse_repo_pull_request_number(
-        jj_client=jj_client,
-        pull_request_reference=pull_request_reference,
-    )
-
-
 def resolve_linked_change_for_pull_request(
     *,
     jj_client: JjClient,
@@ -136,15 +64,16 @@ def resolve_linked_change_for_pull_request(
             t"Use either {ui.cmd('<revset>')} or {ui.cmd('--pull-request')}, not both."
         )
 
-    pull_request_number = _parse_repo_pull_request_number(
+    pull_request_number = resolve_pull_request_number(
         jj_client=jj_client,
         pull_request_reference=pull_request_reference,
     )
     state = ReviewStateStore.for_repo(jj_client.repo_root).load()
-    matching_change_ids = _active_change_ids_for_pull_request(
-        pull_request_number=pull_request_number,
-        state=state,
-    )
+    matching_change_ids = [
+        change_id
+        for change_id, review_identity in state.review_identities.items()
+        if review_identity.pr_number == pull_request_number
+    ]
     if not matching_change_ids:
         raise CliError(
             t"PR #{pull_request_number} is not linked to any local change.",
@@ -163,30 +92,7 @@ def resolve_linked_change_for_pull_request(
     return pull_request_number, matching_change_ids[0]
 
 
-def _active_change_ids_for_pull_request(
-    *,
-    pull_request_number: int,
-    state: ReviewState,
-) -> list[str]:
-    return [
-        change_id
-        for change_id, review_identity in state.review_identities.items()
-        if _identity_links_pull_request(
-            review_identity,
-            pull_request_number=pull_request_number,
-        )
-    ]
-
-
-def _identity_links_pull_request(
-    review_identity: ReviewIdentity,
-    *,
-    pull_request_number: int,
-) -> bool:
-    return review_identity.pr_number == pull_request_number
-
-
-def _parse_repo_pull_request_number(
+def resolve_pull_request_number(
     *,
     jj_client: JjClient,
     pull_request_reference: str,

@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-import jj_stack.console as console
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands._cleanup_actions import emit_action_row
 from jj_stack.github.resolution import (
     GithubTarget,
     UnresolvedGithubTarget,
@@ -19,7 +16,7 @@ from jj_stack.models.review_state import (
     ReviewState,
     SubmittedBaseline,
 )
-from jj_stack.ui import Message, plain_text
+from jj_stack.ui import Message
 
 CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
 type CleanupBody = Message
@@ -32,12 +29,6 @@ class CleanupAction:
     kind: str
     status: CleanupActionStatus
     body: CleanupBody
-
-    @property
-    def message(self) -> str:
-        """Return the plain-text form of this action body."""
-
-        return plain_text(self.body)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,40 +66,3 @@ class PreparedCleanupChange:
     review_identity: ReviewIdentity
     stale_reason: str | None
     submitted_baseline: SubmittedBaseline
-
-
-def _render_cleanup_action_header(*, dry_run: bool) -> str:
-    """Render the cleanup action section header."""
-
-    return "Planned cleanup actions:" if dry_run else "Applied cleanup actions:"
-
-
-def _render_cleanup_postamble(*, result: CleanupResult) -> tuple[str, ...]:
-    """Render cleanup lines that only depend on the completed result."""
-
-    if not result.actions:
-        return ("No cleanup actions needed.",)
-    return ()
-
-
-def _emit_output_lines(lines: tuple[str, ...]) -> None:
-    for line in lines:
-        console.output(line)
-
-
-def _build_action_streamer(
-    *,
-    header: str,
-) -> Callable[[CleanupAction], None]:
-    """Print the action header once, then stream actions as they arrive."""
-
-    header_printed = False
-
-    def emit_action(action: CleanupAction) -> None:
-        nonlocal header_printed
-        if not header_printed:
-            console.output(header)
-            header_printed = True
-        emit_action_row(kind=action.kind, status=action.status, body=action.body)
-
-    return emit_action

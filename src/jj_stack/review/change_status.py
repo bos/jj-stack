@@ -18,11 +18,6 @@ if TYPE_CHECKING:
     from jj_stack.review.status import PullRequestLookup, ReviewStatusRevision
 
 LocalReviewState = Literal["present", "divergent", "orphaned", "missing"]
-RemoteBranchReviewState = Literal[
-    "absent",
-    "current",
-    "drifted",
-]
 PullRequestLifecycle = Literal[
     "none",
     "open",
@@ -45,8 +40,6 @@ class ReviewChangeStatus:
     """Orthogonal review state axes for one logical change."""
 
     local: LocalReviewState
-    remote_branch: RemoteBranchReviewState
-    remote_branch_matches_commit: bool | None
     pr_lifecycle: PullRequestLifecycle
     pr_draft: bool | None
     pr_queued: bool | None
@@ -98,20 +91,16 @@ def classify_review_status_revision(
 
     local: LocalReviewState = "divergent" if revision.local_divergent else "present"
     return classify_review_change(
-        commit_id=revision.commit_id,
         local=local,
         pull_request_lookup=revision.pull_request_lookup,
-        remote_target=revision.remote_target,
         review_identity=revision.review_identity,
     )
 
 
 def classify_review_change(
     *,
-    commit_id: str | None,
     local: LocalReviewState,
     pull_request_lookup: PullRequestLookup | None,
-    remote_target: str | None,
     review_identity: ReviewIdentity | None = None,
 ) -> ReviewChangeStatus:
     """Derive review status axes from already-loaded observations."""
@@ -119,13 +108,6 @@ def classify_review_change(
     lifecycle, pr_lookup_error = _pull_request_lifecycle(pull_request_lookup)
     return ReviewChangeStatus(
         local=local,
-        remote_branch=_remote_branch_state(
-            commit_id=commit_id,
-            remote_target=remote_target,
-        ),
-        remote_branch_matches_commit=(
-            None if commit_id is None or remote_target is None else remote_target == commit_id
-        ),
         pr_lifecycle=lifecycle,
         pr_draft=_pull_request_draft(
             lifecycle=lifecycle,
@@ -184,18 +166,6 @@ def submitted_state_disagreement(
             if state.submitted_baselines[revision.change_id].commit_id != revision.commit_id:
                 disagreements.append(revision.change_id)
     return tuple(disagreements)
-
-
-def _remote_branch_state(
-    *,
-    commit_id: str | None,
-    remote_target: str | None,
-) -> RemoteBranchReviewState:
-    if remote_target is None:
-        return "absent"
-    if commit_id is not None and remote_target == commit_id:
-        return "current"
-    return "drifted"
 
 
 def _pull_request_lifecycle(

@@ -34,7 +34,6 @@ def _identity(*, pr_number: int = 1) -> ReviewIdentity:
 
 def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
     status = classify_review_change(
-        commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(
             message=None,
@@ -43,7 +42,6 @@ def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
             review_decision_error=None,
             state="open",
         ),
-        remote_target="commit-1",
         review_identity=_identity(),
     )
 
@@ -54,7 +52,6 @@ def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
 
 def test_classifier_marks_missing_lookup_with_saved_pr_identity_as_stale_link() -> None:
     status = classify_review_change(
-        commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(
             message=None,
@@ -63,7 +60,6 @@ def test_classifier_marks_missing_lookup_with_saved_pr_identity_as_stale_link() 
             review_decision_error=None,
             state="missing",
         ),
-        remote_target=None,
         review_identity=_identity(),
     )
 
@@ -73,43 +69,16 @@ def test_classifier_marks_missing_lookup_with_saved_pr_identity_as_stale_link() 
 
 def test_classifier_reports_saved_review_identity() -> None:
     status = classify_review_change(
-        commit_id="commit-1",
         local="present",
         pull_request_lookup=None,
-        remote_target=None,
         review_identity=_identity(),
     )
 
     assert status.saved_review_identity is True
 
 
-def test_classifier_marks_direct_remote_target_current() -> None:
-    current_status = classify_review_change(
-        commit_id="commit-1",
-        local="present",
-        pull_request_lookup=None,
-        remote_target="commit-1",
-    )
-
-    assert current_status.remote_branch == "current"
-    assert current_status.remote_branch_matches_commit is True
-
-
-def test_classifier_marks_direct_remote_target_that_does_not_match_commit() -> None:
-    status = classify_review_change(
-        commit_id="commit-2",
-        local="present",
-        pull_request_lookup=None,
-        remote_target="commit-1",
-    )
-
-    assert status.remote_branch == "drifted"
-    assert status.remote_branch_matches_commit is False
-
-
 def test_classifier_reports_unknown_review_decision_when_lookup_errors() -> None:
     status = classify_review_change(
-        commit_id="commit-1",
         local="present",
         pull_request_lookup=PullRequestLookup(
             message=None,
@@ -118,7 +87,6 @@ def test_classifier_reports_unknown_review_decision_when_lookup_errors() -> None
             review_decision_error="GitHub returned 502",
             state="open",
         ),
-        remote_target=None,
         review_identity=_identity(),
     )
 

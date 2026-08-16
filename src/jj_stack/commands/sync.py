@@ -50,9 +50,9 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands.cleanup.command import cleanup_tracked_reviews
-from jj_stack.commands.submit.command import print_selected_line, run_submit_async
+from jj_stack.commands.submit.command import run_submit_async
 from jj_stack.commands.submit.models import SubmitOptions
-from jj_stack.commands.submit.render import print_submit_result
+from jj_stack.commands.submit.render import print_selected_line, print_submit_result
 from jj_stack.commands.sync_global import run_global_recovery
 from jj_stack.errors import (
     CliError,

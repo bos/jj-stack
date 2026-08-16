@@ -81,26 +81,6 @@ class GithubClientError(SummarizedError):
             return self.detail()
         return f"GitHub {self.status_code}"
 
-    def github_message(self) -> str:
-        """Return GitHub's own explanation, without the status code or JSON envelope.
-
-        Rejections are quoted back to the user, so `Pull Request is not mergeable` has to reach
-        them instead of `405 {"message": "Pull Request is not mergeable"}`.
-        """
-
-        detail = self.detail()
-        head, _, rest = detail.partition(" ")
-        body = rest if head.isdigit() and rest else detail
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            return detail
-        if isinstance(payload, dict):
-            value = payload.get("message")
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return detail
-
     def user_facing_reason(self) -> str:
         """Render a concise failure reason suitable after an action prefix."""
 

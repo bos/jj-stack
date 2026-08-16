@@ -64,16 +64,17 @@ def print_submit_result(result: SubmitResult) -> None:
             console.output(ui.prefixed_line("Top of stack: ", top_pull_request_url))
 
 
-def render_selected_line(
-    *,
+def print_selected_line(
     selected_change_id: str,
     selected_subject: str,
-) -> ui.PrefixedLine:
-    """Render the selected stack head line."""
+) -> None:
+    """Print the selected stack head line."""
 
-    return ui.prefixed_line(
-        "Selected: ",
-        t"{selected_subject} ({ui.change_id(selected_change_id)})",
+    console.output(
+        ui.prefixed_line(
+            "Selected: ",
+            t"{selected_subject} ({ui.change_id(selected_change_id)})",
+        )
     )
 
 
