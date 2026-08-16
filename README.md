@@ -120,8 +120,7 @@ GitHub PRs safely:
 gh skill install bos/jj-stack jj-stack
 ```
 
-The [skill source](https://github.com/bos/jj-stack/blob/main/skills/jj-stack/SKILL.md) contains the
-workflow it teaches.
+See the [skill source](https://github.com/bos/jj-stack/blob/main/skills/jj-stack/SKILL.md).
 
 ## Performance
 
@@ -133,6 +132,7 @@ reduces its impact with:
 
 - GraphQL batch requests where possible
 - concurrent use of the GitHub REST API
+- periodic audits that its queries are minimal in extent
 
-`jj-stack` also batches calls to `jj` and minimizes the amount of work those calls must
-do.
+In pursuit of good performance, `jj-stack` also batches calls to `jj` and minimizes the amount
+of work those calls must do.
