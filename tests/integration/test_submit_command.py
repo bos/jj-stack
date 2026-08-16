@@ -2235,6 +2235,33 @@ def test_submit_explicit_reviewers_apply_to_unchanged_pull_request(
     assert pull_request.requested_team_reviewers == ["platform"]
 
 
+def test_submit_explicit_label_applies_to_unchanged_pull_request(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state-home"))
+    config_path = write_config(tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    app = create_app(FakeGithubState.single_repository(fake_repo))
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=app,
+        fake_repo=fake_repo,
+        modules=("jj_stack.commands.submit.command",),
+    )
+
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    assert run_main(repo, config_path, "submit", "--label", "needs-review") == 0
+    capsys.readouterr()
+
+    assert fake_repo.pull_requests[1].labels == ["needs-review"]
+
+
 def test_submit_re_request_adds_prior_approved_reviewer_through_github(
     tmp_path: Path,
     monkeypatch,

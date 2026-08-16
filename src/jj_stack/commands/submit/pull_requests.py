@@ -217,6 +217,7 @@ async def _sync_pull_request(
         and pull_request is not None
         and (
             action != "unchanged"
+            or options.labels is not None
             or options.reviewers is not None
             or options.team_reviewers is not None
         )
