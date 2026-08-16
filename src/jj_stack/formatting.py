@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import IO, Literal, Protocol
+from typing import Literal, Protocol
 
 from jj_stack.console import RequestedColorMode, requested_color_mode
 
@@ -58,17 +58,15 @@ def render_revision_lines(
     *,
     client: RevisionRenderClient,
     revision: RenderableRevision,
-    stdout: IO[str] | None = None,
     suffix: str | None = None,
     prerendered_lines: tuple[str, ...] | None = None,
 ) -> tuple[str, ...]:
     """Render one revision using the active CLI/UI color policy."""
 
     if prerendered_lines is None:
-        stream = sys.stdout if stdout is None else stdout
         color_when = client.resolve_color_when(
             cli_color=requested_color_mode(),
-            stdout_is_tty=stream.isatty(),
+            stdout_is_tty=sys.stdout.isatty(),
         )
         raw_lines = client.render_revision_log_lines(revision, color_when=color_when)
     else:
@@ -85,15 +83,13 @@ def render_revision_blocks(
     *,
     client: RevisionRenderClient,
     revisions: tuple[RenderableRevision, ...],
-    stdout: IO[str] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Render several revisions using the active CLI/UI color policy."""
 
     if not revisions:
         return {}
-    stream = sys.stdout if stdout is None else stdout
     color_when = client.resolve_color_when(
         cli_color=requested_color_mode(),
-        stdout_is_tty=stream.isatty(),
+        stdout_is_tty=sys.stdout.isatty(),
     )
     return client.render_revision_log_blocks(revisions, color_when=color_when)

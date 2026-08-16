@@ -44,7 +44,6 @@ def test_untracked_status_omits_branch_and_skips_remote_and_github_discovery(
     prepared_status = PreparedStatus(
         github_target=_github_target(),
         prepared=prepared,
-        selected_revset="@",
     )
 
     async def fail_github_inspection(**_kwargs):
@@ -132,7 +131,6 @@ def test_stream_status_falls_back_to_local_data_after_github_abort(monkeypatch) 
     prepared_status = PreparedStatus(
         github_target=_github_target(),
         prepared=prepared,
-        selected_revset="@",
     )
     streamed: list[tuple[str, bool]] = []
 

@@ -68,11 +68,11 @@ async def observe_reviews(
     change_ids: tuple[str, ...],
     context: CommandContext,
     github_client: GithubClient,
+    remote_name: str,
     include_open_dependents: bool = False,
     include_remote_targets: bool = True,
     github_repository_snapshot: GithubRepository | None = None,
     local_revisions_snapshot: Mapping[str, tuple[LocalRevision, ...]] | None = None,
-    remote_name: str | None = None,
 ) -> RepositoryObservation:
     """Reload review facts, optionally deferring exact remote-ref observation."""
 

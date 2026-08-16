@@ -294,7 +294,7 @@ async def _stream_merge_async(
         )
         execution = MergeExecutionInputs(
             remote_name=remote.name,
-            selected_revset=prepared_status.selected_revset,
+            selected_revset=prepared.stack.selected_revset,
             trunk_branch=trunk_branch,
             trunk_subject=prepared.stack.trunk.subject,
         )

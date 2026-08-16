@@ -44,7 +44,6 @@ def check_tracked_review(
     observation: RepositoryObservation,
     preview_detached_dependents: frozenset[int] = frozenset(),
     require_no_open_dependents: bool = False,
-    retry_command: str = "cleanup",
 ) -> tuple[GithubPullRequest | None, ReviewMutationAction | None]:
     """Check one exact unchanged review against shared observations."""
 
@@ -118,7 +117,7 @@ def check_tracked_review(
                 t"preserve PR #{pull_request_number}'s branch and tracking because open "
                 t"PR #{dependent.number} still uses {ui.bookmark(review_identity.head_ref)} "
                 t"as its base; close or retarget PR #{dependent.number}, then rerun "
-                t"{ui.cmd(retry_command)}"
+                t"{ui.cmd('cleanup')}"
             )
     return (
         pull_request,
@@ -286,7 +285,6 @@ def plan_review_cleanup(
     candidate: TrackedReview,
     observation: RepositoryObservation,
     preview_detached_dependents: frozenset[int] = frozenset(),
-    retry_command: str = "cleanup",
 ) -> tuple[GithubPullRequest | None, ReviewRefUpdate | None, ReviewMutationAction | None]:
     """Check exact cleanup facts and derive at most one leased ref deletion."""
 
@@ -296,7 +294,6 @@ def plan_review_cleanup(
         observation=observation,
         preview_detached_dependents=preview_detached_dependents,
         require_no_open_dependents=True,
-        retry_command=retry_command,
     )
     if blocker is not None or pull_request is None:
         return pull_request, None, blocker

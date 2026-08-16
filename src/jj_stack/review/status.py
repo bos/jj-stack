@@ -105,7 +105,6 @@ class PreparedStatus:
 
     github_target: GithubTarget | UnresolvedGithubTarget
     prepared: PreparedStack
-    selected_revset: str
 
     @property
     def github_repository(self) -> GithubRepoAddress | None:
@@ -219,7 +218,6 @@ def prepare_status(
     return PreparedStatus(
         github_target=github_target,
         prepared=prepared,
-        selected_revset=prepared.stack.selected_revset,
     )
 
 
@@ -244,7 +242,7 @@ async def stream_status_async(
     prepared_status: PreparedStatus,
 ) -> StatusResult:
     prepared = prepared_status.prepared
-    selected_revset = prepared_status.selected_revset
+    selected_revset = prepared.stack.selected_revset
     github_repository = prepared_status.github_repository
     github_repository_error = prepared_status.github_repository_error
     submitted_disagreements = submitted_state_disagreement(

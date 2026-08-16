@@ -1,7 +1,7 @@
 [code]
-production = 20_243
-tests = 21_637
-total = 41_983
+production = 20_214
+tests = 21_636
+total = 41_953
 merge = 1_683
 governed = 3_324
 governed_module = 502

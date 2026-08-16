@@ -51,7 +51,6 @@ def test_view_skips_duplicate_stack(
         revset = kwargs["revset"]
         change_ids = ("change-1", "change-2") if revset in {"foo", "bar"} else ("change-3",)
         return SimpleNamespace(
-            selected_revset=revset,
             prepared=SimpleNamespace(
                 stack=SimpleNamespace(
                     base_parent=SimpleNamespace(
@@ -59,6 +58,7 @@ def test_view_skips_duplicate_stack(
                     ),
                     head=SimpleNamespace(change_id=change_ids[-1]),
                     revisions=(),
+                    selected_revset=revset,
                 ),
                 state=ReviewState(),
                 status_revisions=tuple(
@@ -70,7 +70,7 @@ def test_view_skips_duplicate_stack(
 
     def fake_render_prepared_status(**kwargs) -> int:
         prepared_status = kwargs["prepared_status"]
-        rendered.append(prepared_status.selected_revset)
+        rendered.append(prepared_status.prepared.stack.selected_revset)
         return 0
 
     monkeypatch.setattr(
@@ -117,12 +117,12 @@ def test_view_continues_after_selector_error(
                 ),
             )
         return SimpleNamespace(
-            selected_revset=revset,
             prepared=SimpleNamespace(
                 stack=SimpleNamespace(
                     base_parent=SimpleNamespace(commit_id=f"base-{revset}"),
                     head=SimpleNamespace(change_id=f"{revset}-head"),
                     revisions=(),
+                    selected_revset=revset,
                 ),
                 state=ReviewState(),
                 status_revisions=(
@@ -132,7 +132,8 @@ def test_view_continues_after_selector_error(
         )
 
     def fake_render_prepared_status(**kwargs) -> int:
-        console_module.output(f"rendered {kwargs['prepared_status'].selected_revset}")
+        selected = kwargs["prepared_status"].prepared.stack.selected_revset
+        console_module.output(f"rendered {selected}")
         return 0
 
     monkeypatch.setattr(

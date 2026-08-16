@@ -51,21 +51,15 @@ def resolve_review_branches(
     namespace: ReviewNamespace,
     revisions: tuple[LocalRevision, ...],
     review_identities: Mapping[str, ReviewIdentity],
-    overrides: Mapping[str, str] | None = None,
 ) -> tuple[ResolvedReviewBranch, ...]:
-    """Resolve each branch from its saved identity, override, or initial name."""
+    """Resolve each branch from its saved identity or initial name."""
 
-    forced = overrides or {}
     resolutions = tuple(
         ResolvedReviewBranch(
             branch=(
-                forced[revision.change_id]
-                if revision.change_id in forced
-                else (
-                    identity.head_ref
-                    if (identity := review_identities.get(revision.change_id)) is not None
-                    else namespace.generate_branch(revision)
-                )
+                identity.head_ref
+                if (identity := review_identities.get(revision.change_id)) is not None
+                else namespace.generate_branch(revision)
             ),
             change_id=revision.change_id,
         )

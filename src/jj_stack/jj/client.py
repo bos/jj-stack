@@ -226,13 +226,11 @@ class JjClient:
     def query_revisions(
         self,
         revset: str,
-        *,
-        limit: int | None = None,
     ) -> tuple[LocalRevision, ...]:
         """Return revisions matching the supplied revset."""
 
         try:
-            return tuple(self._query_revisions(revset, limit=limit))
+            return tuple(self._query_revisions(revset))
         except JjCommandError as error:
             if _is_missing_revision_error(_unwrap_command_error_message(str(error))):
                 return ()
@@ -276,8 +274,6 @@ class JjClient:
     def query_revisions_by_change_ids(
         self,
         change_ids: Sequence[str],
-        *,
-        off_trunk: bool = False,
     ) -> dict[str, tuple[LocalRevision, ...]]:
         """Return visible revisions grouped by logical change ID."""
 
@@ -290,8 +286,6 @@ class JjClient:
         }
         for chunk in _chunked(ordered_change_ids):
             revset = _change_ids_revset(chunk)
-            if off_trunk:
-                revset = f"({revset}) ~ first_ancestors(trunk())"
             revisions = self._query_revisions(revset)
             for revision in revisions:
                 if projected := self._project(revision):
@@ -528,7 +522,6 @@ class JjClient:
         change_ids: Sequence[str],
         *,
         color_when: JjColorWhen,
-        min_len: int = 8,
     ) -> dict[str, str]:
         """Render shortest visible change IDs for the supplied logical change IDs."""
 
@@ -537,7 +530,7 @@ class JjClient:
             return {}
 
         rendered: dict[str, str] = {}
-        template = _short_change_id_render_template(min_len=min_len)
+        template = _short_change_id_render_template()
         for chunk in _chunked(ordered_change_ids):
             revset = _change_ids_revset(chunk)
             stdout = self._run_jj(
@@ -1399,8 +1392,8 @@ def _membership_scan_template(membership_revsets: Sequence[str]) -> str:
     )
 
 
-def _short_change_id_render_template(*, min_len: int) -> str:
-    shortest = f"change_id.shortest({min_len})"
+def _short_change_id_render_template() -> str:
+    shortest = "change_id.shortest(8)"
     return (
         r'json(change_id) ++ "\t" ++ '
         + shortest

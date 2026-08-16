@@ -619,25 +619,18 @@ class GithubClient:
         self,
         path: str,
         *,
-        params: dict[str, str] | None = None,
         response_name: str,
     ) -> tuple[object, ...]:
         items: list[object] = []
         next_path: str | None = path
-        next_params = params
 
         while next_path is not None:
-            response = await self._request(
-                "GET",
-                next_path,
-                params=next_params,
-            )
+            response = await self._request("GET", next_path)
             payload = self._expect_json_payload(response, response_name=response_name)
             if not isinstance(payload, list):
                 raise GithubClientError(f"GitHub {response_name} response was not a JSON array.")
             items.extend(payload)
             next_path = response.links.get("next", {}).get("url")
-            next_params = None
 
         return tuple(items)
 
