@@ -15,7 +15,8 @@ path. Select every mutation explicitly. Inspection may show one local path whose
 belong to several GitHub reviews; do not assume the displayed path is one GitHub stack.
 
 At a fork, a bare change ID or linked PR for the shared ancestor is ambiguous because it asks for
-the complete containing path and several descendant heads exist. Select each child by its head.
+the complete containing path and several descendant heads exist. The concrete choices are the
+descendant heads.
 To end a command exactly at the parent-review head, pass an explicit revset such as
 `change_id("<full-parent-head-change-id>")`; an arbitrary revset selects that exact revision
 instead of searching for a containing head.
@@ -37,8 +38,9 @@ the immutable submitted commit named by the diagnostic and require the user to r
 remote branch externally before repeating the same bounded submit. Never restore it to the
 parent's mutable change ID or guess from current local history.
 
-Use one bounded submit per sibling child. Leave the shared fork in its parent review. Do not
-merge a child while it is based on the parent review. After the exact parent lands:
+When the user explicitly requests every sibling, use one bounded submit per sibling child. Leave
+the shared fork in its parent review. Do not merge a child while it is based on the parent review.
+After the exact parent lands:
 
 1. Run `sync <parent-head-change-id>` if the merge was queued or external.
 2. Rebase exactly the child range with

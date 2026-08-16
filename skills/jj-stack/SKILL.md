@@ -2,20 +2,18 @@
 name: jj-stack
 license: Apache-2.0
 description: >
-  Manage stacked GitHub review for jj with jj-stack. Use when explicitly
-  requested, or after jj-stack in-use succeeds, for GitHub pull request or
-  branch tasks in a jj repository, including inspection, submission, refresh,
-  revision, merging, cleanup, and recovery.
+  Manage stacked GitHub review in jj repositories with jj-stack. Use for GitHub
+  pull request or review-branch tasks involving a local jj stack, including
+  inspection, submission or refresh, revision, merging, cleanup, and recovery.
+  When local adoption is unknown, load this skill first, then run jj-stack
+  in-use.
 ---
 
 # jj-stack
 
 `jj-stack` sends a linear chain of local `jj` changes to GitHub as dependent
 pull requests. Division of labor: `jj` edits the local stack; `jj-stack` owns
-its GitHub review state (review branches, PRs, merging, cleanup). Stable
-`jj-stack/<subject-slug>-<eight-character-change-id>` branches stay on the
-selected Git remote and do not become persistent local bookmarks. The
-`jj-stack` prefix is the default; a repo may set `jj-stack.branch_prefix`.
+its GitHub review state (review branches, PRs, merging, cleanup).
 
 ## Resolving the command
 
@@ -46,10 +44,12 @@ command they use before any direct GitHub mutation.
    merging, cleanup, importing, relinking, and recovery. Exit 1 does not prevent an explicit
    request to start using jj-stack. Do not substitute `view` or `list`; they report review state,
    not local adoption.
-3. **Inspect before mutating.** Run `view` or `list` before `submit`, `merge`,
-   `cleanup`, or `unstack`, and preview with `--dry-run` whenever the next
-   step is uncertain.
-4. **Select explicitly after anything ambiguous.** `submit` defaults to the
+3. **Inspect before mutating.** Run `view` or `list` before `submit`, `merge`, `sync`,
+   `cleanup`, `unstack`, `checkout`, or `relink`, and preview with `--dry-run` whenever
+   supported. Run `doctor` before `doctor --fix`.
+4. **Stop on ambiguity; otherwise select explicitly.** An ambiguous selector is not
+   permission to choose one candidate or operate on all candidates. Ask the user for the
+   concrete descendant head, PR, or stack the diagnostic requires. `submit` defaults to the
    stack ending at `@` when the working-copy change is described and nonempty,
    otherwise `@-`. After an interrupted command, or in a
    multi-stack repo, pass a change ID, revset, or `--pull-request` selector.
@@ -97,13 +97,17 @@ confirms after you explain that risk.
 1. Build or revise the stack with `jj`. Each change is one reviewable PR:
    put a dependency in the same change or a lower one, and unrelated work in
    a separate stack.
-2. Confirm the shape with `view` (`--json` for machine-readable output; it
-   reads GitHub but does not fetch, so run `jj git fetch` first when local
-   trunk may be behind); `list` shows the repo-wide inventory.
-3. `submit --dry-run`, then `submit` to create or refresh PRs. Add
+2. Confirm the shape with `view` (`--json` for machine-readable output; it reads GitHub but
+   does not fetch); `list` shows the repo-wide inventory. For ordinary inspection, run
+   `jj git fetch` first only when local trunk may be behind. For an externally completed merge,
+   follow the recovery workflow instead of this ordinary inspection step.
+3. `submit --dry-run`, then `submit` to create or refresh PRs. There is no `refresh`
+   subcommand. Add
    `--re-request` only when the user wants previous reviewers asked again.
 4. Apply review feedback in the change it belongs to: edit the lower `jj`
-   change, let descendants rebase, then `view` and `submit`. Do not patch a
+   change, let descendants rebase, then `view` and submit the reviewed descendant stack head
+   shown by that inspection (often `@-` from an empty working-copy child). Selecting the edited
+   lower change itself does not select the descendants that also need refresh. Do not patch a
    higher change to avoid touching a lower one.
 5. When bottom changes are ready, run `merge --dry-run`, then `merge`. It selects
    consecutive open, non-draft PRs from the bottom and requires their exact submitted commits.
@@ -136,7 +140,6 @@ could not determine its result;
 
 ## When something goes wrong
 
-Stop on ambiguity and ask for a concrete selector. Use `jj workspace update-stale` for a stale
-workspace and `jj op log` or `jj undo` for local recovery; never use destructive Git commands.
-For every other abnormal lifecycle state, read [recovery workflows](references/recovery.md)
-before acting.
+Use `jj workspace update-stale` for a stale workspace and `jj op log` or `jj undo` for local
+recovery; never use destructive Git commands. For every other abnormal lifecycle state, read
+[recovery workflows](references/recovery.md) before acting.

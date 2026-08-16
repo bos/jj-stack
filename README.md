@@ -120,7 +120,12 @@ GitHub PRs safely:
 gh skill install bos/jj-stack jj-stack
 ```
 
-See the [skill source](https://github.com/bos/jj-stack/blob/main/skills/jj-stack/SKILL.md).
+See the [skill source](https://github.com/bos/jj-stack/blob/main/skills/jj-stack/SKILL.md). In
+my evaluations with Codex and Claude Code, agents with the `jj-stack` skill succeeded in 11/12
+scenarios versus 6/12 without it, with one critical error versus four, using 60% fewer failed
+command attempts and 18% fewer tool calls. (The critical error was due to Claude Haiku
+understanding a rule and ignoring it. I haven't figured out how to get smaller Claude models to
+behave better, and I don't personally use them.)
 
 ## Performance
 
