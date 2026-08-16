@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import jj_stack.commands.sync as sync_command
-from jj_stack.errors import EXIT_GITHUB, CliError
+from jj_stack.errors import EXIT_GITHUB, EXIT_INCOMPLETE, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore, resolve_state_path
@@ -358,6 +358,17 @@ def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
     state_store = ReviewStateStore.for_repo(repo)
     on_trunk, survivor = selected_stack(repo).revisions
     remote_survivor = _simulate_stack_partial_merge(fake_repo)
+    survivor_branch = state_store.load().review_identities[survivor.change_id].head_ref
+    run_command(
+        ["jj", "git", "fetch", "--remote", "origin", "--branch", survivor_branch],
+        repo,
+    )
+    view_exit_code = run_main(repo, config_path, "view", survivor.change_id)
+    inspection = capsys.readouterr()
+
+    assert view_exit_code in {0, EXIT_INCOMPLETE}
+    assert survivor.change_id[:8] in inspection.out
+    assert "Traceback" not in inspection.err
 
     exit_code = run_main(repo, config_path, "sync", survivor.change_id)
     captured = capsys.readouterr()

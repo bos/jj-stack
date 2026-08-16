@@ -136,6 +136,14 @@ def test_selected_overlap_follows_only_the_explicit_head_parent_path() -> None:
     assert [revision.commit_id for revision in selected.stack.revisions] == ["shared", "right"]
 
 
+def test_selected_path_fails_closed_when_its_parent_boundary_was_not_observed() -> None:
+    trunk = _revision("trunk", "trunk-change", parents=("root",), immutable=True)
+    head = _revision("head", "head-change", parents=("missing",))
+
+    with pytest.raises(CliError, match="unobserved parent missing"):
+        project_selected_path(_observation(head=head, revisions=(head, trunk), trunk=trunk))
+
+
 def test_repository_paths_inventory_an_ordinary_shared_prefix() -> None:
     trunk = _revision("trunk", "trunk-change", parents=("root",), immutable=True)
     shared = _revision("shared", "shared-change", parents=("trunk",))

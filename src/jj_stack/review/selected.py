@@ -157,6 +157,7 @@ def _observe_path_rows(
     trunk_path = "first_ancestors(trunk())"
     off_trunk = f"({selector}) ~ {trunk_path}"
     ancestors = f"first_ancestors({off_trunk})"
+    trunk_boundaries = f"parents(({ancestors}) ~ {trunk_path}) & {trunk_path}"
     candidate_neighborhood = f"(visible() & (({selector}) | children({selector})))"
     candidate_revisions = (
         f"((({candidate_neighborhood}) ~ {trunk_path} ~ working_copies()) "
@@ -167,7 +168,7 @@ def _observe_path_rows(
             "trunk()",
             f"({selector})",
             f"({ancestors}) ~ {trunk_path}",
-            f"heads(({ancestors}) & {trunk_path})",
+            trunk_boundaries,
             candidate_revisions,
             *extra_revisions,
         )

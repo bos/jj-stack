@@ -81,7 +81,13 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
     while current.commit_id not in observation.fetched_trunk_commit_ids:
         head_first.append(current)
         parent_commit_id = current.parents[0]
-        current = revisions_by_commit_id[parent_commit_id]
+        parent = revisions_by_commit_id.get(parent_commit_id)
+        if parent is None:
+            raise CliError(
+                "Could not resolve the complete selected parent path: "
+                f"commit {current.commit_id} has unobserved parent {parent_commit_id}."
+            )
+        current = parent
 
     revisions = tuple(reversed(head_first))
     path_change_ids = frozenset(revision.change_id for revision in revisions)
