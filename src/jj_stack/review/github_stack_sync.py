@@ -244,6 +244,17 @@ def _active_review(
     selected_revision: LocalRevision,
     stack: GithubStack,
 ) -> GithubStackActiveReview:
+    observed = observation.reviews[candidate.change_id]
+    expected_local_commit_ids = {selected_revision.commit_id, member.head.sha}
+    if any(
+        not revision.immutable and revision.commit_id not in expected_local_commit_ids
+        for revision in observed.local_revisions
+    ):
+        raise CliError(
+            t"Cannot sync {ui.change_id(candidate.change_id)} because it has another editable "
+            t"local revision besides the selected commit.",
+            hint=t"Resolve the divergence with {ui.cmd('jj')}, then rerun sync for this stack.",
+        )
     if selected_revision.immutable and selected_revision.commit_id != member.head.sha:
         raise CliError(
             t"GitHub still lists PR #{member.number} as active in stack #{stack.number}, "
@@ -263,7 +274,6 @@ def _active_review(
             t"local edits since submit.",
             hint=t"Publish them with {ui.cmd('jj-stack submit')}, or drop them, then rerun sync.",
         )
-    observed = observation.reviews[candidate.change_id]
     # A closed or draft active member is still an affected survivor; only its branch has to match
     # here. Convergence decides which surviving reviews can still be updated.
     if (

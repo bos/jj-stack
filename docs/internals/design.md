@@ -603,7 +603,8 @@ baseline nor an exact GitHub stack head that this run may adopt.
 `sync` reconciles the unmerged suffix only when:
 
 - rewriting it would not discard unpublished local work
-- no surviving change is divergent
+- no surviving change has multiple editable local revisions (a fetched GitHub rewrite is not
+  editable)
 - no unreviewed change sits between reviewed survivors
 
 If any selected open PR is still in a merge queue, `sync` leaves the selected stack unchanged.

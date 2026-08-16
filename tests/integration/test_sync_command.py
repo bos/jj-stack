@@ -404,6 +404,62 @@ def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
     assert fake_repo.pull_requests[2].head_sha == drifted_head
 
 
+def test_sync_rejects_unselected_editable_copy_of_proven_survivor(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = ReviewStateStore.for_repo(repo)
+    _merged, survivor = selected_stack(repo).revisions
+    remote_survivor = _simulate_stack_partial_merge(fake_repo)
+    survivor_branch = state_store.load().review_identities[survivor.change_id].head_ref
+    run_command(
+        ["jj", "git", "fetch", "--remote", "origin", "--branch", survivor_branch],
+        repo,
+    )
+    run_command(
+        ["jj", "describe", "-r", survivor.commit_id, "-m", "first survivor edit"],
+        repo,
+    )
+    run_command(
+        [
+            "jj",
+            "describe",
+            "--at-operation",
+            "@-",
+            "-r",
+            survivor.commit_id,
+            "-m",
+            "second survivor edit",
+        ],
+        repo,
+    )
+    editable = tuple(
+        revision
+        for revision in JjClient(repo).query_revisions_by_change_ids((survivor.change_id,))[
+            survivor.change_id
+        ]
+        if not revision.immutable
+    )
+    state_before = state_store.load()
+    refs_before = remote_refs(fake_repo.git_dir)
+    pull_requests_before = deepcopy(fake_repo.pull_requests)
+
+    assert len(editable) == 2
+
+    exit_code = run_main(repo, config_path, "sync", remote_survivor)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "another editable local revision" in captured.err
+    assert "Resolve the divergence with jj" in captured.err
+    assert state_store.load() == state_before
+    assert remote_refs(fake_repo.git_dir) == refs_before
+    assert fake_repo.pull_requests == pull_requests_before
+
+
 def test_sync_noop_after_partial_merge_does_not_read_review_refs_or_submit(
     tmp_path: Path,
     monkeypatch,

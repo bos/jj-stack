@@ -214,8 +214,14 @@ def _trunk_evidence_kind_for(
 
 
 def _require_no_divergent_survivors(plan: SelectedConvergencePlan) -> None:
+    expected_remote_copies = {
+        item.candidate.change_id
+        for item in (
+            plan.github_stack_rewrite.active if plan.github_stack_rewrite is not None else ()
+        )
+    }
     for revision in plan.survivors:
-        if revision.divergent:
+        if revision.divergent and revision.change_id not in expected_remote_copies:
             raise CliError(
                 t"Cannot rebase remaining {ui.change_id(revision.change_id)} because it has "
                 t"multiple visible revisions.",
