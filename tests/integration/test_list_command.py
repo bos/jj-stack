@@ -4,6 +4,7 @@ import json
 
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.jj.client import JjClient
 from jj_stack.state.store import ReviewStateStore
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -244,11 +245,20 @@ def test_list_inventories_paths_that_share_a_reviewed_prefix(
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
 
-    run_command(["jj", "new", shared.commit_id], repo)
-    commit_file(repo, "right", "right.txt")
-    right = selected_stack(repo).head
-    fake_repo.github_stacks = {}
-    assert run_main(repo, config_path, "submit") == 0
+    run_command(["jj", "new", shared.commit_id, "-m", "right"], repo)
+    write_file(repo / "right.txt", "right\n")
+    right = JjClient(repo).resolve_revision("@")
+    assert (
+        run_main(
+            repo,
+            config_path,
+            "submit",
+            "--base",
+            shared.change_id,
+            right.change_id,
+        )
+        == 0
+    )
     capsys.readouterr()
 
     assert run_main(repo, config_path, "list", "--json") == 0
@@ -258,11 +268,17 @@ def test_list_inventories_paths_that_share_a_reviewed_prefix(
         for row in payload["rows"]
         if row["type"] == "stack"
     }
+    current_paths = {
+        tuple(change["change_id"] for change in row["changes"])
+        for row in payload["rows"]
+        if row["type"] == "stack" and row.get("current")
+    }
 
     assert paths == {
         (shared.change_id, left.change_id),
         (shared.change_id, right.change_id),
     }
+    assert current_paths == {(shared.change_id, right.change_id)}
 
 
 def test_list_reports_partial_approval_for_ready_prefix_only(

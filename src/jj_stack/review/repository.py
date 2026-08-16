@@ -40,6 +40,11 @@ def observe_repository_paths(
             descendants += " ~ trunk()::"
         visible_scope = f"(visible() & {descendants})"
     candidates = f"(({visible_scope}) ~ {trunk_path} ~ working_copies())"
+    if state.review_identities:
+        tracked = " | ".join(
+            f"change_id({json.dumps(change_id)})" for change_id in sorted(state.review_identities)
+        )
+        candidates = f"({candidates} | ({visible_scope} & working_copies() & ({tracked})))"
     if include_working_copies:
         if not descendant_of:
             raise ValueError("Working-copy dependency observation requires an exact ancestor.")
@@ -64,8 +69,14 @@ def observe_repository_paths(
         None,
     )
     current_review_commit_id = (
-        current_working_copy.parents[0]
-        if current_working_copy is not None and current_working_copy.parents
+        (
+            current_working_copy.commit_id
+            if current_working_copy.change_id in state.review_identities
+            and not current_working_copy.empty
+            and bool(current_working_copy.description.strip())
+            else current_working_copy.parents[0]
+        )
+        if current_working_copy is not None and len(current_working_copy.parents) == 1
         else None
     )
     return project_repository_paths(

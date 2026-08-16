@@ -195,9 +195,8 @@ members **active members**, regardless of whether an individual PR is open, draf
 ### Workspaces
 
 Several `jj` workspaces can share one repository, and each has its own working-copy commit.
-Repository-wide discovery omits all working-copy commits so the inventory does not depend on
-which workspace ran it. A stack command defaults to `@` when that workspace's working-copy
-change is described and nonempty, and to `@-` otherwise.
+Repository-wide discovery includes a working-copy commit only when it is tracked, described, and
+nonempty. A stack command defaults to `@` under the same conditions and to `@-` otherwise.
 
 Configuration and presentation reads do not snapshot the working copy. Repository operations keep
 `jj`'s normal snapshot and checkout behavior.
