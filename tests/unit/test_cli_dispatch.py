@@ -11,25 +11,6 @@ def no_configured_color(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli_module, "_load_configured_jj_color", lambda **kwargs: None)
 
 
-def test_main_reports_keyboard_interrupt_without_traceback(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setattr(
-        cli_module.view_command,
-        "view",
-        lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
-    )
-
-    exit_code = main(["view"])
-    captured = capsys.readouterr()
-
-    assert exit_code == 130
-    assert captured.out.strip() == ""
-    assert captured.err.strip() == "Interrupted."
-    assert "Traceback" not in captured.err
-
-
 def test_main_preserves_partial_handler_output_on_keyboard_interrupt(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

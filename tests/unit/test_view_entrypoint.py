@@ -2,16 +2,42 @@ import json
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
+from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.review_state import ReviewState
 
 from .entrypoint_test_helpers import patch_bootstrap
+
+
+def test_change_id_selector_distinguishes_change_ids_from_revsets_and_bookmarks() -> None:
+    bare_change_id = "klmnopqrstuv"
+    bookmark = "zzzzzzzzzzzzzzzz"
+
+    class JjClientStub:
+        def resolve_revision(self, value: str) -> SimpleNamespace:
+            change_id = "klmnopqrstuvwxyz" if value == bare_change_id else "otherchangeid"
+            return SimpleNamespace(change_id=change_id)
+
+    context = cast(CommandContext, SimpleNamespace(jj_client=JjClientStub()))
+
+    assert (
+        view_module._change_id_selector(context=context, value=bare_change_id) == bare_change_id
+    )
+    assert view_module._change_id_selector(context=context, value=bookmark) is None
+    assert (
+        view_module._change_id_selector(
+            context=context,
+            value=f'change_id("{bare_change_id}")',
+        )
+        is None
+    )
 
 
 def test_view_skips_duplicate_stack(

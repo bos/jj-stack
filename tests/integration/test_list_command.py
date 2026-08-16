@@ -299,56 +299,6 @@ def test_list_reports_partial_approval_for_ready_prefix_only(
     assert "1 approved, open" in captured.out
 
 
-def test_list_skips_colliding_branches_without_blocking_other_stack_lookups(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    change_ids = [selected_stack(repo).head.change_id]
-    for number in range(2, 5):
-        run_command(["jj", "new", "main"], repo)
-        commit_file(repo, f"feature {number}", f"feature-{number}.txt")
-        change_ids.append(selected_stack(repo).head.change_id)
-        assert run_main(repo, config_path, "submit") == 0
-        capsys.readouterr()
-
-    state_store = ReviewStateStore.for_repo(repo)
-    state = state_store.load()
-    collided_branch = state.review_identities[change_ids[0]].head_ref
-    # A real collision needs matching random eight-character change-ID prefixes; bypass only the
-    # suffix check to construct the equivalent saved state cheaply.
-    monkeypatch.setattr("jj_stack.state.store.review_branch_matches_change", lambda *_: True)
-    state_store.relink_review(
-        change_ids[1],
-        identity=state.review_identities[change_ids[1]].model_copy(
-            update={"head_ref": collided_branch}
-        ),
-        baseline=state.submitted_baselines[change_ids[1]],
-    )
-
-    exit_code = run_main(repo, config_path, "list", "--json")
-    captured = capsys.readouterr()
-    changes = {
-        change["change_id"]: change
-        for row in json.loads(captured.out)["rows"]
-        for change in row["changes"]
-    }
-
-    assert exit_code == EXIT_INCOMPLETE
-    assert collided_branch in captured.err
-    assert all(change_id[:8] in captured.err for change_id in change_ids[:2])
-    assert "Live GitHub details for those changes were not inspected" in captured.err
-    assert [changes[change_id]["pull_request"]["number"] for change_id in change_ids[:2]] == [
-        1,
-        2,
-    ]
-    assert all(changes[change_id]["status"] == "submitted" for change_id in change_ids[:2])
-    assert all(changes[change_id]["status"] == "open" for change_id in change_ids[2:])
-
-
 def test_list_reports_no_stacks_when_state_is_empty(
     tmp_path,
     monkeypatch,

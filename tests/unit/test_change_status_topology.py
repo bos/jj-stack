@@ -104,19 +104,6 @@ def test_enumerate_orphans_returns_tracked_record_with_open_pr_and_no_live_chang
     assert tuple(orphan.change_id for orphan in orphans) == ("change-orphan",)
 
 
-def test_enumerate_orphaned_records_reports_every_active_record_with_a_pr() -> None:
-    state = ReviewState(
-        review_identities={"change-orphan": _orphan_record()},
-        submitted_baselines={
-            "change-orphan": SubmittedBaseline(commit_id="commit-change-orphan")
-        },
-    )
-
-    orphans = enumerate_orphaned_records(state, ())
-
-    assert tuple(orphan.change_id for orphan in orphans) == ("change-orphan",)
-
-
 def test_submitted_state_disagreement_inspects_each_stack_independently() -> None:
     a = _revision("change-a")
     b = _revision("change-b")

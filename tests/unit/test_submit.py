@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Sequence
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
@@ -15,6 +17,7 @@ from jj_stack.commands.submit.models import (
     PreparedSubmitRevision,
     SubmitOptions,
 )
+from jj_stack.commands.submit.overview_comments import sync_stack_overview_comments
 from jj_stack.commands.submit.pull_requests import (
     _reviewers_to_re_request,
     _select_discovered_pull_request,
@@ -23,9 +26,11 @@ from jj_stack.commands.submit.pull_requests import (
 from jj_stack.commands.submit.revisions import prepare_submit_revisions
 from jj_stack.config import AppConfig
 from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import (
     GithubBranchRef,
+    GithubIssueComment,
     GithubPullRequest,
     GithubPullRequestReview,
     GithubPullRequestReviewUser,
@@ -43,6 +48,39 @@ from tests.support.revision_helpers import make_revision
 
 _REMOTE_URL = "https://github.test/octo-org/repo.git"
 _REMOTE = GitRemote(name="origin", fetch_url=_REMOTE_URL, push_url=_REMOTE_URL)
+
+
+def test_overview_comment_sync_batches_comment_reads() -> None:
+    class CommentClientStub(GithubClient):
+        def __init__(self) -> None:
+            self.comment_batches: list[tuple[int, ...]] = []
+
+        async def get_issue_comments_by_pull_request_numbers(
+            self,
+            *,
+            pull_numbers: Sequence[int],
+        ) -> dict[int, tuple[GithubIssueComment, ...]]:
+            self.comment_batches.append(tuple(pull_numbers))
+            return {number: () for number in pull_numbers}
+
+        async def list_issue_comments(
+            self,
+            *,
+            issue_number: int,
+        ) -> tuple[GithubIssueComment, ...]:
+            raise AssertionError(f"unexpected per-PR comment lookup for #{issue_number}")
+
+    client = CommentClientStub()
+
+    asyncio.run(
+        sync_stack_overview_comments(
+            concurrency=2,
+            github_client=client,
+            overview_bodies={1: None, 2: None},
+        )
+    )
+
+    assert client.comment_batches == [(1, 2)]
 
 
 def test_prepare_submit_revisions_rejects_saved_remote_branch_drift() -> None:

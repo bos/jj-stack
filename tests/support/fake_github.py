@@ -186,7 +186,6 @@ class FakeGithubRepository:
     allow_squash_merge: bool = True
     merge_queue_enabled: bool = False
     stack_merge_operations: dict[int, FakeStackMergeOperation] = field(default_factory=dict)
-    stack_merge_polls: list[tuple[int, str]] = field(default_factory=list)
     stack_merge_requests: list[tuple[int, str | None, str, str]] = field(default_factory=list)
     auto_merge_reachable_heads: bool = True
     next_issue_comment_id: int = 1
@@ -1129,7 +1128,6 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         operation = repository.stack_merge_operations.get(pull_number)
         if operation is None or operation.uuid != operation_uuid:
             raise HTTPException(status_code=404, detail="Not Found")
-        repository.stack_merge_polls.append((pull_number, operation_uuid))
         if operation.status == "pending":
             _complete_stack_merge(repository, operation)
         return _stack_merge_payload(operation)

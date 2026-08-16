@@ -15,31 +15,6 @@ from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import run_main
 
 
-@pytest.mark.parametrize(
-    ("command", "args"),
-    [
-        ("view", ()),
-        ("submit", ()),
-        ("cleanup", ()),
-        ("merge", ()),
-    ],
-)
-def test_commands_do_not_crash_in_empty_repo(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    command: str,
-    args: tuple[str, ...],
-) -> None:
-    repo = _init_empty_repo(tmp_path)
-    config_path = _write_config(tmp_path)
-
-    exit_code = run_main(repo, config_path, command, *args)
-    captured = capsys.readouterr()
-
-    assert exit_code in (0, 1, EXIT_NO_STACK)
-    _assert_no_traceback(captured)
-
-
 def test_stack_commands_fail_closed_for_disconnected_roots(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

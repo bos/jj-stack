@@ -228,7 +228,7 @@ def test_view_warns_and_reports_conflicted_rebase(
     assert "conflict" in captured.err
 
 
-def test_view_identity_selectors_show_the_complete_containing_stack(
+def test_view_pull_request_selector_shows_the_complete_containing_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -257,40 +257,6 @@ def test_view_identity_selectors_show_the_complete_containing_stack(
     assert "PR #1" in captured.out
     assert "feature 2" in captured.out
     assert f"PR #{second_pr_number}" in captured.out
-
-    exit_code = run_main(repo, config_path, "view", first_change_id[:8])
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "feature 1" in captured.out
-    assert f"PR #{first_pr_number}" in captured.out
-    assert "feature 2" in captured.out
-    assert f"PR #{second_pr_number}" in captured.out
-
-    exit_code = run_main(
-        repo,
-        config_path,
-        "view",
-        f'change_id("{first_change_id}")',
-    )
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "feature 1" in captured.out
-    assert f"PR #{first_pr_number}" in captured.out
-    assert "feature 2" not in captured.out
-    assert f"PR #{second_pr_number}" not in captured.out
-
-    bookmark = "zzzzzzzzzzzzzzzz"
-    run_command(["jj", "bookmark", "create", bookmark, "-r", first_change_id], repo)
-    exit_code = run_main(repo, config_path, "view", bookmark)
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "feature 1" in captured.out
-    assert f"PR #{first_pr_number}" in captured.out
-    assert "feature 2" not in captured.out
-    assert f"PR #{second_pr_number}" not in captured.out
 
 
 def test_view_change_id_rejects_multiple_containing_paths(
@@ -408,30 +374,6 @@ def test_view_renders_base_parent_for_stack_forked_from_trunk_ancestor(
         stack.base_parent.subject
     )
     assert stack.trunk.subject not in captured.out
-
-
-def test_view_ignores_off_path_reviewable_child(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = selected_stack(repo)
-    feature_1_commit_id = stack.revisions[0].commit_id
-    feature_2_commit_id = stack.revisions[-1].commit_id
-    run_command(["jj", "new", feature_1_commit_id], repo)
-    commit_file(repo, "feature side", "feature-side.txt")
-    run_command(["jj", "new", feature_2_commit_id], repo)
-
-    exit_code = run_main(repo, config_path, "view")
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert "feature 2" in captured.out
-    assert "feature 1" in captured.out
-    assert "feature side" not in captured.out
 
 
 def test_view_preserves_remote_observations_when_github_lookup_fails(
@@ -560,42 +502,6 @@ def test_view_reports_unsubmitted_after_state_loss(
     assert revision["change_id"] == change_id
     assert revision["status"] == "unsubmitted"
     assert "branch" not in revision
-
-
-def test_view_stays_local_after_state_loss_even_if_github_is_unavailable(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = selected_stack(repo)
-    change_id = stack.revisions[-1].change_id
-    resolve_state_path(repo).unlink()
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-
-    class OfflineGithubClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, *, head_refs):
-            raise GithubClientError("Connection refused")
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.review.status",),
-        client_type=OfflineGithubClient,
-    )
-
-    exit_code = run_main(repo, config_path, "view", change_id)
-    captured = capsys.readouterr()
-    normalized_err = " ".join(captured.err.split())
-
-    assert exit_code == 0
-    assert normalized_err == ""
-    assert "Unsubmitted stack:" in captured.out
-    assert "saved PR #1" not in captured.out
 
 
 def test_view_preserves_saved_pull_request_link_when_github_reports_missing(

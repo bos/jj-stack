@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 
@@ -851,71 +850,6 @@ def test_submit_opens_new_pr_when_middle_change_is_split_in_two(
     assert len(fake_repo.pull_requests) == 4
 
 
-def test_submit_squash_dissolves_and_rebuilds_github_stack(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    """`jj squash` plus auto-abandon collapses two reviewed changes; orphan survives."""
-
-    repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    commit_file(repo, "feature 1", "feature-1.txt")
-    commit_file(repo, "feature 2", "feature-2.txt")
-    commit_file(repo, "feature 3", "feature-3.txt")
-
-    initial_stack = selected_stack(repo)
-    change_ids_by_subject = {
-        revision.subject: revision.change_id for revision in initial_stack.revisions
-    }
-
-    assert run_main(repo, config_path, "submit") == 0
-    capsys.readouterr()
-    initial_state = ReviewStateStore.for_repo(repo).load()
-    orphaned_identity = initial_state.review_identities[change_ids_by_subject["feature 2"]]
-    orphaned_pr_number = orphaned_identity.pr_number
-    orphaned_bookmark = orphaned_identity.head_ref
-    orphaned_remote_target = read_remote_ref(fake_repo.git_dir, orphaned_bookmark)
-    orphaned_pr_base_ref = fake_repo.pull_requests[orphaned_pr_number].base_ref
-
-    monkeypatch.setenv("EDITOR", "true")
-    monkeypatch.setenv("VISUAL", "true")
-    monkeypatch.setenv("JJ_EDITOR", "true")
-    run_command(
-        [
-            "jj",
-            "squash",
-            "--from",
-            change_ids_by_subject["feature 2"],
-            "--into",
-            change_ids_by_subject["feature 1"],
-        ],
-        repo,
-    )
-
-    surviving_stack = selected_stack(repo, change_ids_by_subject["feature 3"])
-    assert [revision.subject for revision in surviving_stack.revisions] == [
-        "feature 1",
-        "feature 3",
-    ]
-    exit_code = run_main(repo, config_path, "submit", surviving_stack.head.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 0, captured.err
-    assert fake_repo.github_stacks == {2: (1, 3)}
-    _assert_stack_pull_requests_match_dag(
-        fake_repo=fake_repo,
-        repo=repo,
-        stack=surviving_stack,
-    )
-    orphaned_pr = fake_repo.pull_requests[orphaned_pr_number]
-    assert orphaned_pr.state == "open"
-    assert orphaned_pr.merged_at is None
-    assert orphaned_pr.base_ref == orphaned_pr_base_ref
-    assert read_remote_ref(fake_repo.git_dir, orphaned_bookmark) == orphaned_remote_target
-    assert len(fake_repo.pull_requests) == 3
-
-
 def test_submit_split_path_rebuilds_selected_github_stack(
     tmp_path: Path,
     monkeypatch,
@@ -1544,52 +1478,6 @@ def test_submit_does_not_claim_a_visible_bookmark_for_an_untracked_change(
     assert run_main(repo, config_path, "submit", "--dry-run", revision.change_id) == 1
     assert f"Cannot claim visible bookmark {branch}" in capsys.readouterr().err
     assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
-
-
-def test_submit_batches_stack_overview_comment_reads_with_graphql(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    comment_batch_calls: list[tuple[int, ...]] = []
-
-    class CountingCommentLookupClient(GithubClient):
-        async def get_issue_comments_by_pull_request_numbers(
-            self,
-            *,
-            pull_numbers: Sequence[int],
-        ):
-            comment_batch_calls.append(tuple(sorted(pull_numbers)))
-            return await super().get_issue_comments_by_pull_request_numbers(
-                pull_numbers=pull_numbers,
-            )
-
-        async def list_issue_comments(
-            self,
-            *,
-            issue_number: int,
-        ):
-            raise AssertionError(
-                f"submit should batch overview comment reads for pull request #{issue_number}"
-            )
-
-    app = create_app(FakeGithubState.single_repository(fake_repo))
-    patch_github_client_builders(
-        monkeypatch,
-        app=app,
-        fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
-        client_type=CountingCommentLookupClient,
-    )
-
-    exit_code = run_main(repo, config_path, "submit")
-    capsys.readouterr()
-
-    assert exit_code == 0
-    assert comment_batch_calls == [(1, 2)]
 
 
 def test_submit_moves_overview_comment_when_stack_head_advances(

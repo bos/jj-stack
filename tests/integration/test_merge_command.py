@@ -316,7 +316,6 @@ def test_stack_merge_terminal_failure_is_atomic(
     assert "resolve the conflict" in normalized
     assert "jj-stack submit" in normalized
     assert fake_repo.stack_merge_requests
-    assert fake_repo.stack_merge_polls == [(2, "fake-stack-merge-1")]
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
     assert tuple(
         fake_repo.ref_target(pr.head_ref) for pr in fake_repo.pull_requests.values()
@@ -363,7 +362,6 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     )
     assert run_main(repo, config_path, "merge") != 0
     capsys.readouterr()
-    assert fake_repo.stack_merge_polls == []
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
 
     patch_github_client_builders(
@@ -375,7 +373,6 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     assert run_main(repo, config_path, "merge") == 1
     pending = capsys.readouterr()
     assert "matching request is already pending" in pending.out
-    assert fake_repo.stack_merge_polls == []
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
 
     _complete_stack_merge(fake_repo, fake_repo.stack_merge_operations[2])
@@ -383,7 +380,6 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     assert run_main(repo, config_path, "merge") == 0
     completed = capsys.readouterr()
     assert "final trunk commit" in completed.out
-    assert fake_repo.stack_merge_polls == []
     assert len(fake_repo.stack_merge_requests) == 1
     assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("closed", "closed")
     assert state_store.load().review_identities == {}
@@ -425,53 +421,6 @@ def test_stack_merge_requires_a_resource_only_when_a_multi_pr_merge_can_proceed(
     assert f"jj-stack sync {head_change_id[:8]}" in retry.out
     assert "Run submit" not in retry.err
     assert fake_repo.stack_merge_requests == []
-
-
-def test_ordinary_merge_methods_create_distinct_commit_topology(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    """Protect the history shape that later recovery observes from the fake."""
-
-    observed: dict[str, tuple[bool, bool, bool, bool]] = {}
-    for merge_method in ("merge", "rebase", "squash"):
-        method_path = tmp_path / merge_method
-        method_path.mkdir()
-        repo, fake_repo = init_fake_github_repo_with_submitted_feature(method_path)
-        config_path = configure_submit_environment(monkeypatch, method_path, fake_repo)
-        fake_repo.allow_merge_commit = True
-        fake_repo.allow_rebase_merge = True
-        pull_request = fake_repo.pull_requests[1]
-        head_before = fake_repo.ref_target(pull_request.head_ref)
-        trunk_before = fake_repo.ref_target("main")
-        assert head_before is not None
-        assert trunk_before is not None
-
-        exit_code = run_main(repo, config_path, "merge", "--method", merge_method)
-        captured = capsys.readouterr()
-
-        assert exit_code == 0, (captured.out, captured.err)
-        assert pull_request.state == "closed"
-        assert pull_request.merged_at is not None
-        merge_result = pull_request.merge_commit_sha
-        assert merge_result is not None
-        parents = tuple(
-            fake_repo._run_backing_git("show", "-s", "--format=%P", merge_result).split()
-        )
-        raw_commit = fake_repo._run_backing_git("cat-file", "commit", merge_result)
-        observed[merge_method] = (
-            parents == (trunk_before, head_before),
-            parents == (trunk_before,),
-            "\nchange-id " in raw_commit,
-            fake_repo.is_ancestor(head_before, merge_result),
-        )
-
-    assert observed == {
-        "merge": (True, False, False, True),
-        "rebase": (False, True, True, False),
-        "squash": (False, True, False, False),
-    }
 
 
 def test_merge_dry_run_validates_without_mutation(

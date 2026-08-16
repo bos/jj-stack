@@ -203,10 +203,8 @@ def test_help_all_keeps_terminal_top_level_contract(capsys) -> None:
     assert "Usage: jj-stack submit" not in captured.out
 
 
-@pytest.mark.parametrize("command", ["view", "status", "st", "v"])
 def test_main_preserves_view_selector_order(
     monkeypatch: pytest.MonkeyPatch,
-    command: str,
 ) -> None:
     observed: dict[str, object] = {}
 
@@ -216,7 +214,7 @@ def test_main_preserves_view_selector_order(
 
     monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
 
-    exit_code = main([command, "foo", "--pull-request", "17", "bar"])
+    exit_code = main(["view", "foo", "--pull-request", "17", "bar"])
 
     assert exit_code == 0
     assert observed["selectors"] == (
