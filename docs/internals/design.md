@@ -707,8 +707,9 @@ adding local state.
 `--reviewers` and `--team-reviewers` request the named reviewers even when a PR is otherwise
 unchanged and never remove omitted reviewers. `--re-request` acts on an otherwise unchanged PR,
 asking again only for users whose latest opinionated review approved or requested changes. It
-adds requests and never cancels a pending one. Labels are also additive; omitted labels are never
-removed.
+adds requests and never cancels a pending one. An explicit `--label` request applies even when a
+PR is otherwise unchanged; configured labels alone do not turn a no-op submit into a metadata
+update. Labels are also additive; omitted labels are never removed.
 
 ### Unstack and cleanup
 
