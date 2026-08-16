@@ -17,7 +17,7 @@ from jj_stack.github.overview_comments import (
 )
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.github import GithubIssueComment, GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
+from jj_stack.models.review_state import TrackedReview
 from jj_stack.review.github_stack_safety import GithubStackSelection
 from jj_stack.review.observation import RepositoryObservation
 from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
@@ -40,18 +40,20 @@ class ReviewMutationAction:
 def check_tracked_review(
     *,
     allowed_states: frozenset[str],
-    change_id: str,
+    candidate: TrackedReview,
     observation: RepositoryObservation,
     preview_detached_dependents: frozenset[int] = frozenset(),
     require_no_open_dependents: bool = False,
     retry_command: str = "cleanup",
-    review_identity: ReviewIdentity,
-    submitted_baseline: SubmittedBaseline,
 ) -> tuple[GithubPullRequest | None, ReviewMutationAction | None]:
     """Check one exact unchanged review against shared observations."""
 
+    change_id = candidate.change_id
+    review_identity = candidate.review_identity
+    submitted_baseline = candidate.submitted_baseline
     observed = observation.reviews[change_id]
     pull_request_number = review_identity.pr_number
+    repository_key = observation.repository.repository_key
     pull_request = observed.pull_request
     kind = "pull request"
     reason: Message | None = None
@@ -61,7 +63,7 @@ def check_tracked_review(
             t"tracking for {ui.change_id(change_id)} changed while this command ran; "
             t"rerun the same command"
         )
-    elif review_identity.repository_key != observation.repository.repository_key:
+    elif review_identity.repository_key != repository_key:
         reason = (
             t"cannot inspect saved PR #{pull_request_number} because it belongs to a "
             t"different GitHub repository; point the remote back at it, or reattach the "
@@ -86,7 +88,7 @@ def check_tracked_review(
                 t"cannot inspect saved PR #{pull_request_number} because its live PR and head "
                 t"no longer uniquely match {ui.bookmark(review_identity.head_ref)}"
             )
-        elif pull_request.head.sha != submitted_baseline.commit_id:
+        elif not candidate.matches_snapshot(pull_request, repository_key=repository_key):
             reason = (
                 t"cannot mutate saved PR #{pull_request_number} because its head no longer "
                 t"matches the saved submitted commit"
@@ -281,27 +283,26 @@ def _action_presentation(
 def plan_review_cleanup(
     *,
     allowed_states: frozenset[str],
-    change_id: str,
+    candidate: TrackedReview,
     observation: RepositoryObservation,
     preview_detached_dependents: frozenset[int] = frozenset(),
     retry_command: str = "cleanup",
-    review_identity: ReviewIdentity,
-    submitted_baseline: SubmittedBaseline,
 ) -> tuple[GithubPullRequest | None, ReviewRefUpdate | None, ReviewMutationAction | None]:
     """Check exact cleanup facts and derive at most one leased ref deletion."""
 
     pull_request, blocker = check_tracked_review(
         allowed_states=allowed_states,
-        change_id=change_id,
+        candidate=candidate,
         observation=observation,
         preview_detached_dependents=preview_detached_dependents,
         require_no_open_dependents=True,
         retry_command=retry_command,
-        review_identity=review_identity,
-        submitted_baseline=submitted_baseline,
     )
     if blocker is not None or pull_request is None:
         return pull_request, None, blocker
+    change_id = candidate.change_id
+    review_identity = candidate.review_identity
+    submitted_baseline = candidate.submitted_baseline
     configured_repository = observation.configured_repository
     if (
         observation.remote is None

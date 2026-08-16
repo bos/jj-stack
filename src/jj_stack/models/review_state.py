@@ -104,3 +104,14 @@ class TrackedReview(BaseModel):
     change_id: str
     review_identity: ReviewIdentity
     submitted_baseline: SubmittedBaseline
+
+    def matches_snapshot(
+        self, pull_request: GithubPullRequest, *, repository_key: tuple[str, str]
+    ) -> bool:
+        """Whether live GitHub data matches this exact saved review snapshot."""
+
+        return (
+            self.review_identity.repository_key == repository_key
+            and self.review_identity.matches_pull_request(pull_request)
+            and pull_request.head.sha == self.submitted_baseline.commit_id
+        )

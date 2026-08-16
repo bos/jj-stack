@@ -230,14 +230,12 @@ async def _check_selected_reviews(
         raise CliError("Could not inspect the selected pull requests.") from error
 
     for change_id in change_ids:
-        identity = state.review_identities[change_id]
-        baseline = state.submitted_baselines[change_id]
+        candidate = state.tracked_review(change_id)
+        assert candidate is not None
         _pull_request, blocker = check_tracked_review(
             allowed_states=frozenset({"open", "closed", "merged"}),
-            change_id=change_id,
+            candidate=candidate,
             observation=observation,
-            review_identity=identity,
-            submitted_baseline=baseline,
         )
         if blocker is not None:
             raise CliError(plain_text(blocker.body))

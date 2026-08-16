@@ -194,6 +194,8 @@ def _snapshot_mismatch(
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
 ) -> Message | None:
+    if candidate.matches_snapshot(pull_request, repository_key=repository.repository_key):
+        return None
     identity = candidate.review_identity
     if identity.repository_key != repository.repository_key or not identity.matches_pull_request(
         pull_request
@@ -202,6 +204,4 @@ def _snapshot_mismatch(
             t"PR #{pull_request.number} no longer matches the pull request recorded for "
             t"{ui.change_id(candidate.change_id)}"
         )
-    if pull_request.head.sha != candidate.submitted_baseline.commit_id:
-        return t"PR #{pull_request.number} no longer reports the submitted head"
-    return None
+    return t"PR #{pull_request.number} no longer reports the submitted head"

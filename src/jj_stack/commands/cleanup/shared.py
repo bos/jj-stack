@@ -11,11 +11,7 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
 )
 from jj_stack.models.git import GitRemote
-from jj_stack.models.review_state import (
-    ReviewIdentity,
-    ReviewState,
-    SubmittedBaseline,
-)
+from jj_stack.models.review_state import ReviewState, TrackedReview
 from jj_stack.ui import Message
 
 CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -61,8 +57,6 @@ class PreparedCleanup:
 class PreparedCleanupChange:
     """Locally prepared cleanup state for one complete tracked review."""
 
-    change_id: str
+    candidate: TrackedReview
     has_mutable_copy: bool
-    review_identity: ReviewIdentity
     stale_reason: str | None
-    submitted_baseline: SubmittedBaseline

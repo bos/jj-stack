@@ -4,13 +4,9 @@ import pytest
 
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
+from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline, TrackedReview
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review.trunk_evidence import (
-    TrackedReview,
-    classify_exact_snapshot,
-    classify_rewritten_result,
-)
+from jj_stack.review.trunk_evidence import classify_exact_snapshot, classify_rewritten_result
 
 
 def _candidate() -> TrackedReview:

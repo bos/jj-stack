@@ -344,12 +344,13 @@ async def _run_cleanup_async(
                 )
     elif prepared_changes:
         for prepared_change in prepared_changes:
+            candidate = prepared_change.candidate
             record_action(
                 CleanupAction(
                     kind="tracking",
                     status="blocked",
-                    body=t"cannot inspect PR #{prepared_change.review_identity.pr_number} for "
-                    t"{ui.change_id(prepared_change.change_id)} because the GitHub repository "
+                    body=t"cannot inspect PR #{candidate.review_identity.pr_number} for "
+                    t"{ui.change_id(candidate.change_id)} because the GitHub repository "
                     t"cannot be resolved",
                 )
             )
@@ -369,10 +370,9 @@ def _run_local_cleanup_pass(
         else selected_change_ids
     )
     for change_id in change_ids:
-        review_identity = prepared_cleanup.state.review_identities.get(change_id)
-        if review_identity is None:
+        candidate = prepared_cleanup.state.tracked_review(change_id)
+        if candidate is None:
             continue
-        submitted_baseline = prepared_cleanup.state.submitted_baselines[change_id]
         local_observation = local_observations.get(
             change_id,
             LocalCleanupObservation(
@@ -380,14 +380,13 @@ def _run_local_cleanup_pass(
                 stale_reason="local change was not inspected",
             ),
         )
-        prepared_change = PreparedCleanupChange(
-            change_id=change_id,
-            has_mutable_copy=local_observation.has_mutable_copy,
-            review_identity=review_identity,
-            stale_reason=local_observation.stale_reason,
-            submitted_baseline=submitted_baseline,
+        prepared_changes.append(
+            PreparedCleanupChange(
+                candidate=candidate,
+                has_mutable_copy=local_observation.has_mutable_copy,
+                stale_reason=local_observation.stale_reason,
+            )
         )
-        prepared_changes.append(prepared_change)
     return tuple(prepared_changes)
 
 
@@ -408,21 +407,22 @@ async def _run_tracked_review_cleanup_pass(
         raise AssertionError("Tracked review cleanup requires a configured remote.")
     remote_name = remote.name
     observations = await _observe_cleanup_reviews(
-        change_ids=tuple(change.change_id for change in prepared_changes),
+        change_ids=tuple(change.candidate.change_id for change in prepared_changes),
         context=prepared_cleanup.context,
         github_client=github_client,
         remote_name=remote_name,
     )
     for prepared_change in prepared_changes:
-        observation = observations[prepared_change.change_id]
+        candidate = prepared_change.candidate
+        observation = observations[candidate.change_id]
         if isinstance(observation, GithubClientError):
             record_action(
                 CleanupAction(
                     kind="tracking",
                     status="blocked",
                     body=t"cannot inspect saved PR "
-                    t"#{prepared_change.review_identity.pr_number} for "
-                    t"{ui.change_id(prepared_change.change_id)}; fix GitHub access, then rerun "
+                    t"#{candidate.review_identity.pr_number} for "
+                    t"{ui.change_id(candidate.change_id)}; fix GitHub access, then rerun "
                     t"{ui.cmd('cleanup')}",
                 )
             )
@@ -492,7 +492,8 @@ async def _cleanup_tracked_review(
 ) -> bool:
     """Plan and apply one cleanup, returning whether a partial failure must stop the pass."""
 
-    identity = prepared_change.review_identity
+    candidate = prepared_change.candidate
+    identity = candidate.review_identity
     review_state, update, blocker_action = _review_cleanup_update(
         close_open_pull_requests=prepared_cleanup.close_open_pull_requests,
         observation=initial_observation,
@@ -518,8 +519,8 @@ async def _cleanup_tracked_review(
                 kind="tracking",
                 status="skipped",
                 body=t"preserve merged PR #{identity.pr_number} for "
-                t"{ui.change_id(prepared_change.change_id)}; run "
-                t"{ui.cmd(f'sync {prepared_change.change_id}')} before cleanup",
+                t"{ui.change_id(candidate.change_id)}; run "
+                t"{ui.cmd(f'sync {candidate.change_id}')} before cleanup",
             )
         )
         return False
@@ -576,13 +577,11 @@ def _review_cleanup_update(
 ) -> tuple[str, ReviewRefUpdate | None, CleanupAction | None]:
     """Check the exact review and derive its remote branch deletion."""
 
-    identity = prepared_change.review_identity
+    candidate = prepared_change.candidate
     pull_request, blocker = check_tracked_review(
         allowed_states=frozenset({"open", "closed", "merged"}),
-        change_id=prepared_change.change_id,
+        candidate=candidate,
         observation=observation,
-        review_identity=identity,
-        submitted_baseline=prepared_change.submitted_baseline,
     )
     if blocker is not None:
         return "blocked", None, _cleanup_action(blocker)
@@ -596,11 +595,9 @@ def _review_cleanup_update(
             if close_open_pull_requests
             else frozenset({"closed", "merged"})
         ),
-        change_id=prepared_change.change_id,
+        candidate=candidate,
         observation=observation,
         preview_detached_dependents=preview_detached_dependents,
-        review_identity=identity,
-        submitted_baseline=prepared_change.submitted_baseline,
     )
     return pull_request.state, update, None if blocker is None else _cleanup_action(blocker)
 
@@ -641,6 +638,7 @@ async def _apply_tracked_review_cleanup(
 ) -> bool:
     """Apply checked cleanup, returning whether a partial failure must stop the pass."""
 
+    candidate = prepared_change.candidate
     mutation_started = not prepared_cleanup.dry_run and (
         branch_update is not None or overview_lookup.comment is not None
     )
@@ -656,7 +654,7 @@ async def _apply_tracked_review_cleanup(
         dry_run=prepared_cleanup.dry_run,
         github_client=github_client,
         lookup=overview_lookup,
-        pull_request_number=prepared_change.review_identity.pr_number,
+        pull_request_number=candidate.review_identity.pr_number,
     )
     for action in comment_actions:
         record_action(_cleanup_action(action))
@@ -668,14 +666,14 @@ async def _apply_tracked_review_cleanup(
     action = CleanupAction(
         kind="tracking",
         status="planned" if prepared_cleanup.dry_run else "applied",
-        body=t"forget PR #{prepared_change.review_identity.pr_number} for "
-        t"{ui.change_id(prepared_change.change_id)}{reason}",
+        body=t"forget PR #{candidate.review_identity.pr_number} for "
+        t"{ui.change_id(candidate.change_id)}{reason}",
     )
     if prepared_cleanup.dry_run:
         record_action(action)
     else:
         prepared_cleanup.context.state_store.retire_review(
-            prepared_change.change_id,
+            candidate.change_id,
         )
         record_action(action)
     return False

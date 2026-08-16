@@ -10,7 +10,12 @@ from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
+from jj_stack.models.review_state import (
+    ReviewIdentity,
+    ReviewState,
+    SubmittedBaseline,
+    TrackedReview,
+)
 from jj_stack.review.observation import (
     RepositoryObservation,
     ReviewObservation,
@@ -89,10 +94,8 @@ def test_local_cleanup_observations_flag_changes_outside_review_stacks(
 def test_cleanup_accepts_only_the_exact_closed_review_branch_and_lease() -> None:
     pull_request, update, blocker = plan_review_cleanup(
         allowed_states=frozenset({"closed", "merged"}),
-        change_id=CHANGE_ID,
+        candidate=_candidate(),
         observation=_observation(),
-        review_identity=_identity(),
-        submitted_baseline=_BASELINE,
     )
 
     assert pull_request is not None
@@ -108,10 +111,8 @@ def test_cleanup_accepts_only_the_exact_closed_review_branch_and_lease() -> None
 def test_cleanup_blocks_when_the_exact_remote_branch_drifted() -> None:
     _pull_request, update, blocker = plan_review_cleanup(
         allowed_states=frozenset({"closed", "merged"}),
-        change_id=CHANGE_ID,
+        candidate=_candidate(),
         observation=_observation(remote_target="external-commit"),
-        review_identity=_identity(),
-        submitted_baseline=_BASELINE,
     )
 
     assert update is None
@@ -146,6 +147,14 @@ def _identity() -> ReviewIdentity:
         pr_number=1,
         head_owner="octo-org",
         head_ref=BRANCH,
+    )
+
+
+def _candidate() -> TrackedReview:
+    return TrackedReview(
+        change_id=CHANGE_ID,
+        review_identity=_identity(),
+        submitted_baseline=_BASELINE,
     )
 
 
