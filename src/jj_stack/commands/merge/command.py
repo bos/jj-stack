@@ -181,7 +181,6 @@ def _prepare_merge(
         containing_change_id=target_change_id,
         context=context,
         fetch_remote_state=True,
-        re_resolve_after_remote_refresh=True,
         revset=revset,
     )
     prepared = prepared_status.prepared

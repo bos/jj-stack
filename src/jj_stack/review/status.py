@@ -35,9 +35,7 @@ from jj_stack.review.change_status import (
     classify_review_status_revision,
     submitted_state_disagreement,
 )
-from jj_stack.review.path import SelectedReviewPath
 from jj_stack.review.selected import select_review_path, select_review_path_containing_change
-from jj_stack.review_namespace import ReviewNamespace
 from jj_stack.ui import Message
 
 logger = logging.getLogger(__name__)
@@ -174,9 +172,7 @@ def prepare_status(
     *,
     context: CommandContext,
     fetch_remote_state: bool = False,
-    fetch_only_when_tracked: bool = False,
     observe_remote_targets: bool = True,
-    re_resolve_after_remote_refresh: bool = False,
     revset: str | None,
     containing_change_id: str | None = None,
     inspection_mode: bool = False,
@@ -187,21 +183,25 @@ def prepare_status(
     state_store = context.state_store
     state = state_store.load()
     github_target = resolve_github_target(jj_client.list_git_remotes())
+    if fetch_remote_state and github_target.remote is not None:
+        jj_client.fetch_remote(remote=github_target.remote.name)
 
-    selected_path, fetched_remote_state = _resolve_selected_stack(
-        fetch_only_when_tracked=fetch_only_when_tracked,
-        fetch_remote_state=fetch_remote_state,
-        containing_change_id=containing_change_id,
-        jj_client=jj_client,
-        namespace=context.review_namespace,
-        re_resolve_after_remote_refresh=re_resolve_after_remote_refresh,
-        remote=github_target.remote,
-        revset=revset,
-        state=state,
-        inspection_mode=inspection_mode,
-    )
-    if fetched_remote_state:
-        state = state_store.load()
+    if containing_change_id is not None:
+        selected_path = select_review_path_containing_change(
+            change_id=containing_change_id,
+            inspection_mode=inspection_mode,
+            jj_client=jj_client,
+            namespace=context.review_namespace,
+            state=state,
+        )
+    else:
+        selected_path = select_review_path(
+            inspection_mode=inspection_mode,
+            jj_client=jj_client,
+            namespace=context.review_namespace,
+            revset=revset,
+            state=state,
+        )
     prepared = prepare_stack_for_status(
         context=context,
         observed_remote_targets=None if observe_remote_targets else {},
@@ -221,70 +221,6 @@ def prepare_status(
         prepared=prepared,
         selected_revset=prepared.stack.selected_revset,
     )
-
-
-def _resolve_selected_stack(
-    *,
-    fetch_only_when_tracked: bool,
-    fetch_remote_state: bool,
-    containing_change_id: str | None,
-    jj_client: JjClient,
-    namespace: ReviewNamespace,
-    re_resolve_after_remote_refresh: bool,
-    remote: GitRemote | None,
-    revset: str | None,
-    state: ReviewState,
-    inspection_mode: bool,
-) -> tuple[SelectedReviewPath, bool]:
-    """Resolve the selected stack, fetching remote state first when requested.
-
-    Returns the resolved stack and whether a fetch ran. The fetch/resolve order
-    depends on the flags:
-
-    - an unconditional fetch with `re_resolve_after_remote_refresh` fetches
-      before the only resolution, so the stack reflects the refreshed remote
-      state
-    - `fetch_only_when_tracked` must resolve first to see whether any selected
-      change has saved review identity; the fetch is skipped otherwise
-    - after a post-resolution fetch, `re_resolve_after_remote_refresh` resolves again so
-      refreshed revisions and immutability are visible; without it the pre-fetch resolution
-      stands
-    """
-
-    def resolve() -> SelectedReviewPath:
-        if containing_change_id is not None:
-            return select_review_path_containing_change(
-                change_id=containing_change_id,
-                inspection_mode=inspection_mode,
-                jj_client=jj_client,
-                namespace=namespace,
-                state=state,
-            )
-        return select_review_path(
-            inspection_mode=inspection_mode,
-            jj_client=jj_client,
-            namespace=namespace,
-            revset=revset,
-            state=state,
-        )
-
-    if remote is None or not fetch_remote_state:
-        return resolve(), False
-    if re_resolve_after_remote_refresh and not fetch_only_when_tracked:
-        jj_client.fetch_remote(
-            remote=remote.name,
-        )
-        return resolve(), True
-
-    selected_path = resolve()
-    if fetch_only_when_tracked and not selected_path.tracked_change_ids:
-        return selected_path, False
-    jj_client.fetch_remote(
-        remote=remote.name,
-    )
-    if re_resolve_after_remote_refresh:
-        selected_path = resolve()
-    return selected_path, True
 
 
 def stream_status(

@@ -103,41 +103,6 @@ def test_prepare_status_observes_only_exact_saved_review_branches(monkeypatch) -
     assert prepared.prepared.remote_targets == {"jj-stack/feature-1-aaaaaaaa": first.commit_id}
 
 
-def test_prepare_status_reloads_saved_branch_after_fetch(monkeypatch) -> None:
-    revision = make_revision(
-        commit_id="commit-1",
-        description="feature 1",
-        change_id="aaaaaaaa1234",
-    )
-    stale_state = ReviewState(
-        review_identities={revision.change_id: _identity(head_ref="jj-stack/stale", pr_number=1)},
-        submitted_baselines={revision.change_id: SubmittedBaseline(commit_id=revision.commit_id)},
-    )
-    refreshed_state = ReviewState(
-        review_identities={
-            revision.change_id: _identity(head_ref="jj-stack/refreshed", pr_number=2)
-        },
-        submitted_baselines={revision.change_id: SubmittedBaseline(commit_id=revision.commit_id)},
-    )
-    client = _PrepareStatusClient(
-        _stack_for_status(revision),
-        remote_targets={"jj-stack/refreshed": revision.commit_id},
-    )
-    state_store = _StateStoreStub(stale_state, refreshed_state)
-    _patch_selected_path(monkeypatch, client=client, state=stale_state)
-
-    prepared = prepare_status(
-        context=_context(client=client, state_store=state_store),
-        fetch_remote_state=True,
-        revset=None,
-    )
-
-    assert state_store.loads == 2
-    assert client.fetches == ["origin"]
-    assert client.list_calls == [("refs/heads/jj-stack/refreshed",)]
-    assert prepared.prepared.status_revisions[0].branch == "jj-stack/refreshed"
-
-
 def test_stream_status_falls_back_to_local_data_after_github_abort(monkeypatch) -> None:
     revision = make_revision(
         commit_id="commit-1",
@@ -323,16 +288,12 @@ class _PrepareStatusClient:
         *,
         remote_targets: dict[str, str] | None = None,
     ) -> None:
-        self.fetches: list[str] = []
         self.list_calls: list[tuple[str, ...]] = []
         self.remote_targets = remote_targets or {}
         self.stack = stack
 
     def list_git_remotes(self) -> tuple[GitRemote, ...]:
         return (_STATUS_REMOTE,)
-
-    def fetch_remote(self, *, remote: str, **_kwargs) -> None:
-        self.fetches.append(remote)
 
     def list_remote_branches(
         self,
@@ -351,14 +312,11 @@ class _PrepareStatusClient:
 
 
 class _StateStoreStub:
-    def __init__(self, *states: ReviewState) -> None:
-        self.loads = 0
-        self.states = states
+    def __init__(self, state: ReviewState) -> None:
+        self.state = state
 
     def load(self) -> ReviewState:
-        state = self.states[min(self.loads, len(self.states) - 1)]
-        self.loads += 1
-        return state
+        return self.state
 
 
 def _patch_selected_path(
@@ -385,14 +343,12 @@ def _context(
     *,
     client: _PrepareStatusClient,
     state: ReviewState | None = None,
-    state_store: _StateStoreStub | None = None,
 ) -> CommandContext:
-    store = state_store or _StateStoreStub(state or ReviewState())
     return cast(
         CommandContext,
         SimpleNamespace(
             jj_client=cast(JjClient, client),
             review_namespace=ReviewNamespace("jj-stack"),
-            state_store=cast(ReviewStateStore, store),
+            state_store=cast(ReviewStateStore, _StateStoreStub(state or ReviewState())),
         ),
     )
