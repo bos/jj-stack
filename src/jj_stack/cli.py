@@ -511,6 +511,7 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         sync_parser,
+        "-a",
         "--all",
         action="store_true",
         help=(
