@@ -1,4 +1,4 @@
-"""Stacked GitHub review tooling for jj."""
+"""Stacked GitHub pull request tooling for jj."""
 
 from importlib.metadata import PackageNotFoundError, version
 from time import perf_counter

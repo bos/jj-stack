@@ -1,4 +1,4 @@
-"""Observe and project one ordinary selected review path."""
+"""Observe and project one ordinary selected stack path."""
 
 from __future__ import annotations
 
@@ -13,21 +13,21 @@ from jj_stack.jj.client import (
     UnsupportedStackError,
     divergent_change_id_from_error,
 )
-from jj_stack.models.review_state import ReviewState
-from jj_stack.models.stack import LocalRevision
-from jj_stack.review.branches import prepare_visible_review_snapshots
-from jj_stack.review.path import (
+from jj_stack.models.stack import LocalCommit
+from jj_stack.models.tracking import TrackingState
+from jj_stack.stack.path import (
     SelectedPathObservation,
-    SelectedReviewPath,
+    SelectedStackPath,
     project_selected_path,
 )
+from jj_stack.stack.pr_branches import prepare_visible_pr_snapshots
 
 
 @dataclass(frozen=True, slots=True)
 class _ObservedPathRow:
-    """One revision with named membership in the path observation revsets."""
+    """One commit with named membership in the path observation revsets."""
 
-    revision: LocalRevision
+    commit: LocalCommit
     is_trunk: bool
     is_selector: bool
     is_linked_selector: bool
@@ -36,16 +36,16 @@ class _ObservedPathRow:
     is_trunk_path: bool
 
 
-def select_review_path(
+def select_stack_path(
     *,
     inspection_mode: bool = False,
     jj_client: JjClient,
-    state: ReviewState,
+    state: TrackingState,
     revset: str | None = None,
-) -> SelectedReviewPath:
+) -> SelectedStackPath:
     """Collect the bounded facts for one selector and project its parent path."""
 
-    prepare_visible_review_snapshots(jj_client=jj_client, state=state)
+    prepare_visible_pr_snapshots(jj_client=jj_client, state=state)
 
     if revset is None:
         selector = "@ | @-"
@@ -80,7 +80,7 @@ def select_review_path(
         rows=rows,
         selected_revset=selected_revset,
         select_mutable_copy=select_mutable_copy,
-        selector_revisions=tuple(row.revision for row in rows if row.is_selector),
+        selector_commits=tuple(row.commit for row in rows if row.is_selector),
         state=state,
         use_default=revset is None,
         inspection_mode=inspection_mode,
@@ -92,16 +92,16 @@ def select_review_path(
     return path
 
 
-def select_review_path_containing_change(
+def select_stack_path_containing_change(
     *,
     inspection_mode: bool = False,
     change_id: str,
     jj_client: JjClient,
-    state: ReviewState,
-) -> SelectedReviewPath:
+    state: TrackingState,
+) -> SelectedStackPath:
     """Project the unique ordinary path whose head descends from one tracked change."""
 
-    prepare_visible_review_snapshots(jj_client=jj_client, state=state)
+    prepare_visible_pr_snapshots(jj_client=jj_client, state=state)
     linked_selector = _change_id_revset(change_id)
     trunk_path = "first_ancestors(trunk())"
     nonempty_descendants = f"((({linked_selector}) ~ {trunk_path}):: ~ {trunk_path}) ~ empty()"
@@ -117,16 +117,16 @@ def select_review_path_containing_change(
         rows=rows,
         selected_revset=change_id,
         select_mutable_copy=True,
-        selector_revisions=tuple(row.revision for row in rows if row.is_linked_selector),
+        selector_commits=tuple(row.commit for row in rows if row.is_linked_selector),
         state=state,
         use_default=False,
         inspection_mode=inspection_mode,
     )
-    heads = tuple(row.revision for row in rows if row.is_selector)
+    heads = tuple(row.commit for row in rows if row.is_selector)
     containing_heads = _heads_containing_commit(
         commit_id=selected_change_path.stack.head.commit_id,
         heads=heads,
-        revisions=tuple(row.revision for row in rows),
+        commits=tuple(row.commit for row in rows),
     )
     selected_revset = containing_heads[0].change_id if len(containing_heads) == 1 else change_id
     return _project_rows(
@@ -134,26 +134,26 @@ def select_review_path_containing_change(
         rows=rows,
         selected_revset=selected_revset,
         select_mutable_copy=False,
-        selector_revisions=tuple(row.revision for row in rows if row.is_selector),
+        selector_commits=tuple(row.commit for row in rows if row.is_selector),
         state=state,
         use_default=False,
         inspection_mode=inspection_mode,
     )
 
 
-def require_reviewable_revisions(revisions: tuple[LocalRevision, ...]) -> None:
-    """Require the ordinary mutable revisions accepted for publishing or relinking."""
+def require_submittable_changes(changes: tuple[LocalCommit, ...]) -> None:
+    """Require the ordinary mutable changes accepted for publishing or relinking."""
 
-    for revision in revisions:
-        if revision.immutable:
+    for change in changes:
+        if change.immutable:
             raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                "immutable commits are not reviewable.",
+                change.change_id,
+                "immutable changes are not submittable.",
                 reason="immutable_commit",
             )
-        if revision.divergent:
+        if change.divergent:
             raise UnsupportedStackError.stack_shape(
-                revision.change_id,
+                change.change_id,
                 "divergent changes are not supported.",
                 reason="divergent_change",
             )
@@ -171,7 +171,7 @@ def _observe_path_rows(
     ancestors = f"first_ancestors({off_trunk})"
     trunk_boundaries = f"parents(({ancestors}) ~ {trunk_path}) & {trunk_path}"
     candidate_neighborhood = f"(visible() & (({selector}) | children({selector})))"
-    candidate_revisions = (
+    candidate_commits = (
         f"((({candidate_neighborhood}) ~ {trunk_path} ~ working_copies()) "
         f"| (@ & {candidate_neighborhood}))"
     )
@@ -182,17 +182,17 @@ def _observe_path_rows(
             f"({selector})",
             f"({ancestors}) ~ {trunk_path}",
             trunk_boundaries,
-            candidate_revisions,
+            candidate_commits,
             *((linked_selector,) if linked_selector is not None else ()),
         )
     )
-    raw_rows = jj_client.query_revisions_with_membership(
+    raw_rows = jj_client.query_commits_with_membership(
         query,
         membership_revsets=(
             "trunk()",
             selector,
             linked_selector_membership,
-            candidate_revisions,
+            candidate_commits,
             ancestors,
             trunk_path,
         ),
@@ -200,7 +200,7 @@ def _observe_path_rows(
     )
     return tuple(
         _ObservedPathRow(
-            revision=revision,
+            commit=commit,
             is_trunk=is_trunk,
             is_selector=is_selector,
             is_linked_selector=is_linked_selector,
@@ -208,7 +208,7 @@ def _observe_path_rows(
             is_path=is_path,
             is_trunk_path=is_trunk_path,
         )
-        for revision, (
+        for commit, (
             is_trunk,
             is_selector,
             is_linked_selector,
@@ -226,13 +226,13 @@ def _project_rows(
     rows: tuple[_ObservedPathRow, ...],
     selected_revset: str,
     select_mutable_copy: bool,
-    selector_revisions: tuple[LocalRevision, ...],
-    state: ReviewState,
+    selector_commits: tuple[LocalCommit, ...],
+    state: TrackingState,
     use_default: bool,
-) -> SelectedReviewPath:
-    trunks = tuple(row.revision for row in rows if row.is_trunk)
+) -> SelectedStackPath:
+    trunks = tuple(row.commit for row in rows if row.is_trunk)
     if len(trunks) != 1:
-        raise CliError(t"Could not resolve {ui.revset('trunk()')} to one revision.")
+        raise CliError(t"Could not resolve {ui.revset('trunk()')} to one commit.")
     trunk = trunks[0]
     if not trunk.parents:
         raise UnsupportedStackError(
@@ -242,29 +242,29 @@ def _project_rows(
         )
 
     candidates = tuple(
-        revision
-        for revision in selector_revisions
-        if candidate_commit_ids is None or revision.commit_id in candidate_commit_ids
+        commit
+        for commit in selector_commits
+        if candidate_commit_ids is None or commit.commit_id in candidate_commit_ids
     )
     if not candidates:
         raise CliError(
-            t"Revset {ui.revset(selected_revset)} did not resolve to a visible revision."
+            t"Revset {ui.revset(selected_revset)} did not resolve to a visible commit."
         )
     current_working_copy_commit_id = (
         next(
-            (revision.commit_id for revision in candidates if revision.current_working_copy),
+            (commit.commit_id for commit in candidates if commit.current_working_copy),
             None,
         )
         if use_default
         else None
     )
-    path_revisions = tuple(row.revision for row in rows if row.is_path)
-    if not inspection_mode and any(len(revision.parents) > 1 for revision in path_revisions):
+    path_commits = tuple(row.commit for row in rows if row.is_path)
+    if not inspection_mode and any(len(commit.parents) > 1 for commit in path_commits):
         raise UnsupportedStackError(
-            "Unsupported stack shape: merge commits are not supported.",
+            "Unsupported stack shape: merge changes are not supported.",
             reason="merge_commit",
         )
-    if any(not revision.parents for revision in path_revisions):
+    if any(not commit.parents for commit in path_commits):
         raise UnsupportedStackError(
             t"Unsupported stack shape: selected-parent path reached the root commit before "
             t"{ui.revset('trunk()')}.",
@@ -273,15 +273,15 @@ def _project_rows(
     path = project_selected_path(
         SelectedPathObservation(
             candidate_commit_ids=frozenset(
-                row.revision.commit_id for row in rows if row.is_candidate
+                row.commit.commit_id for row in rows if row.is_candidate
             ),
             current_working_copy_commit_id=current_working_copy_commit_id,
             fetched_trunk_commit_ids=frozenset(
-                row.revision.commit_id for row in rows if row.is_trunk_path
+                row.commit.commit_id for row in rows if row.is_trunk_path
             ),
-            revisions=tuple(row.revision for row in rows),
+            commits=tuple(row.commit for row in rows),
             selected_revset=selected_revset,
-            selector_revisions=candidates,
+            selector_commits=candidates,
             select_mutable_copy=select_mutable_copy,
             trunk=trunk,
         )
@@ -293,15 +293,15 @@ def _project_rows(
 def _heads_containing_commit(
     *,
     commit_id: str,
-    heads: tuple[LocalRevision, ...],
-    revisions: tuple[LocalRevision, ...],
-) -> tuple[LocalRevision, ...]:
-    revisions_by_commit_id = {revision.commit_id: revision for revision in revisions}
-    containing: list[LocalRevision] = []
+    heads: tuple[LocalCommit, ...],
+    commits: tuple[LocalCommit, ...],
+) -> tuple[LocalCommit, ...]:
+    commits_by_id = {commit.commit_id: commit for commit in commits}
+    containing: list[LocalCommit] = []
     for head in heads:
         current = head
         while current.commit_id != commit_id and current.parents:
-            parent = revisions_by_commit_id.get(current.parents[0])
+            parent = commits_by_id.get(current.parents[0])
             if parent is None:
                 break
             current = parent
@@ -311,32 +311,32 @@ def _heads_containing_commit(
 
 
 def _validate_selected_path(
-    path: SelectedReviewPath,
+    path: SelectedStackPath,
     *,
     inspection_mode: bool,
 ) -> None:
     if inspection_mode:
         return
-    for revision in path.stack.revisions:
-        if revision.is_working_copy and revision.empty:
+    for change in path.stack.changes:
+        if change.is_working_copy and change.empty:
             raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                "empty working-copy commits are not reviewable.",
+                change.change_id,
+                "empty working-copy changes are not submittable.",
                 reason="empty_working_copy",
             )
-        if revision.is_working_copy and not revision.description.strip():
+        if change.is_working_copy and not change.description.strip():
             raise UnsupportedStackError.stack_shape(
-                revision.change_id,
-                t"describe it with {ui.cmd('jj describe')} before submitting it for review.",
+                change.change_id,
+                t"describe it with {ui.cmd('jj describe')} before submitting it.",
                 reason="undescribed_working_copy",
             )
 
 
 def _replace_selected_revset(
-    path: SelectedReviewPath,
+    path: SelectedStackPath,
     selected_revset: str,
-) -> SelectedReviewPath:
-    return SelectedReviewPath(
+) -> SelectedStackPath:
+    return SelectedStackPath(
         is_maximal=path.is_maximal,
         stack=path.stack.model_copy(update={"selected_revset": selected_revset}),
     )

@@ -7,7 +7,7 @@ weight: 105
 
 `jj-stack view --json` and `jj-stack list --json` print structured versions of the
 normal command output. The JSON schema uses the same user-facing concepts as the text
-output: stacks, rows, changes, review branches, pull requests, and status.
+output: stacks, rows, changes, PR branches, pull requests, and status.
 
 The checked-in schema is
 [json-output.schema.json](https://github.com/bos/jj-stack/blob/main/docs/json-output.schema.json).
@@ -30,7 +30,7 @@ Stack changes use this shape:
   "branch": "jj-stack/add-json-output-zvlyxwvk",
   "subject": "add json output",
   "status": "open",
-  "pull_request": {
+  "pr": {
     "number": 12,
     "url": "https://github.com/octo-org/example/pull/12"
   }
@@ -40,18 +40,17 @@ Stack changes use this shape:
 `current: true` is present when that change is the current working-copy change. It is
 omitted otherwise.
 
-`branch` is present only when tracking data attaches the change to an exact review branch.
+`branch` is present only when tracking data attaches the change to an exact PR branch.
 An unsubmitted change has no `branch` field; `jj-stack` does not generate a speculative name
 for status output. An orphan row always has one, because saved tracking is the only thing that
 identifies it.
 
-`pull_request` is present when `jj-stack` knows the matching PR identity. It contains PR
-identity, not a duplicate status summary; use the change's `status` field for review
-state.
+`pr` is present when `jj-stack` knows the matching PR identity. It contains PR identity, not a
+duplicate status summary; use the change's `status` field for PR state.
 
-Within `pull_request`, `number` is always present. `url` appears only when GitHub reported the
-pull request, so a change whose status is `submitted` — and every orphan row, which is
-identified from saved tracking alone — carries `number` by itself.
+Within `pr`, `number` is always present. `url` appears only when GitHub reported the PR, so a
+change whose status is `submitted` — and every orphan row, which is identified from saved
+tracking alone — carries `number` by itself.
 
 Known change statuses are:
 
@@ -59,14 +58,14 @@ Known change statuses are:
 - `submitted`: submitted before, but live GitHub status is unavailable
 - `open`: open, non-draft PR with no review decision to report
 - `draft`: open draft PR
-- `approved`: open PR whose latest review state is approved
+- `approved`: open PR whose latest review decision is approved
 - `changes_requested`: open PR with requested changes
 - `commented`: open PR with review comments but no approval or requested changes
 - `merged`: PR is merged and local cleanup may be needed
 - `closed`: PR is closed without being merged
 - `missing`: saved PR identity exists, but GitHub did not report that PR for the branch
 - `ambiguous`: more than one matching PR was found
-- `divergent`: multiple visible revisions exist for the same change
+- `divergent`: multiple visible commits exist for the same change
 - `unknown`: GitHub lookup failed for this change
 
 ## `view --json`
@@ -84,7 +83,7 @@ Known change statuses are:
           "branch": "jj-stack/add-json-output-zvlyxwvk",
           "subject": "add json output",
           "status": "open",
-          "pull_request": {
+          "pr": {
             "number": 12,
             "url": "https://github.com/octo-org/example/pull/12"
           }
@@ -118,7 +117,7 @@ the `changes` array.
           "branch": "jj-stack/add-the-model-rlvmnowl",
           "subject": "add the model",
           "status": "approved",
-          "pull_request": {
+          "pr": {
             "number": 11,
             "url": "https://github.com/octo-org/example/pull/11"
           }
@@ -128,7 +127,7 @@ the `changes` array.
           "branch": "jj-stack/add-json-output-zvlyxwvk",
           "subject": "add json output",
           "status": "open",
-          "pull_request": {
+          "pr": {
             "number": 12,
             "url": "https://github.com/octo-org/example/pull/12"
           }
@@ -141,7 +140,7 @@ the `changes` array.
       "branch": "jj-stack/old-change-kkkkkkkk",
       "subject": "local change missing",
       "status": "orphan",
-      "pull_request": {
+      "pr": {
         "number": 7
       }
     }

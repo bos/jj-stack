@@ -1,6 +1,6 @@
 # Code review guidelines
 
-Use this guide for reviews of code, tests, and documentation in this repository.
+Use this guide for reviews of code, tests, and documentation in this repo.
 
 ## What a review should find
 
@@ -18,7 +18,7 @@ development and has no legacy formats or behavior to preserve.
 
 ## Start with the product rules
 
-Read [design.md](design.md) and the repository [AGENTS.md](../../AGENTS.md) before reviewing a
+Read [design.md](design.md) and the repo's [AGENTS.md](../../AGENTS.md) before reviewing a
 behavior change. A change can be internally consistent and still be too complicated, surprising,
 or hard for a `jj` user to understand.
 
@@ -30,7 +30,7 @@ tracking. Common failures include:
 - recovery that cannot reach a safe state on a rerun
 - unusual DAG shapes after rewrites, relinks, local deletion, or divergence
 - a stack-scoped command being affected by unrelated history
-- cleanup deleting an artifact that another review still needs
+- cleanup deleting an artifact that another PR still needs
 
 ## Keep fixes simple
 
@@ -75,12 +75,12 @@ name a real type or enduring rule and are defined where they first appear.
 
 ## Check performance
 
-Flag work that adds visible latency or scales poorly with repository size, including:
+Flag work that adds visible latency or scales poorly with repo size, including:
 
 - history-wide scans where a bounded query would work
 - repeated `jj` or GitHub calls that could be batched or run concurrently
 - serial network requests with no ordering dependency
-- algorithms that grow poorly with stack or repository size
+- algorithms that grow poorly with stack or repo size
 
 Account for `jj` process startup and GitHub latency, not just in-process cost.
 
@@ -103,7 +103,7 @@ async-protocol, or untrusted-JSON boundaries; they should be narrowed immediatel
 Follow [testing-philosophy.md](testing-philosophy.md). Give extra scrutiny to changes involving:
 
 - states produced by supported commands or documented external actions
-- configuration lookup failures, invalid values, or settings inconsistent with the repository
+- configuration lookup failures, invalid values, or settings inconsistent with the repo
 - unusual DAG topology and stack selection
 - consistency among `jj`, remote refs, GitHub, and local tracking
 - interrupted operations and recovery

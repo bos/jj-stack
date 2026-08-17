@@ -6,16 +6,16 @@ from contextlib import contextmanager
 import pytest
 
 import jj_stack.console as console
-from jj_stack.review_namespace import install_review_namespace
+from jj_stack.pr_branch_namespace import install_pr_branch_namespace
 
 pytest_plugins = ["tests.support.pytest_concurrency"]
 
 
 @pytest.fixture(autouse=True)
-def _install_default_review_namespace() -> None:
-    """Reset the process-wide review policy before each test."""
+def _install_default_pr_branch_namespace() -> None:
+    """Reset the process-wide PR branch policy before each test."""
 
-    install_review_namespace("jj-stack")
+    install_pr_branch_namespace("jj-stack")
 
 
 @pytest.fixture(autouse=True)

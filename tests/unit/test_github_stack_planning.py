@@ -10,22 +10,24 @@ from jj_stack.ui import plain_text
 
 def _stack(
     number: int,
-    *pull_numbers: int,
+    *pr_numbers: int,
     historical: tuple[int, ...] = (),
 ) -> GithubStack:
-    return GithubStack(
-        number=number,
-        pull_requests=tuple(
-            {
-                "head": {
-                    "ref": f"jj-stack/pull-{pull_number}",
-                    "sha": f"head-{pull_number}",
-                },
-                "merged_at": ("2026-07-23T12:00:00Z" if pull_number in historical else None),
-                "number": pull_number,
-            }
-            for pull_number in pull_numbers
-        ),
+    return GithubStack.model_validate(
+        {
+            "number": number,
+            "pull_requests": tuple(
+                {
+                    "head": {
+                        "ref": f"jj-stack/pull-{pr_number}",
+                        "sha": f"head-{pr_number}",
+                    },
+                    "merged_at": ("2026-07-23T12:00:00Z" if pr_number in historical else None),
+                    "number": pr_number,
+                }
+                for pr_number in pr_numbers
+            ),
+        }
     )
 
 
@@ -95,7 +97,7 @@ def test_github_stack_plan_classifies_selected_membership(
         desired=desired,
         is_maximal_path=is_maximal_path,
         observed_stacks=observed,
-        pull_numbers_requiring_base_update=base_updates,
+        pr_numbers_requiring_base_update=base_updates,
     )
 
     assert plan.action == expected_action
@@ -124,7 +126,7 @@ def test_github_stack_plan_classifies_selected_membership(
             (3, 2),
             True,
             (_stack(7, 1, 2),),
-            ("part of GitHub stack #7", "reviews outside"),
+            ("part of GitHub stack #7", "pull requests outside"),
             ("other local path",),
         ),
     ),
@@ -141,7 +143,7 @@ def test_github_stack_plan_rejects_ambiguous_selected_membership(
             desired=desired,
             is_maximal_path=is_maximal_path,
             observed_stacks=observed,
-            pull_numbers_requiring_base_update=frozenset(),
+            pr_numbers_requiring_base_update=frozenset(),
         )
 
     message = plain_text(error_message(caught.value))

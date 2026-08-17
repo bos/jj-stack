@@ -12,7 +12,7 @@ text, supply the override again on later submits that should keep it.
 ## Default text
 
 For each change, the subject becomes the pull request title and the remainder becomes its body. If
-the description has no body, jj-stack tries the repository pull request template and then falls
+the description has no body, jj-stack tries the repo's pull request template and then falls
 back to the subject.
 
 ## Supply Markdown
@@ -31,7 +31,7 @@ jj-stack submit --describe stack=overview.md
 
 Relative paths resolve from the directory in which you invoke jj-stack.
 
-## Edit every review at once
+## Edit every PR at once
 
 ```console
 jj-stack submit --edit

@@ -10,10 +10,10 @@ from typing import Any
 
 from jj_stack.errors import ConflictedStackError, DriftError
 from jj_stack.jj.client import JjClient, UnsupportedStackError
-from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline as StoredBaseline
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.models.tracking import PRIdentity, SubmittedBaseline as StoredBaseline
+from jj_stack.state.store import TrackingStore
 
-from .fake_github import FakeGithubRepository
+from .fake_github import FakeGithubRepo
 from .integration_helpers import (
     commit_file,
     run_command,
@@ -54,13 +54,13 @@ class SubmittedBaseline:
     change_id: str
     pr_base_ref: str
     pr_number: int
-    review_identity: ReviewIdentity
+    pr_identity: PRIdentity
     remote_target: str
     submitted_baseline: StoredBaseline
 
 
 def replay_lifecycle(
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     repo: Path,
     run_cli: CliRunner,
     read_output: OutputDiscarder,
@@ -72,28 +72,28 @@ def replay_lifecycle(
     labels = _create_initial_stack(repo, stack_size)
     assert run_cli(("submit",)) == 0
     baseline = _capture_submitted_baseline(repo, fake_repo, labels)
-    _approve_initial_pull_requests(fake_repo, baseline)
+    _approve_initial_prs(fake_repo, baseline)
     head_id = labels[initial_label(stack_size)]
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     read_output()
     if scenario.template == "closed_restart":
         old = baseline["c1"]
-        old_pr = fake_repo.pull_requests[old.pr_number]
-        fake_repo.update_pull_request_state(old_pr, state="closed")
+        old_pr = fake_repo.prs[old.pr_number]
+        fake_repo.update_pr_state(old_pr, state="closed")
         assert run_cli(("cleanup", head_id)) == 0
-        assert old.change_id not in state_store.load().review_identities
+        assert old.change_id not in state_store.load().pr_identities
         assert f"refs/heads/{old.branch}" not in _remote_refs(fake_repo.git_dir)
         assert run_cli(("submit", head_id)) == 0
-        fresh = state_store.load().review_identities[old.change_id]
+        fresh = state_store.load().pr_identities[old.change_id]
         assert fresh.pr_number != old.pr_number
-        assert fake_repo.pull_requests[fresh.pr_number].state == "open"
-        assert fake_repo.pull_requests[fresh.pr_number].base_ref == "main"
+        assert fake_repo.prs[fresh.pr_number].state == "open"
+        assert fake_repo.prs[fresh.pr_number].base_ref == "main"
         refs = _remote_refs(fake_repo.git_dir)
-        revision = jj.resolve_revision(old.change_id)
-        assert refs[f"refs/heads/{fresh.head_ref}"] == revision.commit_id
+        change = jj.resolve_commit(old.change_id)
+        assert refs[f"refs/heads/{fresh.head_ref}"] == change.commit_id
         assert old_pr.state == "closed" and old_pr.merged_at is None
         _assert_approval_review_preserved(fake_repo, old.pr_number, "c1")
-        assert len(fake_repo.pull_requests) == 2
+        assert len(fake_repo.prs) == 2
         return
     if scenario.template == "direct_merge":
         if scenario.merge_method == "rebase":
@@ -119,58 +119,58 @@ def replay_lifecycle(
         )
         assert fake_repo.stack_merge_requests == [expected_request]
     else:
-        pull_request = fake_repo.pull_requests[1]
-        fake_repo.apply_pull_request_merge(pull_request, merge_method=scenario.merge_method)
+        pr = fake_repo.prs[1]
+        fake_repo.apply_pr_merge(pr, merge_method=scenario.merge_method)
         state_before, refs_before = state_store.load(), _remote_refs(fake_repo.git_dir)
-        fake_repo.pull_request_events.clear()
+        fake_repo.pr_events.clear()
         assert run_cli(("cleanup", head_id)) == 0
         output = " ".join(" ".join(read_output()).split())
         assert f"sync {head_id}" in output, output
         assert state_store.load() == state_before
         assert _remote_refs(fake_repo.git_dir) == refs_before
-        assert fake_repo.pull_request_events == []
+        assert fake_repo.pr_events == []
         assert run_cli(("sync", head_id)) == 0
     state = state_store.load()
     refs = _remote_refs(fake_repo.git_dir)
     for index in range(1, merged_prefix + 1):
         label = initial_label(index)
         submitted = baseline[label]
-        assert submitted.change_id not in state.review_identities
+        assert submitted.change_id not in state.pr_identities
         assert f"refs/heads/{submitted.branch}" not in refs
-        assert fake_repo.pull_requests[submitted.pr_number].merged_at is not None
+        assert fake_repo.prs[submitted.pr_number].merged_at is not None
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
-        copies = jj.query_revisions_by_change_ids((submitted.change_id,))[submitted.change_id]
+        copies = jj.query_commits_by_change_ids((submitted.change_id,))[submitted.change_id]
         if scenario.merge_method == "squash":
             assert not copies
         else:
             assert len(copies) == 1
             copy = copies[0]
             assert copy.immutable and not copy.divergent
-            assert copy.commit_id == fake_repo.pull_requests[submitted.pr_number].merge_commit_sha
+            assert copy.commit_id == fake_repo.prs[submitted.pr_number].merge_commit_sha
     previous_base = "main"
     previous_commit = _remote_head(refs, "main")
     for index in range(merged_prefix + 1, stack_size + 1):
         label = initial_label(index)
         submitted = baseline[label]
-        assert state.review_identities[submitted.change_id].pr_number == submitted.pr_number
-        assert fake_repo.pull_requests[submitted.pr_number].state == "open"
-        revision = jj.resolve_revision(submitted.change_id)
-        assert revision.parents == (previous_commit,)
+        assert state.pr_identities[submitted.change_id].pr_number == submitted.pr_number
+        assert fake_repo.prs[submitted.pr_number].state == "open"
+        change = jj.resolve_commit(submitted.change_id)
+        assert change.parents == (previous_commit,)
         if scenario.template == "direct_merge":
-            assert revision.commit_id != submitted.remote_target
-        assert refs[f"refs/heads/{submitted.branch}"] == revision.commit_id
-        assert state.submitted_baselines[submitted.change_id].commit_id == revision.commit_id
-        assert fake_repo.pull_requests[submitted.pr_number].base_ref == previous_base
+            assert change.commit_id != submitted.remote_target
+        assert refs[f"refs/heads/{submitted.branch}"] == change.commit_id
+        assert state.submitted_baselines[submitted.change_id].commit_id == change.commit_id
+        assert fake_repo.prs[submitted.pr_number].base_ref == previous_base
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
         previous_base = submitted.branch
-        previous_commit = revision.commit_id
-    assert len(fake_repo.pull_requests) == stack_size
+        previous_commit = change.commit_id
+    assert len(fake_repo.prs) == stack_size
 
 
 def replay_successful_stack_edit_scenario(
     *,
     discard_output: OutputDiscarder,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     repo: Path,
     scenario: StackEditScenario,
     submit: SubmitRunner,
@@ -182,8 +182,8 @@ def replay_successful_stack_edit_scenario(
     assert submit(None) == 0
     discard_output()
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
-    _approve_initial_pull_requests(fake_repo, baseline)
-    fake_repo.pull_request_events.clear()
+    _approve_initial_prs(fake_repo, baseline)
+    fake_repo.pr_events.clear()
 
     live_labels = list(initial_label(index) for index in range(1, scenario.initial_size + 1))
     for operation in scenario.operations:
@@ -217,7 +217,7 @@ def replay_successful_stack_edit_scenario(
 def replay_external_drift_scenario(
     *,
     discard_output: OutputDiscarder,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     last_cli_error: CliErrorReader,
     repo: Path,
     run_cli: CliRunner,
@@ -227,7 +227,7 @@ def replay_external_drift_scenario(
 
     Fail-closed scenarios must stop with one of the drift kind's expected
     diagnoses — not merely the right exit code — and leave every boundary
-    untouched: remote refs, the PR database, and the saved review identity of
+    untouched: remote refs, the PR database, and the saved PR identity of
     every submitted change. `last_cli_error` reads the error the CLI reported
     for the most recent `run_cli` call. Success scenarios must converge on the
     normal post-submit contract. Both end with a `view` report on the drifted
@@ -239,7 +239,7 @@ def replay_external_drift_scenario(
     assert run_cli(("submit",)) == 0
     discard_output()
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
-    _approve_initial_pull_requests(fake_repo, baseline)
+    _approve_initial_prs(fake_repo, baseline)
 
     live_labels = list(initial_label(index) for index in range(1, scenario.initial_size + 1))
     for operation in scenario.edit_operations:
@@ -266,9 +266,9 @@ def replay_external_drift_scenario(
     if scenario.drift.spec.expected_outcome == "fail_closed":
         before_refs = _remote_refs(fake_repo.git_dir)
         before_github = _github_snapshot(fake_repo)
-        before_imported_reviews = JjClient(repo).visible_review_bookmark_targets()
-        before_state = ReviewStateStore.for_repo(repo).load()
-        fake_repo.pull_request_events.clear()
+        before_imported_prs = JjClient(repo).visible_pr_bookmark_targets()
+        before_state = TrackingStore.for_repo(repo).load()
+        fake_repo.pr_events.clear()
 
         exit_code = run_cli(("submit", submit_revset))
         diagnosis = _fail_closed_diagnosis(last_cli_error())
@@ -278,18 +278,16 @@ def replay_external_drift_scenario(
         assert failure in scenario.drift.spec.failures, (failure, scenario.trace)
         assert _remote_refs(fake_repo.git_dir) == before_refs, scenario.trace
         assert _github_snapshot(fake_repo) == before_github, scenario.trace
-        assert fake_repo.pull_request_events == [], scenario.trace
-        assert JjClient(repo).visible_review_bookmark_targets() == before_imported_reviews, (
-            scenario.trace
-        )
-        assert ReviewStateStore.for_repo(repo).load() == before_state, scenario.trace
+        assert fake_repo.pr_events == [], scenario.trace
+        assert JjClient(repo).visible_pr_bookmark_targets() == before_imported_prs, scenario.trace
+        assert TrackingStore.for_repo(repo).load() == before_state, scenario.trace
     else:
         stack = _discover_stack_for_labels(
             repo=repo,
             labels=scenario.final_live_labels,
             labels_to_change_ids=labels_to_change_ids,
         )
-        fake_repo.pull_request_events.clear()
+        fake_repo.pr_events.clear()
 
         assert run_cli(("submit", stack.head.change_id)) == 0, scenario.trace
         discard_output()
@@ -327,7 +325,7 @@ def _fail_closed_diagnosis(error: BaseException | None) -> str | None:
 def replay_failed_submit_retry_scenario(
     *,
     discard_output: OutputDiscarder,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     relink: RelinkRunner,
     repo: Path,
     scenario: SubmitRetryScenario,
@@ -359,7 +357,7 @@ def replay_failed_submit_retry_scenario(
 def _replay_failed_first_submit(
     *,
     discard_output: OutputDiscarder,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     relink: RelinkRunner,
     repo: Path,
     scenario: SubmitRetryScenario,
@@ -374,16 +372,16 @@ def _replay_failed_first_submit(
     discard_output()
 
     retry_submit = submit
-    if scenario.failure_point in {"create_pull_request", "pull_request_metadata"}:
+    if scenario.failure_point in {"create_pr", "pr_metadata"}:
         assert submit(None) != 0
         discard_output()
         failed_change_id = labels_to_change_ids[scenario.failure_label]
-        failed_pull_request = next(
-            pull_request
-            for pull_request in fake_repo.pull_requests.values()
-            if pull_request.title == subject_for_label(scenario.failure_label)
+        failed_pr = next(
+            pr
+            for pr in fake_repo.prs.values()
+            if pr.title == subject_for_label(scenario.failure_label)
         )
-        assert relink(failed_pull_request.number, failed_change_id) == 0
+        assert relink(failed_pr.number, failed_change_id) == 0
         discard_output()
         retry_submit = submit_after_relink
 
@@ -408,26 +406,26 @@ def _replay_failed_first_submit(
 def _replay_failed_resubmit(
     *,
     discard_output: OutputDiscarder,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     repo: Path,
     scenario: SubmitRetryScenario,
     submit: SubmitRunner,
 ) -> None:
-    """A previously-submitted stack rebuilds review identity on a faulted resubmit."""
+    """A previously-submitted stack rebuilds PR identity on a faulted resubmit."""
 
     labels_to_change_ids = _create_initial_stack(repo, scenario.initial_size)
 
     assert submit(None) == 0
     discard_output()
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
-    _approve_initial_pull_requests(fake_repo, baseline)
-    _rewrite_pull_request_body(
+    _approve_initial_prs(fake_repo, baseline)
+    _rewrite_pr_body(
         repo=repo,
         label=scenario.failure_label,
         labels_to_change_ids=labels_to_change_ids,
     )
     submit_revset = labels_to_change_ids[initial_label(scenario.initial_size)]
-    fake_repo.pull_request_events.clear()
+    fake_repo.pr_events.clear()
 
     assert submit(submit_revset) != 0
     discard_output()
@@ -455,7 +453,7 @@ def _replay_failed_resubmit(
 def replay_stack_join_scenario(
     *,
     discard_output: OutputDiscarder,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     repo: Path,
     scenario: StackJoinScenario,
     submit: SubmitRunner,
@@ -470,8 +468,8 @@ def replay_stack_join_scenario(
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
-    _approve_initial_pull_requests(fake_repo, baseline)
-    fake_repo.pull_request_events.clear()
+    _approve_initial_prs(fake_repo, baseline)
+    fake_repo.pr_events.clear()
 
     run_command(
         [
@@ -507,7 +505,7 @@ def replay_stack_join_scenario(
 def replay_stack_move_scenario(
     *,
     discard_output: OutputDiscarder,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     repo: Path,
     scenario: StackMoveScenario,
     submit: SubmitRunner,
@@ -522,8 +520,8 @@ def replay_stack_move_scenario(
     assert submit(labels_to_change_ids[scenario.second_stack_labels[-1]]) == 0
     discard_output()
     baseline = _capture_submitted_baseline(repo, fake_repo, labels_to_change_ids)
-    _approve_initial_pull_requests(fake_repo, baseline)
-    fake_repo.pull_request_events.clear()
+    _approve_initial_prs(fake_repo, baseline)
+    fake_repo.pr_events.clear()
 
     run_command(
         [
@@ -591,47 +589,45 @@ def _create_labeled_stack(repo: Path, labels: tuple[str, ...]) -> dict[str, str]
         commit_file(repo, subject_for_label(label), filename_for_label(label))
 
     stack = selected_stack(repo)
-    assert tuple(revision.subject for revision in stack.revisions) == tuple(
+    assert tuple(change.subject for change in stack.changes) == tuple(
         subject_for_label(label) for label in labels
     )
-    return {
-        label: revision.change_id for label, revision in zip(labels, stack.revisions, strict=True)
-    }
+    return {label: change.change_id for label, change in zip(labels, stack.changes, strict=True)}
 
 
 def _capture_submitted_baseline(
     repo: Path,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     labels_to_change_ids: dict[str, str],
 ) -> dict[str, SubmittedBaseline]:
-    state = ReviewStateStore.for_repo(repo).load()
+    state = TrackingStore.for_repo(repo).load()
     remote_heads = _remote_refs(fake_repo.git_dir)
     baseline: dict[str, SubmittedBaseline] = {}
     for label, change_id in labels_to_change_ids.items():
-        review_identity = state.review_identities[change_id]
+        pr_identity = state.pr_identities[change_id]
         submitted_baseline = state.submitted_baselines[change_id]
-        branch = review_identity.head_ref
-        pr_number = review_identity.pr_number
-        pull_request = fake_repo.pull_requests[pr_number]
+        branch = pr_identity.head_ref
+        pr_number = pr_identity.pr_number
+        pr = fake_repo.prs[pr_number]
         baseline[label] = SubmittedBaseline(
             branch=branch,
             change_id=change_id,
-            pr_base_ref=pull_request.base_ref,
+            pr_base_ref=pr.base_ref,
             pr_number=pr_number,
-            review_identity=review_identity,
+            pr_identity=pr_identity,
             remote_target=_remote_head(remote_heads, branch),
             submitted_baseline=submitted_baseline,
         )
     return baseline
 
 
-def _approve_initial_pull_requests(
-    fake_repo: FakeGithubRepository,
+def _approve_initial_prs(
+    fake_repo: FakeGithubRepo,
     baseline: dict[str, SubmittedBaseline],
 ) -> None:
     for label, submitted in baseline.items():
-        fake_repo.create_pull_request_review(
-            pull_number=submitted.pr_number,
+        fake_repo.create_pr_review(
+            pr_number=submitted.pr_number,
             reviewer_login=f"reviewer-{label}",
             state="APPROVED",
         )
@@ -797,7 +793,7 @@ def _apply_stack_edit_operation(
     raise AssertionError(f"unsupported stack edit operation: {operation.kind}")
 
 
-def _rewrite_pull_request_body(
+def _rewrite_pr_body(
     *,
     repo: Path,
     label: str,
@@ -825,66 +821,66 @@ def _discover_stack_for_labels(
     head_change_id = labels_to_change_ids[labels[-1]]
     stack = selected_stack(repo, head_change_id)
     expected_change_ids = tuple(labels_to_change_ids[label] for label in labels)
-    assert tuple(revision.change_id for revision in stack.revisions) == expected_change_ids
+    assert tuple(change.change_id for change in stack.changes) == expected_change_ids
     return stack
 
 
 def _assert_new_submit_invariants(
     *,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     labels_to_change_ids: dict[str, str],
     repo: Path,
     scenario: SubmitRetryScenario,
     stack,
 ) -> None:
-    state = ReviewStateStore.for_repo(repo).load()
+    state = TrackingStore.for_repo(repo).load()
     remote_heads = _remote_refs(fake_repo.git_dir)
     branches_by_label: dict[str, str] = {}
 
     for index, label in enumerate(scenario.final_live_labels):
-        revision = stack.revisions[index]
-        review_identity = state.review_identities[revision.change_id]
-        branch = review_identity.head_ref
-        pr_number = review_identity.pr_number
+        change = stack.changes[index]
+        pr_identity = state.pr_identities[change.change_id]
+        branch = pr_identity.head_ref
+        pr_number = pr_identity.pr_number
         branches_by_label[label] = branch
 
-        pull_request = fake_repo.pull_requests[pr_number]
+        pr = fake_repo.prs[pr_number]
         expected_base_ref = (
             branches_by_label[scenario.final_live_labels[index - 1]] if index > 0 else "main"
         )
-        assert _remote_head(remote_heads, branch) == revision.commit_id
-        assert pull_request.base_ref == expected_base_ref
-        assert pull_request.head_ref == branch
-        assert pull_request.merged_at is None
-        assert pull_request.state == "open"
-        assert pull_request.title == subject_for_label(label)
-        assert state.submitted_baselines[revision.change_id].commit_id == revision.commit_id
+        assert _remote_head(remote_heads, branch) == change.commit_id
+        assert pr.base_ref == expected_base_ref
+        assert pr.head_ref == branch
+        assert pr.merged_at is None
+        assert pr.state == "open"
+        assert pr.title == subject_for_label(label)
+        assert state.submitted_baselines[change.change_id].commit_id == change.commit_id
 
-    assert len(fake_repo.pull_requests) == scenario.initial_size
+    assert len(fake_repo.prs) == scenario.initial_size
 
 
 def _assert_successful_submit_invariants(
     *,
     baseline: dict[str, SubmittedBaseline],
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     invariants: SubmitInvariants,
     labels_to_change_ids: dict[str, str],
     repo: Path,
     stack,
     strict_base_events: bool,
 ) -> None:
-    state = ReviewStateStore.for_repo(repo).load()
+    state = TrackingStore.for_repo(repo).load()
     remote_heads = _remote_refs(fake_repo.git_dir)
-    revisions_by_label = dict(zip(invariants.final_live_labels, stack.revisions, strict=True))
+    changes_by_label = dict(zip(invariants.final_live_labels, stack.changes, strict=True))
     expected_base_by_pr_number: dict[int, str] = {}
     live_pr_numbers: set[int] = set()
     branches_by_label: dict[str, str] = {}
 
     for index, label in enumerate(invariants.final_live_labels):
-        revision = revisions_by_label[label]
-        review_identity = state.review_identities[revision.change_id]
-        branch = review_identity.head_ref
-        pr_number = review_identity.pr_number
+        change = changes_by_label[label]
+        pr_identity = state.pr_identities[change.change_id]
+        branch = pr_identity.head_ref
+        pr_number = pr_identity.pr_number
         branches_by_label[label] = branch
         live_pr_numbers.add(pr_number)
         if label in baseline:
@@ -894,41 +890,41 @@ def _assert_successful_submit_invariants(
         else:
             assert pr_number not in {submitted.pr_number for submitted in baseline.values()}
 
-        pull_request = fake_repo.pull_requests[pr_number]
+        pr = fake_repo.prs[pr_number]
         expected_base_ref = (
             branches_by_label[invariants.final_live_labels[index - 1]] if index > 0 else "main"
         )
         expected_base_by_pr_number[pr_number] = expected_base_ref
-        assert _remote_head(remote_heads, branch) == revision.commit_id
-        assert pull_request.base_ref == expected_base_ref
-        assert pull_request.head_ref == branch
-        assert pull_request.merged_at is None
-        assert pull_request.state == "open"
-        assert pull_request.title == subject_for_label(label)
-        assert state.submitted_baselines[revision.change_id].commit_id == revision.commit_id
+        assert _remote_head(remote_heads, branch) == change.commit_id
+        assert pr.base_ref == expected_base_ref
+        assert pr.head_ref == branch
+        assert pr.merged_at is None
+        assert pr.state == "open"
+        assert pr.title == subject_for_label(label)
+        assert state.submitted_baselines[change.change_id].commit_id == change.commit_id
 
     if len(expected_base_by_pr_number) >= 2:
         assert tuple(expected_base_by_pr_number) in fake_repo.github_stacks.values()
 
     for label in invariants.orphaned_labels:
         submitted = baseline[label]
-        review_identity = state.review_identities[submitted.change_id]
+        pr_identity = state.pr_identities[submitted.change_id]
         submitted_baseline = state.submitted_baselines[submitted.change_id]
-        pull_request = fake_repo.pull_requests[submitted.pr_number]
+        pr = fake_repo.prs[submitted.pr_number]
         assert submitted.pr_number not in live_pr_numbers
-        assert review_identity == submitted.review_identity
+        assert pr_identity == submitted.pr_identity
         assert submitted_baseline == submitted.submitted_baseline
         assert _remote_head(remote_heads, submitted.branch) == submitted.remote_target
-        assert pull_request.base_ref == submitted.pr_base_ref
-        assert pull_request.head_ref == submitted.branch
-        assert pull_request.merged_at is None
-        assert pull_request.state == "open"
+        assert pr.base_ref == submitted.pr_base_ref
+        assert pr.head_ref == submitted.branch
+        assert pr.merged_at is None
+        assert pr.state == "open"
         _assert_approval_review_preserved(fake_repo, submitted.pr_number, label)
 
     expected_pr_count = invariants.initial_size + sum(
         1 for label in invariants.final_live_labels if label.startswith("i")
     )
-    assert len(fake_repo.pull_requests) == expected_pr_count
+    assert len(fake_repo.prs) == expected_pr_count
     _assert_no_transient_damage_events(
         baseline=baseline,
         expected_base_by_pr_number=expected_base_by_pr_number,
@@ -939,13 +935,13 @@ def _assert_successful_submit_invariants(
 
 
 def _assert_approval_review_preserved(
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     pr_number: int,
     label: str,
 ) -> None:
     assert any(
         review.reviewer_login == f"reviewer-{label}" and review.state == "APPROVED"
-        for review in fake_repo.list_pull_request_reviews(pr_number)
+        for review in fake_repo.list_pr_reviews(pr_number)
     )
 
 
@@ -953,7 +949,7 @@ def _assert_no_transient_damage_events(
     *,
     baseline: dict[str, SubmittedBaseline],
     expected_base_by_pr_number: dict[int, str],
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     invariants: SubmitInvariants,
     strict_base_events: bool,
 ) -> None:
@@ -964,28 +960,28 @@ def _assert_no_transient_damage_events(
         for submitted in baseline.values()
         if expected_base_by_pr_number.get(submitted.pr_number) != submitted.pr_base_ref
     }
-    for event in fake_repo.pull_request_events:
-        if event.pull_request_number not in original_pr_numbers:
+    for event in fake_repo.pr_events:
+        if event.pr_number not in original_pr_numbers:
             continue
         assert event.kind != "state", event
-        if event.pull_request_number in orphan_pr_numbers:
+        if event.pr_number in orphan_pr_numbers:
             assert event.kind != "base", event
         if strict_base_events and event.kind == "base":
-            assert event.pull_request_number in expected_changed_base_pr_numbers, event
+            assert event.pr_number in expected_changed_base_pr_numbers, event
 
 
-def _assert_retry_metadata(fake_repo: FakeGithubRepository) -> None:
-    for pull_request in fake_repo.pull_requests.values():
-        assert "needs-review" in pull_request.labels
-        assert "alice" in pull_request.requested_reviewers
-        assert "platform" in pull_request.requested_team_reviewers
+def _assert_retry_metadata(fake_repo: FakeGithubRepo) -> None:
+    for pr in fake_repo.prs.values():
+        assert "needs-review" in pr.labels
+        assert "alice" in pr.requested_reviewers
+        assert "platform" in pr.requested_team_reviewers
 
 
 def _apply_drift_operation(
     *,
     baseline: dict[str, SubmittedBaseline],
     drift: DriftOperation,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     labels_to_change_ids: dict[str, str],
     repo: Path,
     run_cli: CliRunner,
@@ -1001,32 +997,32 @@ def _apply_drift_operation(
     submitted = baseline[label]
 
     if drift.kind == "closed_pr":
-        fake_repo.update_pull_request_state(
-            fake_repo.pull_requests[submitted.pr_number],
+        fake_repo.update_pr_state(
+            fake_repo.prs[submitted.pr_number],
             state="closed",
         )
         return None
     if drift.kind == "pr_replaced":
-        old_pull_request = fake_repo.pull_requests[submitted.pr_number]
-        fake_repo.update_pull_request_state(
-            old_pull_request,
+        old_pr = fake_repo.prs[submitted.pr_number]
+        fake_repo.update_pr_state(
+            old_pr,
             state="closed",
         )
-        fake_repo.create_pull_request(
-            base_ref=old_pull_request.base_ref,
+        fake_repo.create_pr(
+            base_ref=old_pr.base_ref,
             body="recreated outside jj-stack",
-            head_ref=old_pull_request.head_ref,
+            head_ref=old_pr.head_ref,
             title=f"recreated {subject_for_label(label)}",
         )
         return None
     if drift.kind == "pr_base_retargeted":
-        fake_repo.update_pull_request_base(
-            fake_repo.pull_requests[submitted.pr_number],
+        fake_repo.update_pr_base(
+            fake_repo.prs[submitted.pr_number],
             base_ref="main",
         )
         return None
     if drift.kind == "pr_draft_toggled":
-        fake_repo.pull_requests[submitted.pr_number].is_draft = True
+        fake_repo.prs[submitted.pr_number].is_draft = True
         return None
     if drift.kind == "remote_branch_drift":
         drift_target = next(
@@ -1050,8 +1046,8 @@ def _apply_drift_operation(
             ],
             fake_repo.git_dir.parent,
         )
-        fake_repo.update_pull_request_state(
-            fake_repo.pull_requests[submitted.pr_number],
+        fake_repo.update_pr_state(
+            fake_repo.prs[submitted.pr_number],
             state="closed",
         )
         return None
@@ -1060,7 +1056,7 @@ def _apply_drift_operation(
         # branch name (an agent or teammate pushed it), and the user fetches.
         # The untracked remote branch makes the commit immutable; if the
         # change was rewritten since submit, the resurrected predecessor makes
-        # it divergent instead. Either way the stack stops being reviewable.
+        # it divergent instead. Either way the stack stops being submittable.
         update_remote_ref(
             fake_repo,
             branch=f"agent/copy-{label}",
@@ -1071,7 +1067,7 @@ def _apply_drift_operation(
     raise AssertionError(f"unsupported drift kind: {drift.kind}")
 
 
-def advance_remote_trunk(fake_repo: FakeGithubRepository) -> None:
+def advance_remote_trunk(fake_repo: FakeGithubRepo) -> None:
     """Land unrelated external work on the remote default branch."""
 
     git_dir = str(fake_repo.git_dir)
@@ -1103,7 +1099,7 @@ def advance_remote_trunk(fake_repo: FakeGithubRepository) -> None:
     update_remote_ref(fake_repo, branch="main", target=new_commit)
 
 
-def update_remote_ref(fake_repo: FakeGithubRepository, *, branch: str, target: str) -> None:
+def update_remote_ref(fake_repo: FakeGithubRepo, *, branch: str, target: str) -> None:
     run_command(
         [
             "git",
@@ -1118,24 +1114,24 @@ def update_remote_ref(fake_repo: FakeGithubRepository, *, branch: str, target: s
 
 
 def _github_snapshot(
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
 ) -> tuple[object, ...]:
     """All observable fake-GitHub state a fail-closed submit must preserve."""
 
-    pull_requests = {
+    prs = {
         number: (
-            pull_request.base_ref,
-            pull_request.head_ref,
-            pull_request.state,
-            pull_request.merged_at or "",
-            pull_request.title,
-            pull_request.body,
-            pull_request.is_draft,
-            tuple(pull_request.labels),
-            tuple(pull_request.requested_reviewers),
-            tuple(pull_request.requested_team_reviewers),
+            pr.base_ref,
+            pr.head_ref,
+            pr.state,
+            pr.merged_at or "",
+            pr.title,
+            pr.body,
+            pr.is_draft,
+            tuple(pr.labels),
+            tuple(pr.requested_reviewers),
+            tuple(pr.requested_team_reviewers),
         )
-        for number, pull_request in fake_repo.pull_requests.items()
+        for number, pr in fake_repo.prs.items()
     }
     comments = {
         issue_number: tuple(
@@ -1144,18 +1140,18 @@ def _github_snapshot(
         for issue_number, issue_comments in fake_repo.issue_comments.items()
     }
     reviews = {
-        pull_number: tuple(
+        pr_number: tuple(
             (review.id, review.reviewer_login, review.state) for review in pull_reviews
         )
-        for pull_number, pull_reviews in fake_repo.pull_request_reviews.items()
+        for pr_number, pull_reviews in fake_repo.pr_reviews.items()
     }
     return (
-        pull_requests,
+        prs,
         comments,
         reviews,
         fake_repo.next_issue_comment_id,
-        fake_repo.next_pull_request_number,
-        fake_repo.next_pull_request_review_id,
+        fake_repo.next_pr_number,
+        fake_repo.next_pr_review_id,
     )
 
 

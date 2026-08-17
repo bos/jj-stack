@@ -1,11 +1,11 @@
-"""Pure projection of one ordinary selected review path."""
+"""Pure projection of one ordinary selected stack path."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from jj_stack.errors import AmbiguousSelectionError, CliError
-from jj_stack.models.stack import LocalRevision, LocalStack
+from jj_stack.models.stack import LocalCommit, LocalStack
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,15 +15,15 @@ class SelectedPathObservation:
     candidate_commit_ids: frozenset[str]
     current_working_copy_commit_id: str | None
     fetched_trunk_commit_ids: frozenset[str]
-    revisions: tuple[LocalRevision, ...]
+    commits: tuple[LocalCommit, ...]
     selected_revset: str
-    selector_revisions: tuple[LocalRevision, ...]
+    selector_commits: tuple[LocalCommit, ...]
     select_mutable_copy: bool
-    trunk: LocalRevision
+    trunk: LocalCommit
 
 
 @dataclass(frozen=True, slots=True)
-class SelectedReviewPath:
+class SelectedStackPath:
     """One ordinary selected parent path."""
 
     is_maximal: bool
@@ -31,8 +31,8 @@ class SelectedReviewPath:
 
 
 @dataclass(frozen=True, slots=True)
-class RepositoryReviewPath:
-    """One repository path annotated by existing tracking."""
+class RepoStackPath:
+    """One repo path annotated by existing tracking."""
 
     is_maximal: bool
     stack: LocalStack
@@ -40,54 +40,54 @@ class RepositoryReviewPath:
 
 
 @dataclass(frozen=True, slots=True)
-class RepositoryPathObservation:
-    """Immutable facts needed to derive ordinary repository paths."""
+class RepoPathObservation:
+    """Immutable facts needed to derive ordinary repo paths."""
 
     candidate_commit_ids: frozenset[str]
-    current_review_commit_id: str | None
+    current_tracked_commit_id: str | None
     fetched_trunk_commit_ids: frozenset[str]
-    revisions: tuple[LocalRevision, ...]
+    commits: tuple[LocalCommit, ...]
     tracked_change_ids: frozenset[str]
-    trunk: LocalRevision
+    trunk: LocalCommit
 
 
 @dataclass(frozen=True, slots=True)
-class RepositoryReviewPaths:
-    """Ordinary maximal paths observed from one bounded repository scope."""
+class RepoStackPaths:
+    """Ordinary maximal paths observed from one bounded repo scope."""
 
-    current_review_commit_id: str | None
-    paths: tuple[RepositoryReviewPath, ...]
+    current_tracked_commit_id: str | None
+    paths: tuple[RepoStackPath, ...]
 
 
-def project_selected_path(observation: SelectedPathObservation) -> SelectedReviewPath:
+def project_selected_path(observation: SelectedPathObservation) -> SelectedStackPath:
     """Derive a parent-connected path without consulting external state."""
 
-    selected = _select_revision(observation)
+    selected = _select_commit(observation)
     if selected.commit_id in observation.fetched_trunk_commit_ids:
         stack = LocalStack(
             base_parent=selected,
             head=selected,
-            revisions=(),
+            changes=(),
             selected_revset=observation.selected_revset,
             trunk=observation.trunk,
         )
-        return SelectedReviewPath(
+        return SelectedStackPath(
             is_maximal=False,
             stack=stack,
         )
 
-    revisions_by_commit_id = {
-        revision.commit_id: revision
-        for revision in sorted(observation.revisions, key=lambda item: item.commit_id)
+    commits_by_id = {
+        commit.commit_id: commit
+        for commit in sorted(observation.commits, key=lambda item: item.commit_id)
     }
-    revisions_by_commit_id[selected.commit_id] = selected
+    commits_by_id[selected.commit_id] = selected
 
-    head_first: list[LocalRevision] = []
+    head_first: list[LocalCommit] = []
     current = selected
     while current.commit_id not in observation.fetched_trunk_commit_ids:
         head_first.append(current)
         parent_commit_id = current.parents[0]
-        parent = revisions_by_commit_id.get(parent_commit_id)
+        parent = commits_by_id.get(parent_commit_id)
         if parent is None:
             raise CliError(
                 "Could not resolve the complete selected parent path: "
@@ -95,108 +95,101 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedRevie
             )
         current = parent
 
-    revisions = tuple(reversed(head_first))
+    changes = tuple(reversed(head_first))
     candidates = _ordinary_candidates(
         candidate_commit_ids=observation.candidate_commit_ids,
-        revisions_by_commit_id=revisions_by_commit_id,
+        commits_by_id=commits_by_id,
     )
     stack = LocalStack(
         base_parent=current,
         head=selected,
-        revisions=revisions,
+        changes=changes,
         selected_revset=observation.selected_revset,
         trunk=observation.trunk,
     )
-    return SelectedReviewPath(
+    return SelectedStackPath(
         is_maximal=selected.commit_id in _maximal_candidate_commit_ids(candidates),
         stack=stack,
     )
 
 
-def project_repository_paths(
-    observation: RepositoryPathObservation,
-) -> RepositoryReviewPaths:
+def project_repo_paths(
+    observation: RepoPathObservation,
+) -> RepoStackPaths:
     """Derive maximal parent-connected paths from ordinary visible candidates."""
 
-    revisions_by_commit_id = {
-        revision.commit_id: revision
-        for revision in sorted(observation.revisions, key=lambda item: item.commit_id)
+    commits_by_id = {
+        commit.commit_id: commit
+        for commit in sorted(observation.commits, key=lambda item: item.commit_id)
     }
     candidates = _ordinary_candidates(
         candidate_commit_ids=observation.candidate_commit_ids,
-        revisions_by_commit_id=revisions_by_commit_id,
+        commits_by_id=commits_by_id,
     )
     maximal_commit_ids = _maximal_candidate_commit_ids(candidates)
     heads = tuple(candidates[commit_id] for commit_id in sorted(maximal_commit_ids))
 
-    paths: list[RepositoryReviewPath] = []
+    paths: list[RepoStackPath] = []
     for head in heads:
-        head_first: list[LocalRevision] = []
+        head_first: list[LocalCommit] = []
         current = head
         while current.commit_id in candidates:
             head_first.append(current)
-            current = revisions_by_commit_id[current.parents[0]]
-        revisions = tuple(reversed(head_first))
-        path_change_ids = frozenset(revision.change_id for revision in revisions)
+            current = commits_by_id[current.parents[0]]
+        changes = tuple(reversed(head_first))
+        path_change_ids = frozenset(change.change_id for change in changes)
         paths.append(
-            RepositoryReviewPath(
+            RepoStackPath(
                 is_maximal=True,
                 stack=LocalStack(
                     base_parent=current,
                     head=head,
-                    revisions=revisions,
+                    changes=changes,
                     selected_revset=head.change_id,
                     trunk=observation.trunk,
                 ),
                 tracked_change_ids=observation.tracked_change_ids & path_change_ids,
             )
         )
-    return RepositoryReviewPaths(
-        current_review_commit_id=observation.current_review_commit_id,
+    return RepoStackPaths(
+        current_tracked_commit_id=observation.current_tracked_commit_id,
         paths=tuple(paths),
     )
 
 
 def _maximal_candidate_commit_ids(
-    candidates: dict[str, LocalRevision],
+    candidates: dict[str, LocalCommit],
 ) -> frozenset[str]:
-    parent_commit_ids = {
-        revision.parents[0] for revision in candidates.values() if revision.parents
-    }
+    parent_commit_ids = {commit.parents[0] for commit in candidates.values() if commit.parents}
     return frozenset(candidates.keys() - parent_commit_ids)
 
 
 def _ordinary_candidates(
     *,
     candidate_commit_ids: frozenset[str],
-    revisions_by_commit_id: dict[str, LocalRevision],
-) -> dict[str, LocalRevision]:
+    commits_by_id: dict[str, LocalCommit],
+) -> dict[str, LocalCommit]:
     return {
-        commit_id: revisions_by_commit_id[commit_id]
-        for commit_id in candidate_commit_ids & revisions_by_commit_id.keys()
+        commit_id: commits_by_id[commit_id]
+        for commit_id in candidate_commit_ids & commits_by_id.keys()
         if (
-            not revisions_by_commit_id[commit_id].is_working_copy
-            or bool(revisions_by_commit_id[commit_id].description.strip())
+            not commits_by_id[commit_id].is_working_copy
+            or bool(commits_by_id[commit_id].description.strip())
         )
-        and not revisions_by_commit_id[commit_id].hidden
-        and len(revisions_by_commit_id[commit_id].parents) == 1
-        and not (
-            revisions_by_commit_id[commit_id].is_working_copy
-            and revisions_by_commit_id[commit_id].empty
-        )
+        and not commits_by_id[commit_id].hidden
+        and len(commits_by_id[commit_id].parents) == 1
+        and not (commits_by_id[commit_id].is_working_copy and commits_by_id[commit_id].empty)
     }
 
 
-def _select_revision(observation: SelectedPathObservation) -> LocalRevision:
-    candidates = tuple(
-        sorted(observation.selector_revisions, key=lambda revision: revision.commit_id)
-    )
+def _select_commit(observation: SelectedPathObservation) -> LocalCommit:
+    candidates = tuple(sorted(observation.selector_commits, key=lambda commit: commit.commit_id))
     if observation.current_working_copy_commit_id is not None:
         current = next(
             (
-                revision
-                for revision in candidates
-                if revision.commit_id == observation.current_working_copy_commit_id
+                commit
+                for commit in candidates
+                if commit.commit_id == observation.current_working_copy_commit_id
             ),
             None,
         )
@@ -208,7 +201,7 @@ def _select_revision(observation: SelectedPathObservation) -> LocalRevision:
             parent_commit_id = current.parents[0]
             try:
                 return next(
-                    revision for revision in candidates if revision.commit_id == parent_commit_id
+                    commit for commit in candidates if commit.commit_id == parent_commit_id
                 )
             except StopIteration as error:
                 raise ValueError(
@@ -218,11 +211,11 @@ def _select_revision(observation: SelectedPathObservation) -> LocalRevision:
 
     if observation.select_mutable_copy:
         off_trunk = tuple(
-            revision
-            for revision in candidates
-            if revision.commit_id not in observation.fetched_trunk_commit_ids
+            commit
+            for commit in candidates
+            if commit.commit_id not in observation.fetched_trunk_commit_ids
         )
-        mutable = tuple(revision for revision in off_trunk if not revision.immutable)
+        mutable = tuple(commit for commit in off_trunk if not commit.immutable)
         if len(mutable) > 1:
             raise AmbiguousSelectionError(
                 "The selected change has more than one mutable local copy.",
@@ -230,7 +223,7 @@ def _select_revision(observation: SelectedPathObservation) -> LocalRevision:
         if mutable:
             return mutable[0]
         if len(off_trunk) > 1:
-            raise AmbiguousSelectionError("The selector resolved to more than one revision.")
+            raise AmbiguousSelectionError("The selector resolved to more than one commit.")
         if off_trunk:
             # A stack merge side parent is immutable to jj but remains outside
             # the fetched trunk's first-parent path until sync retires it.
@@ -238,5 +231,5 @@ def _select_revision(observation: SelectedPathObservation) -> LocalRevision:
         raise CliError("This change is already on trunk, so it is not part of a local stack.")
 
     if len(candidates) != 1:
-        raise AmbiguousSelectionError("The selector resolved to more than one revision.")
+        raise AmbiguousSelectionError("The selector resolved to more than one commit.")
     return candidates[0]

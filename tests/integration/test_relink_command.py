@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_stack.errors import EXIT_GITHUB
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.state.store import TrackingStore
 
 from ..support.integration_helpers import (
     commit_file,
@@ -20,7 +20,7 @@ from .submit_command_helpers import (
 )
 
 
-def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
+def test_relink_repairs_existing_pr_link_for_rewritten_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -28,8 +28,8 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
     repo, fake_repo = init_fake_github_repo_with_manual_pr(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = selected_stack(repo).revisions[-1].change_id
-    manual_bookmark = fake_repo.pull_requests[1].head_ref
+    change_id = selected_stack(repo).changes[-1].change_id
+    manual_bookmark = fake_repo.prs[1].head_ref
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 relinked"],
         repo,
@@ -39,16 +39,16 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
         repo,
         config_path,
         "relink",
-        "https://github.com/octo-org/stacked-review/pull/1",
+        "https://github.com/octo-org/stacked-prs/pull/1",
         change_id,
     )
     captured = capsys.readouterr()
-    relinked_state = ReviewStateStore.for_repo(repo).load()
+    relinked_state = TrackingStore.for_repo(repo).load()
 
     assert exit_code == 0
     assert "Relinked PR #1" in captured.out
-    assert relinked_state.review_identities[change_id].head_ref == manual_bookmark
-    assert relinked_state.review_identities[change_id].pr_number == 1
+    assert relinked_state.pr_identities[change_id].head_ref == manual_bookmark
+    assert relinked_state.pr_identities[change_id].pr_number == 1
 
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
@@ -56,11 +56,11 @@ def test_relink_repairs_existing_pull_request_link_for_rewritten_change(
 
     assert exit_code == 0
     assert "PR #1 updated" in captured.out
-    assert set(fake_repo.pull_requests) == {1}
-    assert fake_repo.pull_requests[1].title == "feature 1 relinked"
+    assert set(fake_repo.prs) == {1}
+    assert fake_repo.prs[1].title == "feature 1 relinked"
     assert (
         read_remote_ref(fake_repo.git_dir, manual_bookmark)
-        == rewritten_stack.revisions[-1].commit_id
+        == rewritten_stack.changes[-1].commit_id
     )
 
 
@@ -72,16 +72,16 @@ def test_relink_replaces_stale_submitted_commit_with_remote_pr_head(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = selected_stack(repo).revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
+    change_id = selected_stack(repo).changes[-1].change_id
+    state_store = TrackingStore.for_repo(repo)
     initial_state = state_store.load()
-    identity = initial_state.review_identities[change_id]
+    identity = initial_state.pr_identities[change_id]
     bookmark = identity.head_ref
     remote_pr_head = read_remote_ref(fake_repo.git_dir, bookmark)
     stale_submitted_commit = read_remote_ref(fake_repo.git_dir, "main")
     assert stale_submitted_commit != remote_pr_head
     baseline = initial_state.submitted_baselines[change_id]
-    state_store.relink_review(
+    state_store.relink_pr(
         change_id,
         identity=identity,
         baseline=baseline.model_copy(update={"commit_id": stale_submitted_commit}),
@@ -103,10 +103,10 @@ def test_relink_replaces_stale_submitted_commit_with_remote_pr_head(
 
     assert exit_code == 0
     assert "PR #1 updated" in captured.out
-    assert set(fake_repo.pull_requests) == {1}
+    assert set(fake_repo.prs) == {1}
 
 
-def test_relink_reports_missing_pull_request_without_traceback(
+def test_relink_reports_missing_pr_without_traceback(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -114,7 +114,7 @@ def test_relink_reports_missing_pull_request_without_traceback(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
-    change_id = selected_stack(repo).revisions[-1].change_id
+    change_id = selected_stack(repo).changes[-1].change_id
 
     exit_code = run_main(repo, config_path, "relink", "999", change_id)
     captured = capsys.readouterr()
@@ -124,7 +124,7 @@ def test_relink_reports_missing_pull_request_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_relink_rejects_pull_request_branch_for_a_different_change(
+def test_relink_rejects_pr_branch_for_a_different_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -133,20 +133,20 @@ def test_relink_rejects_pull_request_branch_for_a_different_change(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     # The template leaves the PR branch on `feature 1`; stack a new `feature 2`
-    # on top so the relink target is a different revision.
+    # on top so the relink target is a different change.
     commit_file(repo, "feature 2", "feature-2.txt")
     stack = selected_stack(repo)
-    top_change_id = stack.revisions[-1].change_id
+    top_change_id = stack.changes[-1].change_id
 
     exit_code = run_main(repo, config_path, "relink", "1", top_change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1
     assert "does not match change" in captured.err
-    assert top_change_id not in ReviewStateStore.for_repo(repo).load().review_identities
+    assert top_change_id not in TrackingStore.for_repo(repo).load().pr_identities
 
 
-def test_relink_rejects_pull_request_with_missing_remote_head_branch(
+def test_relink_rejects_pr_with_missing_remote_head_branch(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -154,8 +154,8 @@ def test_relink_rejects_pull_request_with_missing_remote_head_branch(
     repo, fake_repo = init_fake_github_repo_with_manual_pr(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    change_id = selected_stack(repo).revisions[-1].change_id
-    manual_bookmark = fake_repo.pull_requests[1].head_ref
+    change_id = selected_stack(repo).changes[-1].change_id
+    manual_bookmark = fake_repo.prs[1].head_ref
     run_command(
         ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 relinked"],
         repo,

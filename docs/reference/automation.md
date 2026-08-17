@@ -17,20 +17,20 @@ gh skill install bos/jj-stack jj-stack
 ```
 
 Installing the skill makes it available to the agent, but an agent might not know when to use
-the skill. To have an agent use it automatically in repositories that already use jj-stack, add
-this to your, or the repository's, agent instructions:
+the skill. To have an agent use it automatically in repos that already use jj-stack, add this to
+your personal agent instructions or the repo's agent instructions:
 
 ```markdown
 ## jj-stack
 
-Before any GitHub pull request or branch task in a jj repository, run `jj-stack in-use`. If it
+Before any GitHub pull request or branch task in a jj repo, run `jj-stack in-use`. If it
 exits 0, load and follow the jj-stack skill. If it exits 1, continue without that skill. For any
-other exit, stop and report the error. Cache the result for the repository. Check when the task
+other exit, stop and report the error. Cache the result for the repo. Check when the task
 arises, not at session startup.
 ```
 
 `in-use` is a silent, read-only check for `jj-stack`'s local tracking data. Exit 0 means the
-repository uses `jj-stack`, exit 1 means it does not, and exit 11 means the check itself failed.
+repo uses `jj-stack`, exit 1 means it does not, and exit 11 means the check itself failed.
 
 ## Inspect stacks from a script
 
@@ -47,7 +47,7 @@ follows `jj-stack`'s [published JSON
 Schema](https://github.com/bos/jj-stack/blob/main/docs/json-output.schema.json).
 
 In `view` output, the `stacks` array contains the selected stacks. In `list` output, the `rows`
-array contains both stacks and orphaned reviews. A stack row contains a `changes` array ordered
+array contains both stacks and orphaned PRs. A stack row contains a `changes` array ordered
 from the bottom of the stack to its head.
 
 Each change has a stable `status` value such as `unsubmitted`, `open`, `draft`, `approved`,
@@ -79,7 +79,7 @@ fi
 ```
 
 Exit 0 means inspection completed, not that every stack is ready to merge. The JSON may still
-contain closed pull requests, orphaned reviews, or other work that needs attention.
+contain closed pull requests, orphaned PRs, or other work that needs attention.
 
 ## Select the same stack reliably
 
@@ -99,7 +99,7 @@ jj-stack submit zvlyxwvk
 
 `submit`, `merge`, `sync`, `unstack`, and `cleanup` can finish some work before encountering a
 problem. A nonzero exit therefore does not mean that nothing happened. Preserve the command's
-output and inspect the repository again before retrying.
+output and inspect the repo again before retrying.
 
 Two cases deserve particular care:
 
@@ -107,19 +107,20 @@ Two cases deserve particular care:
   a network failure). In this case, rerunning `merge` will not restart a `sync`; it will notice
   that the merge has already completed and stop. Instead, run `sync` to complete the remaining
   cleanup work.
-- `sync` rebases the changes that remain in review onto trunk before updating their pull requests.
+- `sync` rebases the changes with remaining pull requests onto trunk before updating those PRs.
   A `jj` rebase can complete with conflicted changes; if that happens, `sync` keeps the local
-  rebase but cannot submit the new commits. It therefore stops before updating the remaining pull
-  requests or cleaning up the merged reviews. Resolve the conflicts with `jj`, then run the
-  `submit` command printed by `sync`. A later `cleanup` can remove any leftover review branches
-  and tracking data.
+  rebase but cannot update the PRs from those changes. It therefore stops before updating the
+  remaining pull requests or cleaning up the merged PRs. Resolve the conflicts with `jj`, then
+  run the `submit` command printed by `sync`. A later `cleanup` can remove any leftover PR
+  branches and tracking data.
+
 ## Exit codes
 
 | Code | Meaning |
 |---:|---|
 | 0 | The command completed successfully. |
 | 1 | A general failure, or `in-use` found that jj-stack is not used here. |
-| 2 | The selection is not a supported review stack. |
+| 2 | The selection is not a supported stack. |
 | 3 | Unresolved conflicts block the requested operation. |
 | 4 | GitHub authentication, network, or API failure. |
 | 5 | Invalid command-line arguments. |

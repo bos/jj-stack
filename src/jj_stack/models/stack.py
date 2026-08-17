@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 
-class LocalRevision(BaseModel):
+class LocalCommit(BaseModel):
     """A commit with the fields needed for stack discovery."""
 
     model_config = ConfigDict(frozen=True)
@@ -31,23 +31,23 @@ class LocalRevision(BaseModel):
 
     @property
     def is_working_copy(self) -> bool:
-        """Whether any workspace currently uses this revision as its working copy."""
+        """Whether any workspace currently uses this change as its working copy."""
 
         return self.current_working_copy or bool(self.working_copy_workspaces)
 
     def holds_unpublished_edit(self, published_commit_ids: tuple[str, ...]) -> bool:
-        """Whether this revision holds work that was never sent for review.
+        """Whether this change holds work that was never submitted.
 
         Callers check this because acting on a wrong answer destroys local work. An immutable
-        revision cannot have been edited locally. The published set is normally just the
+        change cannot have been edited locally. The published set is normally just the
         submitted baseline; adopting a GitHub-stack survivor also counts the exact commit
         GitHub reported for it.
         """
 
         return not self.immutable and self.commit_id not in published_commit_ids
 
-    def is_reviewable(self) -> bool:
-        """Whether the revision should count as a strict review change."""
+    def is_submittable(self) -> bool:
+        """Whether the change can be submitted as part of a stack."""
 
         return (
             not self.hidden
@@ -59,12 +59,12 @@ class LocalRevision(BaseModel):
 
 
 class LocalStack(BaseModel):
-    """A linear stack of reviewable revisions with explicit trunk and base-parent context."""
+    """A linear stack of submittable changes with explicit trunk and base-parent context."""
 
     model_config = ConfigDict(frozen=True)
 
-    base_parent: LocalRevision
-    head: LocalRevision
-    revisions: tuple[LocalRevision, ...]
+    base_parent: LocalCommit
+    head: LocalCommit
+    changes: tuple[LocalCommit, ...]
     selected_revset: str
-    trunk: LocalRevision
+    trunk: LocalCommit

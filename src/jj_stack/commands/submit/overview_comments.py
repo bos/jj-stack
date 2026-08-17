@@ -15,31 +15,29 @@ from jj_stack.github.overview_comments import (
 )
 from jj_stack.models.github import GithubIssueComment
 
-from .models import GeneratedDescription, SubmittedRevision
+from .models import GeneratedDescription, SubmittedChange
 
 
 def stack_overview_comment_bodies(
     *,
     generated_stack_description: GeneratedDescription | None,
-    revisions: tuple[SubmittedRevision, ...],
+    changes: tuple[SubmittedChange, ...],
 ) -> dict[int, str | None]:
     """Return desired stack-overview bodies keyed by pull request."""
 
-    if not revisions:
+    if not changes:
         return {}
     description_lines = _render_generated_stack_description(generated_stack_description)
     overview_body = (
         "\n".join([STACK_OVERVIEW_COMMENT_MARKER, *description_lines])
-        if len(revisions) > 1 and description_lines
+        if len(changes) > 1 and description_lines
         else None
     )
-    head_change_id = revisions[-1].change_id
+    head_change_id = changes[-1].change_id
     return {
-        revision.pull_request_number: (
-            overview_body if revision.change_id == head_change_id else None
-        )
-        for revision in revisions
-        if revision.pull_request_number is not None
+        change.pr_number: (overview_body if change.change_id == head_change_id else None)
+        for change in changes
+        if change.pr_number is not None
     }
 
 
@@ -51,31 +49,29 @@ async def sync_stack_overview_comments(
 ) -> None:
     """Synchronize the supplied stack-overview responsibilities."""
 
-    pull_request_numbers = tuple(overview_bodies)
-    if not pull_request_numbers:
+    pr_numbers = tuple(overview_bodies)
+    if not pr_numbers:
         return
     with console.spinner(description="Loading stack overview comments"):
         try:
-            comments_by_pull_request_number = (
-                await github_client.get_issue_comments_by_pull_request_numbers(
-                    pull_numbers=pull_request_numbers,
-                )
+            comments_by_pr_number = await github_client.get_issue_comments_by_pr_numbers(
+                pr_numbers=pr_numbers,
             )
         except GithubClientError as error:
             raise CliError("Could not list stack overview comments") from error
 
     with console.progress(
         description="Syncing stack overview comments",
-        total=len(pull_request_numbers),
+        total=len(pr_numbers),
     ) as progress:
         await run_bounded_tasks(
             concurrency=concurrency,
-            items=pull_request_numbers,
-            run_item=lambda pull_request_number: _sync_overview_comment(
-                comment_body=overview_bodies[pull_request_number],
-                comments=comments_by_pull_request_number[pull_request_number],
+            items=pr_numbers,
+            run_item=lambda pr_number: _sync_overview_comment(
+                comment_body=overview_bodies[pr_number],
+                comments=comments_by_pr_number[pr_number],
                 github_client=github_client,
-                pull_request_number=pull_request_number,
+                pr_number=pr_number,
             ),
             on_success=lambda _index, _result: progress.advance(),
         )
@@ -86,7 +82,7 @@ async def _sync_overview_comment(
     comment_body: str | None,
     comments: tuple[GithubIssueComment, ...],
     github_client: GithubClient,
-    pull_request_number: int,
+    pr_number: int,
 ) -> GithubIssueComment | None:
     existing_comment = _discover_overview_comment(comments=comments)
     if comment_body is None:
@@ -108,7 +104,7 @@ async def _sync_overview_comment(
     return await _create_stack_overview_comment(
         comment_body=comment_body,
         github_client=github_client,
-        pull_request_number=pull_request_number,
+        pr_number=pr_number,
     )
 
 
@@ -136,17 +132,16 @@ async def _create_stack_overview_comment(
     *,
     comment_body: str,
     github_client: GithubClient,
-    pull_request_number: int,
+    pr_number: int,
 ) -> GithubIssueComment:
     try:
         return await github_client.create_issue_comment(
-            issue_number=pull_request_number,
+            issue_number=pr_number,
             body=comment_body,
         )
     except GithubClientError as error:
         raise CliError(
-            f"Could not create a {STACK_OVERVIEW_COMMENT_LABEL} for pull request "
-            f"#{pull_request_number}"
+            f"Could not create a {STACK_OVERVIEW_COMMENT_LABEL} for pull request #{pr_number}"
         ) from error
 
 

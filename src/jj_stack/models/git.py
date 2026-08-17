@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class GitRemote(BaseModel):
-    """A configured Git remote known to the local `jj` repository."""
+    """A configured Git remote known to the local `jj` repo."""
 
     model_config = ConfigDict(frozen=True)
 

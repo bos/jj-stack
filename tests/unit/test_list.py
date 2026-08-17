@@ -11,8 +11,8 @@ def test_orphan_hint_is_emitted_once_for_all_rows(monkeypatch) -> None:
     row = OrphanRow(
         branch="jj-stack/orphan-aaaaaaaa",
         change_id="a" * 32,
-        pull_request={"number": 1},
-        review="orphan",
+        pr={"number": 1},
+        pr_label="orphan",
         state="orphan",
         subject="orphan",
     )

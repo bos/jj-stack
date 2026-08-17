@@ -11,7 +11,7 @@ import jj_stack.console as console_module
 from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.models.review_state import ReviewState
+from jj_stack.models.tracking import TrackingState
 
 from .entrypoint_test_helpers import patch_bootstrap
 
@@ -21,7 +21,7 @@ def test_change_id_selector_distinguishes_change_ids_from_revsets_and_bookmarks(
     bookmark = "zzzzzzzzzzzzzzzz"
 
     class JjClientStub:
-        def resolve_revision(self, value: str) -> SimpleNamespace:
+        def resolve_commit(self, value: str) -> SimpleNamespace:
             change_id = "klmnopqrstuvwxyz" if value == bare_change_id else "otherchangeid"
             return SimpleNamespace(change_id=change_id)
 
@@ -57,12 +57,12 @@ def test_view_skips_duplicate_stack(
                         commit_id="shared-base" if revset in {"foo", "bar"} else f"base-{revset}"
                     ),
                     head=SimpleNamespace(change_id=change_ids[-1]),
-                    revisions=(),
+                    changes=(),
                     selected_revset=revset,
                 ),
-                state=ReviewState(),
-                status_revisions=tuple(
-                    SimpleNamespace(revision=SimpleNamespace(change_id=change_id))
+                state=TrackingState(),
+                status_changes=tuple(
+                    SimpleNamespace(change=SimpleNamespace(change_id=change_id))
                     for change_id in change_ids
                 ),
             ),
@@ -84,8 +84,8 @@ def test_view_skips_duplicate_stack(
         as_json=False,
         cli_args=JjCliArgs(),
         debug=False,
-        pull_request=None,
-        repository=tmp_path,
+        pr=None,
+        repo=tmp_path,
         revset=None,
         selectors=(
             view_module.ViewSelector(kind="revset", value="foo"),
@@ -121,12 +121,12 @@ def test_view_continues_after_selector_error(
                 stack=SimpleNamespace(
                     base_parent=SimpleNamespace(commit_id=f"base-{revset}"),
                     head=SimpleNamespace(change_id=f"{revset}-head"),
-                    revisions=(),
+                    changes=(),
                     selected_revset=revset,
                 ),
-                state=ReviewState(),
-                status_revisions=(
-                    SimpleNamespace(revision=SimpleNamespace(change_id=f"{revset}-change")),
+                state=TrackingState(),
+                status_changes=(
+                    SimpleNamespace(change=SimpleNamespace(change_id=f"{revset}-change")),
                 ),
             ),
         )
@@ -150,8 +150,8 @@ def test_view_continues_after_selector_error(
             as_json=False,
             cli_args=JjCliArgs(),
             debug=False,
-            pull_request=None,
-            repository=tmp_path,
+            pr=None,
+            repo=tmp_path,
             revset=None,
             selectors=(
                 view_module.ViewSelector(kind="revset", value="good"),
@@ -197,11 +197,11 @@ def test_view_json_continues_after_selector_error(
                 stack=SimpleNamespace(
                     base_parent=SimpleNamespace(commit_id=f"base-{revset}"),
                     head=SimpleNamespace(change_id=f"{revset}-head"),
-                    revisions=(),
+                    changes=(),
                 ),
-                state=ReviewState(),
-                status_revisions=(
-                    SimpleNamespace(revision=SimpleNamespace(change_id=f"{revset}-change")),
+                state=TrackingState(),
+                status_changes=(
+                    SimpleNamespace(change=SimpleNamespace(change_id=f"{revset}-change")),
                 ),
             ),
         )
@@ -224,8 +224,8 @@ def test_view_json_continues_after_selector_error(
             as_json=True,
             cli_args=JjCliArgs(),
             debug=False,
-            pull_request=None,
-            repository=tmp_path,
+            pr=None,
+            repo=tmp_path,
             revset=None,
             selectors=(
                 view_module.ViewSelector(kind="revset", value="good"),

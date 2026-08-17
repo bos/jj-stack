@@ -5,56 +5,56 @@ from __future__ import annotations
 import jj_stack.ui as ui
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import short_change_id
-from jj_stack.models.review_state import ReviewState
-from jj_stack.models.stack import LocalRevision
-from jj_stack.review.observation import RepositoryObservation
+from jj_stack.models.stack import LocalCommit
+from jj_stack.models.tracking import TrackingState
+from jj_stack.stack.pr_facts import RepoFacts
 from jj_stack.ui import Message
 
-from .models import MergeAction, MergePlan, MergeRevision
+from .models import MergeAction, MergeChange, MergePlan
 from .preconditions import explain_precondition, merge_precondition_error
 
 
 def build_merge_plan(
     *,
-    observation: RepositoryObservation,
+    observation: RepoFacts,
     remote_name: str,
-    repository: GithubRepoAddress,
-    revisions: tuple[LocalRevision, ...],
-    state: ReviewState,
+    repo: GithubRepoAddress,
+    changes: tuple[LocalCommit, ...],
+    state: TrackingState,
     target_change_id: str | None,
     trunk_branch: str,
 ) -> MergePlan:
-    reviewed = tuple(_reviewed_revision(observation, revision, state) for revision in revisions)
-    candidates: list[MergeRevision] = []
+    merge_changes = tuple(_merge_change(observation, change, state) for change in changes)
+    candidates: list[MergeChange] = []
     boundary: Message | None = None
-    for local, revision in zip(revisions, reviewed, strict=True):
-        if revision is None:
+    for local, change in zip(changes, merge_changes, strict=True):
+        if change is None:
             boundary = _boundary(local, t"run {ui.cmd('relink')} before merging")
             break
         error = merge_precondition_error(
-            expected_repository=repository,
+            expected_repo=repo,
             expected_trunk_branch=trunk_branch,
             observation=observation,
             remote_name=remote_name,
-            revisions=(revision,),
+            changes=(change,),
         )
         if error is not None:
             boundary = _boundary(
                 local,
                 explain_precondition(
                     error,
-                    change_id=revision.change_id,
-                    sync_target=short_change_id(revisions[-1].change_id),
+                    change_id=change.change_id,
+                    sync_target=short_change_id(changes[-1].change_id),
                 ),
             )
             break
-        candidates.append(revision)
+        candidates.append(change)
     if target_change_id is not None:
         target = next(
             (
                 index + 1
-                for index, revision in enumerate(candidates)
-                if revision.change_id == target_change_id
+                for index, change in enumerate(candidates)
+                if change.change_id == target_change_id
             ),
             0,
         )
@@ -64,14 +64,14 @@ def build_merge_plan(
             if target
             else boundary
             or (
-                "the selected PR is above the changes that can merge right now; run "
+                "the selected PR is above the PRs that can merge right now; run "
                 "jj-stack view to see which PRs at the bottom of the stack are ready"
             )
         )
     action = (
         MergeAction(
             kind="boundary",
-            body=boundary or "No changes on the selected stack can be merged.",
+            body=boundary or "No PRs on the selected stack can be merged.",
             status="blocked" if not candidates else "planned",
         )
         if boundary is not None or not candidates
@@ -79,31 +79,31 @@ def build_merge_plan(
     )
     return MergePlan(
         boundary_action=action,
-        planned_revisions=tuple(candidates),
-        reviewed_revisions=tuple(revision for revision in reviewed if revision is not None),
+        planned_changes=tuple(candidates),
+        linked_changes=tuple(change for change in merge_changes if change is not None),
     )
 
 
-def _reviewed_revision(
-    observation: RepositoryObservation,
-    revision: LocalRevision,
-    state: ReviewState,
-) -> MergeRevision | None:
-    candidate = state.tracked_review(revision.change_id)
-    pull_request = observation.reviews[revision.change_id].pull_request
-    if candidate is None or pull_request is None:
+def _merge_change(
+    observation: RepoFacts,
+    change: LocalCommit,
+    state: TrackingState,
+) -> MergeChange | None:
+    candidate = state.tracked_pr(change.change_id)
+    pr = observation.prs[change.change_id].pr
+    if candidate is None or pr is None:
         return None
-    return MergeRevision(
-        base_ref=pull_request.base.ref,
-        change_id=revision.change_id,
-        commit_id=revision.commit_id,
-        identity=candidate.review_identity,
-        subject=revision.subject,
+    return MergeChange(
+        base_ref=pr.base.ref,
+        change_id=change.change_id,
+        commit_id=change.commit_id,
+        identity=candidate.pr_identity,
+        subject=change.subject,
     )
 
 
-def _boundary(revision: LocalRevision, reason: Message) -> Message:
+def _boundary(change: LocalCommit, reason: Message) -> Message:
     return (
-        t"before {revision.subject} {ui.change_id(revision.change_id)} because ",
+        t"before {change.subject} {ui.change_id(change.change_id)} because ",
         reason,
     )

@@ -73,16 +73,12 @@ class SemanticStyles:
 
 def load_semantic_styles(
     *,
-    repository: Path | None,
+    repo: Path | None,
     cli_args: JjCliArgs,
 ) -> SemanticStyles | None:
     """Load effective jj semantic color styles for Rich-authored output."""
 
-    cwd = (
-        repository
-        if repository is not None and repository.exists() and repository.is_dir()
-        else Path.cwd()
-    )
+    cwd = repo if repo is not None and repo.exists() and repo.is_dir() else Path.cwd()
     try:
         completed = subprocess.run(
             [

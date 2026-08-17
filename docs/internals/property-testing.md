@@ -1,12 +1,12 @@
 # Generated integration testing
 
-The generated harness targets failures that emerge only when the local `jj` DAG, remote review
+The generated harness targets failures that emerge only when the local `jj` DAG, remote PR
 branches, GitHub, and local tracking disagree. It supplements focused tests; it is not a second
 product specification.
 
 ## Required test boundary
 
-Generated scenarios use real `jj` commands, a real Git repository, the CLI entry point, and the
+Generated scenarios use real `jj` commands, a real Git repo, the CLI entry point, and the
 fake GitHub server. A pure model may predict the result, but it cannot replace replay through
 those boundaries. The expensive bugs are incorrect PR identity, branch targets, bases, or
 recovery—not presentation differences or private request ordering.
@@ -14,14 +14,14 @@ recovery—not presentation differences or private request ordering.
 The harness must check these properties where applicable:
 
 - A surviving change keeps its PR and approvals across rewrites.
-- A new change receives a new PR. An abandoned review keeps its PR, branch, and tracking until the
+- A new change receives a new PR. An abandoned change keeps its PR, branch, and tracking until the
   user closes it and runs cleanup.
-- Review branches and PR bases match the current `jj` DAG after a successful submit.
-- A successful update never transiently closes, merges, reopens, or replaces an existing review.
+- PR branches and PR bases match the current `jj` DAG after a successful submit.
+- A successful update never transiently closes, merges, reopens, or replaces an existing PR.
 - Unsafe external drift stops before local rewrites, pushes, GitHub mutations, or tracking writes
   and reports the expected error category.
 - `view` reports a reachable drifted state or a targeted selection error instead of crashing.
-- Retrying an interrupted submit reaches the intended state without duplicate PRs or lost review
+- Retrying an interrupted submit reaches the intended state without duplicate PRs or lost PR
   identity.
 
 Merge and sync use a bounded lifecycle family rather than the general stack-edit generator. The
@@ -32,7 +32,7 @@ machine.
 
 Each generated case has a stable ID, a compact operation trace, expected abstract state, and a
 risk category. De-duplication may discard an equivalent final state only when the orphaned
-reviews, rewritten changes, and risk category also match.
+pull requests, rewritten changes, and risk category also match.
 
 Generation uses explicit seeds, stable sorting, bounded stack sizes and trace lengths, and no
 hash-order dependence. Every pytest worker must collect the same cases. If generation cannot find

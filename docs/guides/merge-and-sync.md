@@ -7,8 +7,8 @@ weight: 50
 ---
 
 `merge` asks GitHub to merge your ready pull requests, starting at the bottom of your stack. After
-GitHub finishes, `sync` brings your local stack and your remaining pull requests and review
-branches up to date.
+GitHub finishes, `sync` brings your local stack, remaining pull requests, and PR branches up to
+date.
 
 ## Before merging
 
@@ -21,13 +21,13 @@ jj-stack merge <head-change-id>
 ```
 
 `merge` checks that each of your local changes still matches the commit you last submitted and
-that none of your review branches or pull requests has moved unexpectedly.
+that none of your PR branches or pull requests has moved unexpectedly.
 
 ## Choose how much of your stack to merge
 
 By default, `merge` starts with the pull request at the bottom of your stack—the one based on
 trunk—and works upward. It merges your ready pull requests in order until your whole stack is
-merged or it reaches one of your changes that it cannot merge.
+merged or it reaches a pull request that it cannot merge.
 
 To merge only the bottom portion of your stack, specify its last change by change ID, commit ID,
 or pull request ID:
@@ -50,7 +50,7 @@ flowchart LR
 
 After GitHub merges some or all of your pull requests, `sync` fetches trunk, removes the merged
 changes from your local history if needed, rebases your remaining changes, updates your remaining
-pull requests, and removes your review branches when they are no longer needed.
+pull requests, and removes your PR branches when they are no longer needed.
 
 If no selected pull request has merged and GitHub has not rebased the stack, `sync` reports that
 there are no merged changes and leaves the pull requests unchanged. Run `submit` explicitly when
@@ -87,7 +87,7 @@ same `sync` command after GitHub reports that the merge finished.
 
 ### Rebasing from GitHub
 
-GitHub's **Rebase stack** action rewrites every review branch onto the latest trunk. After it
+GitHub's **Rebase stack** action rewrites every PR branch onto the latest trunk. After it
 finishes, run:
 
 ```console
@@ -96,7 +96,7 @@ jj-stack sync <head-change-id>
 
 GitHub does not retain jj change IDs in those rewritten commits. `sync` verifies that the PRs,
 branch order, and contents still match your submitted stack, rebases the original local changes,
-and updates the review branches with commits that retain their change IDs. It stops if local
+and updates the PR branches with commits that retain their change IDs. It stops if local
 edits or GitHub content differ.
 
 ### Several merged stacks
@@ -109,13 +109,13 @@ jj-stack sync --all
 ```
 
 This finds each local stack affected by a completed merge and applies the normal `sync` workflow
-to it. It also removes branches, comments, and saved pull-request links for merged reviews whose
+to it. It also removes branches, comments, and saved pull-request links for merged PRs whose
 local changes are gone. If one stack cannot be updated, jj-stack explains why and continues with
 independent stacks.
 
 Like selected `sync`, `sync --all` does not rebase a stack merely because trunk advanced. A
 selected `sync` also recognizes a completed native GitHub stack rebase because GitHub moved every
-review branch and the rewritten contents can be verified.
+PR branch and the rewritten contents can be verified.
 
 ## If `merge` fails after GitHub merges your pull requests
 
@@ -136,11 +136,11 @@ command.
 ## When trunk moves without one of your pull requests merging
 
 `sync` is for cleaning up after completed GitHub merges. If trunk merely advanced, rebase your
-changes with `jj` if needed, then submit the rewritten commits:
+changes with `jj` if needed, then submit the rewritten changes:
 
 ```console
 jj rebase -r '<bottom-change-id>::<head-change-id>' -o 'trunk()'
 jj-stack submit <head-change-id>
 ```
 
-You can often merge your changes when they are behind trunk.
+You can often merge your pull requests when their branches are behind trunk.

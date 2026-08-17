@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from textwrap import dedent
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -27,53 +28,57 @@ from jj_stack.errors import (
 )
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
-from jj_stack.models.stack import LocalRevision
-from jj_stack.review_namespace import current_review_namespace
+from jj_stack.models.stack import LocalCommit
+from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 
-_REVISION_JSON_FIELDS = (
-    r'"\"change_id\":" ++ json(change_id) ++ '
-    r'",\"commit_id\":" ++ json(commit_id) ++ '
-    r'",\"description\":" ++ json(description) ++ '
-    r'",\"parents\":" ++ json(parents.map(|p| p.commit_id())) ++ '
-    r'",\"empty\":" ++ json(empty) ++ '
-    r'",\"divergent\":" ++ json(divergent) ++ '
-    r'",\"current_working_copy\":" ++ json(current_working_copy) ++ '
-    r'",\"working_copy_workspaces\":" ++ json(working_copies.map(|wc| wc.name())) ++ '
-    r'",\"hidden\":" ++ json(self.hidden()) ++ '
-    r'",\"immutable\":" ++ json(immutable) ++ '
-    r'",\"conflict\":" ++ json(self.conflict())'
-)
-_COMMIT_TEMPLATE = r'"{" ++ ' + _REVISION_JSON_FIELDS + r' ++ "}\n"'
+_CHANGE_JSON_FIELDS = dedent(
+    r"""
+    "\"change_id\":" ++ json(change_id) ++
+    ",\"commit_id\":" ++ json(commit_id) ++
+    ",\"description\":" ++ json(description) ++
+    ",\"parents\":" ++ json(parents.map(|p| p.commit_id())) ++
+    ",\"empty\":" ++ json(empty) ++
+    ",\"divergent\":" ++ json(divergent) ++
+    ",\"current_working_copy\":" ++ json(current_working_copy) ++
+    ",\"working_copy_workspaces\":" ++ json(working_copies.map(|wc| wc.name())) ++
+    ",\"hidden\":" ++ json(self.hidden()) ++
+    ",\"immutable\":" ++ json(immutable) ++
+    ",\"conflict\":" ++ json(self.conflict())
+    """
+).strip()
+_COMMIT_TEMPLATE = rf'"{{" ++ {_CHANGE_JSON_FIELDS} ++ "}}\n"'
 _BOOKMARK_TEMPLATE = r'json(self) ++ "\n"'
-_REVIEW_TEMP_BOOKMARK = "jj-stack-tmp/checkout"
-_REVIEW_TEMP_REF = f"refs/heads/{_REVIEW_TEMP_BOOKMARK}"
+_PR_BRANCH_TEMP_BOOKMARK = "jj-stack-tmp/checkout"
+_PR_BRANCH_TEMP_REF = f"refs/heads/{_PR_BRANCH_TEMP_BOOKMARK}"
 _CONFIG_ORIGIN_TEMPLATE = r'json(self) ++ "\n"'
-_WORKSPACE_TEMPLATE = (
-    r'"{\"name\":" ++ json(name) ++ '
-    r'",\"root\":" ++ if(root, json(root.absolute()), "null") ++ '
-    r'",\"current\":" ++ json(target.current_working_copy()) ++ "}\n"'
-)
+_WORKSPACE_TEMPLATE = dedent(
+    r"""
+    "{\"name\":" ++ json(name) ++
+    ",\"root\":" ++ if(root, json(root.absolute()), "null") ++
+    ",\"current\":" ++ json(target.current_working_copy()) ++ "}\n"
+    """
+).strip()
 
 
 class JjCommandError(CliError):
     """Raised when a `jj` invocation fails."""
 
 
-ReviewFetchIsolationStatus = Literal["ready", "applied", "required"]
-ReviewFetchIsolationProblem = Literal["missing", "duplicate"]
+PRBranchFetchIsolationStatus = Literal["ready", "applied", "required"]
+PRBranchFetchIsolationProblem = Literal["missing", "duplicate"]
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewFetchIsolation:
-    """Result of checking the ordinary-fetch exclusion for review branches."""
+class PRBranchFetchIsolation:
+    """Result of checking the ordinary-fetch exclusion for PR branches."""
 
-    status: ReviewFetchIsolationStatus
-    problem: ReviewFetchIsolationProblem | None
+    status: PRBranchFetchIsolationStatus
+    problem: PRBranchFetchIsolationProblem | None
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewRefUpdate:
-    """One exact leased review-ref update in a complete remote mutation set."""
+class PRRefUpdate:
+    """One exact leased PR branch update in a complete remote mutation set."""
 
     branch: str
     expected_target: str | None
@@ -81,8 +86,8 @@ class ReviewRefUpdate:
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewTempArtifacts:
-    """Observed fixed review-import artifacts without applying recovery."""
+class PRTempArtifacts:
+    """Observed fixed PR branch import artifacts without applying recovery."""
 
     bookmark_targets: tuple[str, ...]
     ref_target: str | None
@@ -117,10 +122,10 @@ class _BookmarkRow(BaseModel):
     tracking_target: tuple[str, ...] | None = None
 
 
-class _RevisionScan(BaseModel):
+class _CommitScan(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True)
 
-    revision: LocalRevision
+    commit: LocalCommit
     membership: tuple[bool, ...]
 
 
@@ -137,7 +142,7 @@ UnsupportedStackReason = Literal[
 
 
 class UnsupportedStackError(CliError):
-    """Raised when local history cannot be treated as a linear review stack."""
+    """Raised when local history cannot be treated as a linear stack."""
 
     exit_code = EXIT_NO_STACK
 
@@ -172,7 +177,7 @@ class StaleWorkspaceError(CliError):
     """Raised when `jj` refuses to run because the current workspace is stale."""
 
 
-class _RenderableRevision(Protocol):
+class _RenderableCommit(Protocol):
     @property
     def commit_id(self) -> str: ...
 
@@ -185,7 +190,7 @@ _NO_CLI_ARGS = JjCliArgs()
 
 
 class JjClient:
-    """Thin wrapper around `jj` commands used by the review tool."""
+    """Thin wrapper around `jj` commands used by jj-stack."""
 
     def __init__(
         self,
@@ -196,7 +201,7 @@ class JjClient:
         self._repo_root = repo_root
         self._base_cli_args = cli_args
         self._cli_args = cli_args
-        self._published_review_snapshots: dict[str, str] = {}
+        self._published_pr_snapshots: dict[str, str] = {}
         self._config_strings: dict[str, str | None] = {}
         self._git_root: Path | None = None
         self._initial_working_copy_snapshot_pending = False
@@ -205,34 +210,34 @@ class JjClient:
     def repo_root(self) -> Path:
         return self._repo_root
 
-    def resolve_revision(self, revset: str) -> LocalRevision:
-        """Resolve a revset to exactly one revision."""
+    def resolve_commit(self, revset: str) -> LocalCommit:
+        """Resolve a revset to exactly one commit."""
 
         try:
-            revisions = self._query_revisions(revset, limit=2)
+            commits = self._query_commits(revset, limit=2)
         except JjCommandError as error:
             friendly_error = _revset_resolution_error(revset, error)
             if friendly_error is not None:
                 raise friendly_error from error
             raise
-        if not revisions:
-            raise CliError(t"Revset {ui.revset(revset)} did not resolve to a visible revision.")
-        if len(revisions) > 1:
+        if not commits:
+            raise CliError(t"Revset {ui.revset(revset)} did not resolve to a visible commit.")
+        if len(commits) > 1:
             raise AmbiguousSelectionError(
-                t"Revset {ui.revset(revset)} resolved to more than one revision."
+                t"Revset {ui.revset(revset)} resolved to more than one commit."
             )
-        return revisions[0]
+        return commits[0]
 
-    def query_revisions(
+    def query_commits(
         self,
         revset: str,
-    ) -> tuple[LocalRevision, ...]:
-        """Return revisions matching the supplied revset."""
+    ) -> tuple[LocalCommit, ...]:
+        """Return commits matching the supplied revset."""
 
         try:
-            return tuple(self._query_revisions(revset))
+            return tuple(self._query_commits(revset))
         except JjCommandError as error:
-            if _is_missing_revision_error(_unwrap_command_error_message(str(error))):
+            if _is_missing_commit_error(_unwrap_command_error_message(str(error))):
                 return ()
             raise
 
@@ -246,24 +251,24 @@ class JjClient:
             model=JjWorkspace,
         )
 
-    def query_revisions_with_membership(
+    def query_commits_with_membership(
         self,
         revset: str,
         *,
         membership_revsets: Sequence[str],
         selected_revset: str | None = None,
-    ) -> tuple[tuple[LocalRevision, tuple[bool, ...]], ...]:
-        """Return revisions with one containment flag per supplied revset."""
+    ) -> tuple[tuple[LocalCommit, tuple[bool, ...]], ...]:
+        """Return commits with one containment flag per supplied revset."""
 
         try:
-            rows = self._query_revisions_with_membership(
+            rows = self._query_commits_with_membership(
                 revset,
                 membership_revsets=membership_revsets,
             )
             return tuple(
                 (projected, flags)
-                for revision, flags in rows
-                if (projected := self._project(revision))
+                for commit, flags in rows
+                if (projected := self._project(commit))
             )
         except JjCommandError as error:
             friendly_error = _revset_resolution_error(selected_revset or revset, error)
@@ -271,69 +276,69 @@ class JjClient:
                 raise friendly_error from error
             raise
 
-    def query_revisions_by_change_ids(
+    def query_commits_by_change_ids(
         self,
         change_ids: Sequence[str],
-    ) -> dict[str, tuple[LocalRevision, ...]]:
-        """Return visible revisions grouped by logical change ID."""
+    ) -> dict[str, tuple[LocalCommit, ...]]:
+        """Return visible commits grouped by logical change ID."""
 
         ordered_change_ids = tuple(dict.fromkeys(change_ids))
         if not ordered_change_ids:
             return {}
 
-        grouped: dict[str, list[LocalRevision]] = {
+        grouped: dict[str, list[LocalCommit]] = {
             change_id: [] for change_id in ordered_change_ids
         }
         for chunk in _chunked(ordered_change_ids):
             revset = _change_ids_revset(chunk)
-            revisions = self._query_revisions(revset)
-            for revision in revisions:
-                if projected := self._project(revision):
-                    grouped.setdefault(revision.change_id, []).append(projected)
+            commits = self._query_commits(revset)
+            for commit in commits:
+                if projected := self._project(commit):
+                    grouped.setdefault(commit.change_id, []).append(projected)
         return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
 
-    def query_revisions_by_change_ids_with_off_trunk(
+    def query_commits_by_change_ids_with_off_trunk(
         self,
         change_ids: Sequence[str],
     ) -> tuple[
-        dict[str, tuple[LocalRevision, ...]],
-        dict[str, tuple[LocalRevision, ...]],
+        dict[str, tuple[LocalCommit, ...]],
+        dict[str, tuple[LocalCommit, ...]],
     ]:
         """Return all visible copies and the subset outside trunk in one scan."""
 
         ordered = tuple(dict.fromkeys(change_ids))
-        all_copies: dict[str, list[LocalRevision]] = {change_id: [] for change_id in ordered}
-        off_trunk: dict[str, list[LocalRevision]] = {change_id: [] for change_id in ordered}
+        all_copies: dict[str, list[LocalCommit]] = {change_id: [] for change_id in ordered}
+        off_trunk: dict[str, list[LocalCommit]] = {change_id: [] for change_id in ordered}
         for chunk in _chunked(ordered):
-            rows = self._query_revisions_with_membership(
+            rows = self._query_commits_with_membership(
                 _change_ids_revset(chunk),
                 membership_revsets=("~first_ancestors(trunk())",),
             )
-            for revision, (is_off_trunk,) in rows:
-                if projected := self._project(revision):
-                    all_copies.setdefault(revision.change_id, []).append(projected)
+            for commit, (is_off_trunk,) in rows:
+                if projected := self._project(commit):
+                    all_copies.setdefault(commit.change_id, []).append(projected)
                     if is_off_trunk:
-                        off_trunk.setdefault(revision.change_id, []).append(projected)
+                        off_trunk.setdefault(commit.change_id, []).append(projected)
         return (
             {change_id: tuple(all_copies[change_id]) for change_id in ordered},
             {change_id: tuple(off_trunk[change_id]) for change_id in ordered},
         )
 
-    def query_revisions_by_commit_ids(
+    def query_commits_by_ids(
         self,
         commit_ids: Sequence[str],
-    ) -> tuple[LocalRevision, ...]:
-        """Return locally available revisions for the supplied commit IDs in evaluation order."""
+    ) -> tuple[LocalCommit, ...]:
+        """Return locally available commits for the supplied commit IDs in evaluation order."""
 
         ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
         if not ordered_commit_ids:
             return ()
 
-        revisions_by_commit_id: dict[str, LocalRevision] = {}
+        commits_by_id: dict[str, LocalCommit] = {}
         for chunk in _chunked(ordered_commit_ids):
-            for revision in self._query_revisions(_present_symbols_revset(chunk)):
-                revisions_by_commit_id.setdefault(revision.commit_id, revision)
-        return tuple(revisions_by_commit_id.values())
+            for commit in self._query_commits(_present_symbols_revset(chunk)):
+                commits_by_id.setdefault(commit.commit_id, commit)
+        return tuple(commits_by_id.values())
 
     def query_present_commit_ancestor_membership(
         self,
@@ -346,32 +351,32 @@ class JjClient:
         memberships: dict[str, bool] = {}
         for chunk in _chunked(tuple(dict.fromkeys(commit_ids))):
             try:
-                revisions = self._query_revisions_with_membership(
+                commits = self._query_commits_with_membership(
                     _present_symbols_revset(chunk),
                     membership_revsets=(f"::{_quote_revset_symbol(descendant_commit_id)}",),
                 )
             except JjCommandError:
                 continue
-            for revision, (is_ancestor,) in revisions:
-                memberships[revision.commit_id] = is_ancestor
+            for commit, (is_ancestor,) in commits:
+                memberships[commit.commit_id] = is_ancestor
         return memberships
 
-    def query_descendant_revisions(
+    def query_descendant_commits(
         self,
         commit_ids: Sequence[str],
-    ) -> tuple[LocalRevision, ...]:
+    ) -> tuple[LocalCommit, ...]:
         """Return descendants for the supplied commits, including the commits themselves."""
 
         ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
         if not ordered_commit_ids:
             return ()
 
-        revisions_by_commit_id: dict[str, LocalRevision] = {}
+        commits_by_id: dict[str, LocalCommit] = {}
         for chunk in _chunked(ordered_commit_ids):
-            revisions = self._query_revisions(f"{_union_revset_symbols(chunk)}::")
-            for revision in revisions:
-                revisions_by_commit_id.setdefault(revision.commit_id, revision)
-        return tuple(revisions_by_commit_id.values())
+            commits = self._query_commits(f"{_union_revset_symbols(chunk)}::")
+            for commit in commits:
+                commits_by_id.setdefault(commit.commit_id, commit)
+        return tuple(commits_by_id.values())
 
     def query_paired_ancestor_membership(
         self,
@@ -395,14 +400,14 @@ class JjClient:
             f"({_quote_revset_symbol(subject)} & ::present({_quote_revset_symbol(target)}))"
             for subject, target in deduped_pairs
         )
-        revisions = self._query_revisions(terms)
-        return {revision.commit_id for revision in revisions}
+        commits = self._query_commits(terms)
+        return {commit.commit_id for commit in commits}
 
     def get_config_string(self, key: str) -> str | None:
         """Return the string value of a jj config key, or None if unset.
 
         Reads are cached for the client's lifetime: nothing rewrites jj
-        config during a command run, and callers such as per-revision
+        config during a command run, and callers such as per-change
         rendering re-read the same key many times.
         """
 
@@ -460,13 +465,13 @@ class JjClient:
             return "never"
         return "always" if stdout_is_tty else "never"
 
-    def render_revision_log_lines(
+    def render_commit_log_lines(
         self,
-        revision: _RenderableRevision,
+        change: _RenderableCommit,
         *,
         color_when: JjColorWhen,
     ) -> tuple[str, ...]:
-        """Render one revision with the user's `jj log` formatting."""
+        """Render one change with the user's `jj log` formatting."""
 
         stdout = self._run_jj(
             (
@@ -475,44 +480,40 @@ class JjClient:
                 color_when,
                 "log",
                 "-r",
-                _quote_revset_symbol(revision.commit_id),
+                _quote_revset_symbol(change.commit_id),
                 "--limit",
                 "1",
             )
         )
         return tuple(line for line in stdout.rstrip("\n").splitlines() if line.strip() != "~")
 
-    def render_revision_log_blocks(
+    def render_commit_log_blocks(
         self,
-        revisions: Sequence[_RenderableRevision],
+        changes: Sequence[_RenderableCommit],
         *,
         color_when: JjColorWhen,
     ) -> dict[str, tuple[str, ...]]:
-        """Render several revisions in parallel, keyed by commit_id.
+        """Render several changes in parallel, keyed by commit_id.
 
         Each `jj log` invocation pays a substantial startup cost, so rendering
         a stack sequentially dominates the wall-clock time of commands like
-        `status`. Fan the per-revision calls out onto a thread pool so their
+        `status`. Fan the per-change calls out onto a thread pool so their
         subprocess spawns overlap.
         """
 
-        if not revisions:
+        if not changes:
             return {}
-        if len(revisions) == 1:
-            revision = revisions[0]
-            return {
-                revision.commit_id: self.render_revision_log_lines(
-                    revision, color_when=color_when
-                )
-            }
-        with ThreadPoolExecutor(max_workers=min(len(revisions), 10)) as pool:
+        if len(changes) == 1:
+            change = changes[0]
+            return {change.commit_id: self.render_commit_log_lines(change, color_when=color_when)}
+        with ThreadPoolExecutor(max_workers=min(len(changes), 10)) as pool:
             rendered = list(
                 pool.map(
-                    lambda revision: (
-                        revision.commit_id,
-                        self.render_revision_log_lines(revision, color_when=color_when),
+                    lambda change: (
+                        change.commit_id,
+                        self.render_commit_log_lines(change, color_when=color_when),
                     ),
-                    revisions,
+                    changes,
                 )
             )
         return dict(rendered)
@@ -557,21 +558,21 @@ class JjClient:
 
     def find_private_commits(
         self,
-        revisions: tuple[LocalRevision, ...],
-    ) -> tuple[LocalRevision, ...]:
-        """Return revisions blocked by the repo's git.private-commits policy."""
+        changes: tuple[LocalCommit, ...],
+    ) -> tuple[LocalCommit, ...]:
+        """Return changes blocked by the repo's git.private-commits policy."""
 
         private_commits_revset = self.get_config_string("git.private-commits")
-        if not private_commits_revset or not revisions:
+        if not private_commits_revset or not changes:
             return ()
         if private_commits_revset == "none()":
             return ()
-        commit_ids_revset = " | ".join(_quote_revset_symbol(r.commit_id) for r in revisions)
+        commit_ids_revset = " | ".join(_quote_revset_symbol(r.commit_id) for r in changes)
         combined_revset = f"({private_commits_revset}) & ({commit_ids_revset})"
-        return tuple(self.query_revisions(combined_revset))
+        return tuple(self.query_commits(combined_revset))
 
     def list_git_remotes(self) -> tuple[GitRemote, ...]:
-        """List configured Git remotes for the repository."""
+        """List configured Git remotes for the repo."""
 
         stdout = self._run_jj(("git", "remote", "list"))
         remotes: list[GitRemote] = []
@@ -588,13 +589,13 @@ class JjClient:
             remotes.append(GitRemote(name=name, fetch_url=fetch_url, push_url=push_url))
         return tuple(remotes)
 
-    def remote_bookmarks_at_revision(
+    def remote_bookmarks_at_commit(
         self,
         *,
         remote: str,
-        revision: str,
+        commit_id: str,
     ) -> tuple[str, ...]:
-        """Return locally observed remote bookmarks pointing at one revision."""
+        """Return locally observed remote bookmarks pointing at one commit."""
 
         stdout = self._run_jj(
             (
@@ -603,22 +604,22 @@ class JjClient:
                 "--remote",
                 remote,
                 "--revision",
-                revision,
+                commit_id,
                 "-T",
                 _BOOKMARK_TEMPLATE,
             )
         )
         return tuple(row.name for row in _parse_bookmark_rows(stdout) if row.remote == remote)
 
-    def ensure_review_fetch_isolation(
+    def ensure_pr_branch_fetch_isolation(
         self,
         *,
         remote: str,
         dry_run: bool = False,
-    ) -> ReviewFetchIsolation:
-        """Ensure ordinary fetches cannot import jj-stack review branches."""
+    ) -> PRBranchFetchIsolation:
+        """Ensure ordinary fetches cannot import jj-stack PR branches."""
 
-        namespace = current_review_namespace()
+        namespace = current_pr_branch_namespace()
         override_key = f"remotes.{json.dumps(remote)}.fetch-bookmarks"
         override_origin = self._effective_config_origin(override_key)
         if override_origin is not None:
@@ -647,10 +648,10 @@ class JjClient:
         refspec = namespace.fetch_refspec
         count = configured.count(refspec)
         if count == 1:
-            return ReviewFetchIsolation(status="ready", problem=None)
+            return PRBranchFetchIsolation(status="ready", problem=None)
 
-        status: ReviewFetchIsolationStatus = "required" if dry_run else "applied"
-        result = ReviewFetchIsolation(
+        status: PRBranchFetchIsolationStatus = "required" if dry_run else "applied"
+        result = PRBranchFetchIsolation(
             status=status,
             problem="missing" if count == 0 else "duplicate",
         )
@@ -688,18 +689,18 @@ class JjClient:
             )
         return result
 
-    def visible_review_bookmark_targets(
+    def visible_pr_bookmark_targets(
         self,
     ) -> dict[str, frozenset[str]]:
         """Return visible reserved-namespace bookmark targets grouped by name."""
 
-        namespace = current_review_namespace()
+        namespace = current_pr_branch_namespace()
         targets_by_name: dict[str, set[str]] = {}
         for row in self._bookmark_rows(namespace.branch_glob):
             targets_by_name.setdefault(row.name, set()).update(row.target)
         return {name: frozenset(targets) for name, targets in sorted(targets_by_name.items())}
 
-    def accept_expected_review_bookmarks(
+    def accept_expected_pr_bookmarks(
         self,
         bookmarks: Sequence[tuple[str, str, str]],
     ) -> None:
@@ -709,7 +710,7 @@ class JjClient:
         untracked bookmark, and additions in the user's `immutable_heads()` still apply.
         """
 
-        self._published_review_snapshots = {}
+        self._published_pr_snapshots = {}
         untracked: list[tuple[str, str]] = []
         target_counts: dict[str, int] = {}
         for row in self._bookmark_rows():
@@ -732,19 +733,17 @@ class JjClient:
                     f'revset-aliases."builtin_immutable_heads()"={immutable_heads}',
                 )
             )
-        revisions = self.query_revisions_by_change_ids(
+        commits = self.query_commits_by_change_ids(
             tuple(change_id for _name, change_id, _commit_id in bookmarks)
         )
-        self._published_review_snapshots = {
+        self._published_pr_snapshots = {
             change_id: commit_id
             for _name, change_id, commit_id in bookmarks
-            for matches in (revisions[change_id],)
+            for matches in (commits[change_id],)
             for published in (
-                tuple(revision for revision in matches if revision.commit_id == commit_id),
+                tuple(commit for commit in matches if commit.commit_id == commit_id),
             )
-            for local in (
-                tuple(revision for revision in matches if revision.commit_id != commit_id),
-            )
+            for local in (tuple(commit for commit in matches if commit.commit_id != commit_id),)
             if len(published) == 1 and not published[0].immutable
             if len(local) == 1 and not local[0].immutable
         }
@@ -755,25 +754,25 @@ class JjClient:
         )
         return _parse_bookmark_rows(stdout)
 
-    def review_temp_ref_target(self) -> str | None:
-        """Return the exact temporary review-import ref target, if it exists."""
+    def pr_branch_temp_ref_target(self) -> str | None:
+        """Return the exact temporary PR branch import ref target, if it exists."""
 
         target = self._run_git(
-            ("rev-parse", "--verify", "--quiet", _REVIEW_TEMP_REF),
+            ("rev-parse", "--verify", "--quiet", _PR_BRANCH_TEMP_REF),
             allowed_returncodes=frozenset({0, 1}),
         ).strip()
         return target or None
 
-    def review_temp_artifacts(self) -> ReviewTempArtifacts:
+    def pr_branch_temp_artifacts(self) -> PRTempArtifacts:
         """Observe the fixed temporary import ref and its transient jj bookmark."""
 
-        return ReviewTempArtifacts(
-            bookmark_targets=self._local_bookmark_targets(_REVIEW_TEMP_BOOKMARK),
-            ref_target=self.review_temp_ref_target(),
+        return PRTempArtifacts(
+            bookmark_targets=self._local_bookmark_targets(_PR_BRANCH_TEMP_BOOKMARK),
+            ref_target=self.pr_branch_temp_ref_target(),
         )
 
     @contextmanager
-    def import_remote_review_ref(
+    def import_remote_pr_branch_ref(
         self,
         *,
         remote: str,
@@ -782,14 +781,14 @@ class JjClient:
         expected_change_id: str | None = None,
         expected_chain: Sequence[tuple[str, str, ExpectedGitChangeId]] = (),
         expected_parent_commit_id: str | None = None,
-    ) -> Iterator[LocalRevision]:
-        """Import one exact remote review ref, then remove all temporary artifacts.
+    ) -> Iterator[LocalCommit]:
+        """Import one exact remote PR branch ref, then remove all temporary artifacts.
 
         An expected chain guards every member's raw Git change ID and first-parent ancestry. A
         tuple accepts any listed ID, including a missing change-ID header represented by `None`.
         """
 
-        ref = current_review_namespace().branch_ref(branch)
+        ref = current_pr_branch_namespace().branch_ref(branch)
         chain = tuple(expected_chain)
         if chain and (
             expected_parent_commit_id is None
@@ -800,8 +799,8 @@ class JjClient:
                 and not _expected_git_change_id_matches(chain[-1][2], expected_change_id)
             )
         ):
-            raise ValueError("invalid expected remote review chain")
-        self._clear_review_temp_ref()
+            raise ValueError("invalid expected remote PR branch chain")
+        self._clear_pr_branch_temp_ref()
         try:
             configured_remote = self._git_remote(remote)
             self._run_git(
@@ -810,10 +809,10 @@ class JjClient:
                     "--no-tags",
                     "--no-write-fetch-head",
                     configured_remote.fetch_url,
-                    f"+{ref}:{_REVIEW_TEMP_REF}",
+                    f"+{ref}:{_PR_BRANCH_TEMP_REF}",
                 )
             )
-            if self.review_temp_ref_target() != expected_target:
+            if self.pr_branch_temp_ref_target() != expected_target:
                 raise DriftError(
                     t"Remote branch {ui.bookmark(branch)} changed while it was being imported.",
                     condition="remote_branch_moved",
@@ -825,23 +824,25 @@ class JjClient:
                     if not _expected_git_change_id_matches(
                         expected_git_change_id, actual_change_id
                     ) or parents != (expected_parent,):
-                        raise CliError("Imported review heads no longer form the expected stack.")
+                        raise CliError(
+                            "Imported pull request heads no longer form the expected stack."
+                        )
                     expected_parent = target
             self._run_jj(("git", "import"))
-            revision = self.resolve_revision(_quote_revset_symbol(_REVIEW_TEMP_BOOKMARK))
-            if revision.commit_id != expected_target:
+            change = self.resolve_commit(_quote_revset_symbol(_PR_BRANCH_TEMP_BOOKMARK))
+            if change.commit_id != expected_target:
                 raise JjCommandError(
-                    t"{ui.cmd('jj git import')} did not import the exact temporary review ref."
+                    t"{ui.cmd('jj git import')} did not import the exact temporary PR branch ref."
                 )
-            if expected_change_id is not None and revision.change_id != expected_change_id:
+            if expected_change_id is not None and change.change_id != expected_change_id:
                 raise CliError(
                     t"Remote branch {ui.bookmark(branch)} resolves to change "
-                    t"{ui.change_id(revision.change_id)}, not the expected change "
+                    t"{ui.change_id(change.change_id)}, not the expected change "
                     t"{ui.change_id(expected_change_id)}."
                 )
-            yield revision
+            yield change
         finally:
-            self._clear_review_temp_ref()
+            self._clear_pr_branch_temp_ref()
 
     def read_remote_git_change_id(
         self,
@@ -894,9 +895,9 @@ class JjClient:
         branches: Sequence[str] = (),
         remote: str,
     ) -> None:
-        """Fetch ordinary repository state using its configured selection."""
+        """Fetch ordinary repo state using its configured selection."""
 
-        # Normal fetch also imports backing-Git ref changes in a colocated repository.
+        # Normal fetch also imports backing-Git ref changes in a colocated repo.
         args = ["git", "fetch", "--remote", remote]
         for branch in dict.fromkeys(branches):
             args.extend(("--branch", branch))
@@ -939,33 +940,33 @@ class JjClient:
             branches[ref.removeprefix("refs/heads/")] = commit_id
         return branches
 
-    def mutate_remote_review_refs(
+    def mutate_remote_pr_branch_refs(
         self,
         *,
         remote: str,
-        updates: Sequence[ReviewRefUpdate],
+        updates: Sequence[PRRefUpdate],
     ) -> None:
-        """Atomically apply a complete review-ref update set with exact leases."""
+        """Atomically apply a complete PR branch update set with exact leases."""
 
-        namespace = current_review_namespace()
+        namespace = current_pr_branch_namespace()
         ordered_updates = tuple(updates)
         if not ordered_updates:
             return
         branches = tuple(update.branch for update in ordered_updates)
         if len(set(branches)) != len(branches):
-            raise ValueError("remote review-ref update set contains duplicate branches")
+            raise ValueError("remote PR branch update set contains duplicate branches")
         refs = tuple(namespace.branch_ref(branch) for branch in branches)
         if any(
             update.expected_target is None and update.desired_target is None
             for update in ordered_updates
         ):
-            raise ValueError("cannot delete a review ref that is expected to be absent")
+            raise ValueError("cannot delete a PR branch ref that is expected to be absent")
 
         if all(update.desired_target == update.expected_target for update in ordered_updates):
             return
 
         configured_remote = self._git_remote(remote)
-        # Carry only the leased review refs: tag auto-follow would publish unrelated local
+        # Carry only the leased PR branch refs: tag auto-follow would publish unrelated local
         # tags, and a pre-push hook was never invoked when this went through `jj git push`.
         command = ["push", "--atomic", "--no-follow-tags", "--no-verify"]
         for ref, update in zip(refs, ordered_updates, strict=True):
@@ -977,44 +978,44 @@ class JjClient:
             command.append(f"{desired}:{ref}")
         self._run_git(command)
 
-    def edit_revision(self, commit_id: str) -> None:
-        """Set the current workspace's working-copy revision to one exact commit."""
+    def edit_commit(self, commit_id: str) -> None:
+        """Set the current workspace's working-copy change to one exact commit."""
 
         self._run_jj(("edit", commit_id), manage_working_copy=True)
 
-    def rebase_exact_revisions(
+    def rebase_exact_commits(
         self,
         *,
-        revisions: Sequence[str],
+        commit_ids: Sequence[str],
         destination: str,
     ) -> None:
-        """Rebase exactly the named revisions onto one destination."""
+        """Rebase exactly the named commits onto one destination."""
 
-        ordered_revisions = list(dict.fromkeys(revisions))
-        if not ordered_revisions:
+        ordered_commit_ids = list(dict.fromkeys(commit_ids))
+        if not ordered_commit_ids:
             return
         self._run_jj(
-            ("rebase", "-r", "|".join(ordered_revisions), "-d", destination),
+            ("rebase", "-r", "|".join(ordered_commit_ids), "-d", destination),
             manage_working_copy=True,
         )
 
-    def prepare_rebase_exact_revisions(
+    def prepare_rebase_exact_commits(
         self,
         *,
-        revisions: Sequence[str],
+        commit_ids: Sequence[str],
         destination: str,
     ) -> str:
         """Compute a rebase in an unintegrated operation and return its operation ID."""
 
-        ordered_revisions = list(dict.fromkeys(revisions))
-        if not ordered_revisions:
-            raise ValueError("speculative rebase requires at least one revision")
+        ordered_commit_ids = list(dict.fromkeys(commit_ids))
+        if not ordered_commit_ids:
+            raise ValueError("speculative rebase requires at least one commit")
         output = self._run_jj(
             (
                 "--no-integrate-operation",
                 "rebase",
                 "-r",
-                "|".join(ordered_revisions),
+                "|".join(ordered_commit_ids),
                 "-d",
                 destination,
             ),
@@ -1031,13 +1032,13 @@ class JjClient:
             )
         return match.group(1)
 
-    def query_revisions_at_operation(
+    def query_commits_at_operation(
         self,
         *,
         change_ids: Sequence[str],
         operation_id: str,
-    ) -> dict[str, tuple[LocalRevision, ...]]:
-        """Return visible revisions for logical changes in one unintegrated operation."""
+    ) -> dict[str, tuple[LocalCommit, ...]]:
+        """Return visible commits for logical changes in one unintegrated operation."""
 
         ordered_change_ids = tuple(dict.fromkeys(change_ids))
         if not ordered_change_ids:
@@ -1053,13 +1054,13 @@ class JjClient:
                 _COMMIT_TEMPLATE,
             )
         )
-        grouped: dict[str, list[LocalRevision]] = {
+        grouped: dict[str, list[LocalCommit]] = {
             change_id: [] for change_id in ordered_change_ids
         }
         for line in stdout.splitlines():
             if line.strip():
-                revision = _parse_revision_line(line)
-                grouped.setdefault(revision.change_id, []).append(revision)
+                commit = _parse_commit_line(line)
+                grouped.setdefault(commit.change_id, []).append(commit)
         return {change_id: tuple(grouped.get(change_id, ())) for change_id in ordered_change_ids}
 
     def integrate_operation(self, operation_id: str) -> None:
@@ -1082,36 +1083,36 @@ class JjClient:
             raise JjCommandError(t"{ui.cmd('git rev-parse')} returned incomplete tree data.")
         return dict(zip(ordered_commit_ids, tree_ids, strict=True))
 
-    def abandon_revisions(self, revsets: Sequence[str]) -> None:
-        """Abandon revisions; jj rebases descendants and drops pointing bookmarks."""
+    def abandon_changes(self, revsets: Sequence[str]) -> None:
+        """Abandon changes; jj rebases descendants and drops pointing bookmarks."""
 
         ordered_revsets = tuple(revsets)
         if not ordered_revsets:
             return
         self._run_jj(("abandon", *ordered_revsets), manage_working_copy=True)
 
-    def _query_revisions(self, revset: str, *, limit: int | None = None) -> list[LocalRevision]:
+    def _query_commits(self, revset: str, *, limit: int | None = None) -> list[LocalCommit]:
         lines = self._query_template_lines(revset, _COMMIT_TEMPLATE, limit=limit)
-        return [_parse_revision_line(line) for line in lines]
+        return [_parse_commit_line(line) for line in lines]
 
-    def _query_revisions_with_membership(
+    def _query_commits_with_membership(
         self,
         revset: str,
         *,
         membership_revsets: Sequence[str],
-    ) -> list[tuple[LocalRevision, tuple[bool, ...]]]:
-        """Query revisions plus one containment flag per membership revset."""
+    ) -> list[tuple[LocalCommit, tuple[bool, ...]]]:
+        """Query commits plus one containment flag per membership revset."""
 
         lines = self._query_template_lines(revset, _membership_scan_template(membership_revsets))
-        return [_parse_revision_with_flags_line(line, len(membership_revsets)) for line in lines]
+        return [_parse_commit_with_flags_line(line, len(membership_revsets)) for line in lines]
 
-    def _project(self, revision: LocalRevision) -> LocalRevision | None:
-        published = self._published_review_snapshots.get(revision.change_id)
-        if revision.commit_id == published:
+    def _project(self, commit: LocalCommit) -> LocalCommit | None:
+        published = self._published_pr_snapshots.get(commit.change_id)
+        if commit.commit_id == published:
             return None
         if published is not None:
-            return revision.model_copy(update={"divergent": False})
-        return revision
+            return commit.model_copy(update={"divergent": False})
+        return commit
 
     def _query_template_lines(
         self,
@@ -1159,7 +1160,7 @@ class JjClient:
         )
 
     def _backing_git_root(self) -> Path:
-        """Resolve the exact Git object store used by this jj repository."""
+        """Resolve the exact Git object store used by this jj repo."""
 
         if self._git_root is None:
             rendered = self._run_jj(("git", "root")).strip()
@@ -1220,27 +1221,27 @@ class JjClient:
             targets.extend(row.target)
         return tuple(dict.fromkeys(targets))
 
-    def _clear_review_temp_ref(self) -> None:
+    def _clear_pr_branch_temp_ref(self) -> None:
         """Remove the fixed transient jj bookmark and backing Git import ref."""
 
         try:
-            if self._local_bookmark_targets(_REVIEW_TEMP_BOOKMARK):
-                self._run_jj(("bookmark", "forget", _REVIEW_TEMP_BOOKMARK))
+            if self._local_bookmark_targets(_PR_BRANCH_TEMP_BOOKMARK):
+                self._run_jj(("bookmark", "forget", _PR_BRANCH_TEMP_BOOKMARK))
                 self._run_jj(("git", "export"))
         finally:
-            raw_target = self.review_temp_ref_target()
+            raw_target = self.pr_branch_temp_ref_target()
             try:
                 if raw_target is not None:
-                    self._run_git(("update-ref", "-d", _REVIEW_TEMP_REF, raw_target))
+                    self._run_git(("update-ref", "-d", _PR_BRANCH_TEMP_REF, raw_target))
             finally:
-                if self.review_temp_ref_target() is not None:
+                if self.pr_branch_temp_ref_target() is not None:
                     raise JjCommandError(
-                        t"Could not remove temporary Git ref {ui.code(_REVIEW_TEMP_REF)}."
+                        t"Could not remove temporary Git ref {ui.code(_PR_BRANCH_TEMP_REF)}."
                     )
 
-        if self._local_bookmark_targets(_REVIEW_TEMP_BOOKMARK):
+        if self._local_bookmark_targets(_PR_BRANCH_TEMP_BOOKMARK):
             raise JjCommandError(
-                t"Could not forget temporary bookmark {ui.bookmark(_REVIEW_TEMP_BOOKMARK)}."
+                t"Could not forget temporary bookmark {ui.bookmark(_PR_BRANCH_TEMP_BOOKMARK)}."
             )
 
     def _run_command(
@@ -1282,7 +1283,8 @@ _HTTP_URL_AUTHORITY_PATTERN = re.compile(
 )
 
 
-def _is_missing_revision_error(message: str) -> bool:
+def _is_missing_commit_error(message: str) -> bool:
+    # Match jj's own diagnostic vocabulary at the subprocess boundary.
     return "Revision `" in message and "doesn't exist" in message
 
 
@@ -1305,11 +1307,8 @@ def _redact_http_url_userinfo(text: str) -> str:
 
 def _revset_resolution_error(revset: str, error: JjCommandError) -> CliError | None:
     raw_message = _unwrap_command_error_message(str(error))
-    if _is_missing_revision_error(raw_message):
-        first_line = raw_message.splitlines()[0].strip()
-        if first_line.startswith("Error: "):
-            first_line = first_line.removeprefix("Error: ").strip()
-        return CliError(first_line.rstrip("."))
+    if _is_missing_commit_error(raw_message):
+        return CliError(t"Revset {ui.revset(revset)} did not resolve to a visible commit.")
 
     first_line = raw_message.splitlines()[0].strip()
     if first_line.startswith("Error: Failed to parse revset:"):
@@ -1360,45 +1359,44 @@ def _parse_bookmark_rows(stdout: str) -> tuple[_BookmarkRow, ...]:
     )
 
 
-def _parse_revision_line(line: str) -> LocalRevision:
-    return _parse_json_line(line, command="jj log", model=LocalRevision)
+def _parse_commit_line(line: str) -> LocalCommit:
+    return _parse_json_line(line, command="jj log", model=LocalCommit)
 
 
-def _parse_revision_with_flags_line(
+def _parse_commit_with_flags_line(
     line: str,
     flag_count: int,
-) -> tuple[LocalRevision, tuple[bool, ...]]:
-    scan = _parse_json_line(line, command="jj log", model=_RevisionScan)
+) -> tuple[LocalCommit, tuple[bool, ...]]:
+    scan = _parse_json_line(line, command="jj log", model=_CommitScan)
     if len(scan.membership) != flag_count:
         raise JjCommandError(
             t"{ui.cmd('jj log')} output has {len(scan.membership)} membership flags; "
             t"expected {flag_count}."
         )
-    return scan.revision, scan.membership
+    return scan.commit, scan.membership
 
 
 def _membership_scan_template(membership_revsets: Sequence[str]) -> str:
     flags = r' ++ "," ++ '.join(
         f"json(self.contained_in({json.dumps(revset)}))" for revset in membership_revsets
     )
-    return (
-        r'"{\"revision\":{" ++ '
-        + _REVISION_JSON_FIELDS
-        + r' ++ "},\"membership\":[" ++ '
-        + flags
-        + r' ++ "]}\n"'
-    )
+    return dedent(
+        rf"""
+        "{{\"commit\":{{" ++ {_CHANGE_JSON_FIELDS} ++
+        "}},\"membership\":[" ++ {flags} ++ "]}}\n"
+        """
+    ).strip()
 
 
 def _short_change_id_render_template() -> str:
     shortest = "change_id.shortest(8)"
-    return (
-        r'json(change_id) ++ "\t" ++ '
-        + shortest
-        + r".prefix() ++ "
-        + shortest
-        + r'.rest() ++ "\n"'
-    )
+    return dedent(
+        rf"""
+        json(change_id) ++ "\t" ++
+        {shortest}.prefix() ++
+        {shortest}.rest() ++ "\n"
+        """
+    ).strip()
 
 
 def _quote_revset_symbol(symbol: str) -> str:

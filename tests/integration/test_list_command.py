@@ -5,7 +5,7 @@ import json
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.state.store import TrackingStore
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -20,7 +20,7 @@ from ..support.integration_helpers import (
 from ..support.json_schema import assert_json_output_matches_schema
 from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
-    approve_pull_requests,
+    approve_prs,
     configure_submit_environment,
     patch_github_client_builders,
     run_main,
@@ -53,15 +53,14 @@ def test_list_json_reports_public_stack_rows(
     change = row["changes"][0]
     assert change["change_id"] == change_id
     assert change["branch"].startswith("jj-stack/feature-1-")
-    assert change["pull_request"]["number"] == 1
+    assert change["pr"]["number"] == 1
     assert change["status"] == "open"
     assert "head_change_id" not in row
-    assert "pull_requests" not in row
     assert "review" not in row
     assert "size" not in row
 
 
-def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
+def test_list_surfaces_orphaned_pr_after_change_is_abandoned(
     tmp_path,
     monkeypatch,
     capsys,
@@ -70,10 +69,10 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = selected_stack(repo)
-    orphaned_change_id = stack.revisions[0].change_id
-    state = ReviewStateStore.for_repo(repo).load()
-    orphaned_pr_number = state.review_identities[orphaned_change_id].pr_number
-    orphaned_branch = state.review_identities[orphaned_change_id].head_ref
+    orphaned_change_id = stack.changes[0].change_id
+    state = TrackingStore.for_repo(repo).load()
+    orphaned_pr_number = state.pr_identities[orphaned_change_id].pr_number
+    orphaned_branch = state.pr_identities[orphaned_change_id].head_ref
 
     run_command(["jj", "abandon", orphaned_change_id], repo)
 
@@ -100,11 +99,11 @@ def test_list_surfaces_orphaned_pull_request_after_change_is_abandoned(
     assert orphan["branch"] == orphaned_branch
     assert orphan["subject"] == "local change missing"
     assert orphan["status"] == "orphan"
-    assert orphan["pull_request"]["number"] == orphaned_pr_number
+    assert orphan["pr"]["number"] == orphaned_pr_number
     assert "hint" not in orphan
 
 
-def test_list_surfaces_orphaned_pull_request_when_no_live_stacks_remain(
+def test_list_surfaces_orphaned_pr_when_no_live_stacks_remain(
     tmp_path,
     monkeypatch,
     capsys,
@@ -155,7 +154,7 @@ def test_list_treats_a_visible_submitted_predecessor_as_published(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change_id = selected_stack(repo).head.change_id
-    branch = ReviewStateStore.for_repo(repo).load().review_identities[change_id].head_ref
+    branch = TrackingStore.for_repo(repo).load().pr_identities[change_id].head_ref
     run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
     run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", branch], repo)
 
@@ -217,9 +216,9 @@ def test_list_keeps_one_stack_when_saved_tracking_is_sparse_in_the_middle(
     capsys.readouterr()
 
     stack = selected_stack(repo)
-    middle_change_id = stack.revisions[1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    state_store.retire_review(middle_change_id)
+    middle_change_id = stack.changes[1].change_id
+    state_store = TrackingStore.for_repo(repo)
+    state_store.retire_pr(middle_change_id)
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
@@ -230,7 +229,7 @@ def test_list_keeps_one_stack_when_saved_tracking_is_sparse_in_the_middle(
     assert "1 change" not in captured.out
 
 
-def test_list_inventories_paths_that_share_a_reviewed_prefix(
+def test_list_inventories_paths_that_share_a_submitted_prefix(
     tmp_path,
     monkeypatch,
     capsys,
@@ -247,7 +246,7 @@ def test_list_inventories_paths_that_share_a_reviewed_prefix(
 
     run_command(["jj", "new", shared.commit_id, "-m", "right"], repo)
     write_file(repo / "right.txt", "right\n")
-    right = JjClient(repo).resolve_revision("@")
+    right = JjClient(repo).resolve_commit("@")
     assert (
         run_main(
             repo,
@@ -289,7 +288,7 @@ def test_list_reports_partial_approval_for_ready_prefix_only(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    approve_pull_requests(fake_repo, 1)
+    approve_prs(fake_repo, 1)
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
@@ -376,17 +375,17 @@ def test_list_falls_back_when_github_unavailable(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, *, head_refs):
+        async def get_prs_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.list_", "jj_stack.review.status"),
+        modules=("jj_stack.commands.list_", "jj_stack.stack.status"),
         client_type=OfflineGithubClient,
     )
 
@@ -398,7 +397,7 @@ def test_list_falls_back_when_github_unavailable(
     assert "feature 1" in captured.out
 
 
-def test_list_marks_stale_saved_pull_request_link_and_exits_nonzero(
+def test_list_marks_stale_saved_pr_link_and_exits_nonzero(
     tmp_path,
     monkeypatch,
     capsys,
@@ -406,7 +405,7 @@ def test_list_marks_stale_saved_pull_request_link_and_exits_nonzero(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    fake_repo.pull_requests.clear()
+    fake_repo.prs.clear()
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
@@ -421,10 +420,10 @@ def test_list_and_view_agree_that_a_divergent_change_is_an_incomplete_report(
     monkeypatch,
     capsys,
 ) -> None:
-    """One repository must not look complete to `list` and incomplete to `view`.
+    """One repo must not look complete to `list` and incomplete to `view`.
 
     `list` already labels the row `divergent`, so exiting 0 told a script the report could be
-    trusted while `view` reported the same repository as incomplete.
+    trusted while `view` reported the same repo as incomplete.
     """
 
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)

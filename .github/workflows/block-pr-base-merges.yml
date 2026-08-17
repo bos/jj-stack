@@ -1,9 +1,9 @@
-name: block-review-base-merges
+name: block-pr-base-merges
 
 on:
   pull_request_target:
     branches:
-      - "review/**"
+      - "jj-stack/**"
     types:
       - opened
       - reopened
@@ -12,13 +12,13 @@ on:
       - ready_for_review
 
 jobs:
-  reject-review-base-merge:
-    name: reject-review-base-merge
+  reject-pr-base-merge:
+    name: reject-pr-base-merge
     runs-on: ubuntu-latest
     permissions: {}
     steps:
       - name: Explain policy and fail
         run: |
-          echo "PRs targeting review/* are review-only and must not be merged."
+          echo "PRs targeting jj-stack/* are based on another PR and must not be merged directly."
           echo "Retarget this PR to main or another allowed base branch."
           exit 1

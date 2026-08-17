@@ -11,7 +11,7 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
 )
 from jj_stack.models.git import GitRemote
-from jj_stack.models.review_state import ReviewState, TrackedReview
+from jj_stack.models.tracking import TrackedPR, TrackingState
 from jj_stack.ui import Message
 
 CleanupActionStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -29,7 +29,7 @@ class CleanupAction:
 
 @dataclass(frozen=True, slots=True)
 class CleanupResult:
-    """Rendered cleanup result for the selected repository."""
+    """Rendered cleanup result for the selected repo."""
 
     actions: tuple[CleanupAction, ...]
 
@@ -39,12 +39,12 @@ class PreparedCleanup:
     """Locally prepared cleanup inputs before any GitHub inspection."""
 
     context: CommandContext
-    close_open_pull_requests: bool
+    close_open_prs: bool
     # None until plain cleanup proves it needs remote or GitHub state.
     github_target: GithubTarget | UnresolvedGithubTarget | None
     dry_run: bool
     selected_change_ids: tuple[str, ...] | None
-    state: ReviewState
+    state: TrackingState
 
     @property
     def remote(self) -> GitRemote | None:
@@ -55,8 +55,8 @@ class PreparedCleanup:
 
 @dataclass(frozen=True, slots=True)
 class PreparedCleanupChange:
-    """Locally prepared cleanup state for one complete tracked review."""
+    """Locally prepared cleanup state for one complete tracked PR."""
 
-    candidate: TrackedReview
+    candidate: TrackedPR
     has_mutable_copy: bool
     stale_reason: str | None

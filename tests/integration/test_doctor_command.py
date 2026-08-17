@@ -8,7 +8,7 @@ import jj_stack.commands.doctor as doctor_mod
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
-from jj_stack.review_namespace import current_review_namespace
+from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -35,15 +35,15 @@ def _configure_doctor_environment(
     # Provide a fake token so the auth check passes without a real gh CLI or env var.
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
 
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
-    def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
+    def build_github_client(*, repo: GithubRepoAddress) -> GithubClient:
         return client_type(
             httpxyz.AsyncClient(
                 base_url="https://api.github.test",
                 transport=httpxyz.ASGITransport(app=app),
             ),
-            repository=repository,
+            repo=repo,
         )
 
     monkeypatch.setattr(doctor_mod, "build_github_client", build_github_client)
@@ -63,7 +63,7 @@ def test_doctor_exits_zero_for_healthy_repo(
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
-    JjClient(repo).ensure_review_fetch_isolation(
+    JjClient(repo).ensure_pr_branch_fetch_isolation(
         remote="origin",
     )
 
@@ -102,7 +102,7 @@ def test_doctor_reports_when_github_stacks_are_unavailable(
     assert output.count("https://gh.io/stacksbeta") == 1
 
 
-def test_doctor_warns_about_an_imported_review_bookmark(
+def test_doctor_warns_about_an_imported_pr_bookmark(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -131,7 +131,7 @@ def test_doctor_reports_runnable_missing_fetch_isolation_recovery(
     output = " ".join(capsys.readouterr().out.split())
 
     assert exit_code == 0
-    assert f"missing {current_review_namespace().fetch_refspec} exclusion" in output
+    assert f"missing {current_pr_branch_namespace().fetch_refspec} exclusion" in output
     assert "multiple" not in output
     assert "jj-stack doctor --fix" in output
     assert "without --dry-run" not in output
@@ -145,14 +145,14 @@ def test_doctor_distinguishes_duplicate_fetch_exclusions(
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = _configure_doctor_environment(monkeypatch, tmp_path, fake_repo)
     client = JjClient(repo)
-    client.ensure_review_fetch_isolation(remote="origin")
+    client.ensure_pr_branch_fetch_isolation(remote="origin")
     run_command(
         [
             "git",
             "config",
             "--add",
             "remote.origin.fetch",
-            current_review_namespace().fetch_refspec,
+            current_pr_branch_namespace().fetch_refspec,
         ],
         repo,
     )
@@ -161,12 +161,12 @@ def test_doctor_distinguishes_duplicate_fetch_exclusions(
     output = " ".join(capsys.readouterr().out.split())
 
     assert exit_code == 0
-    assert f"multiple {current_review_namespace().fetch_refspec} exclusions" in output
+    assert f"multiple {current_pr_branch_namespace().fetch_refspec} exclusions" in output
     assert "keep one with jj-stack doctor --fix" in output
     assert "missing" not in output
 
 
-def test_doctor_fix_applies_the_review_fetch_exclusion(
+def test_doctor_fix_applies_the_pr_branch_fetch_exclusion(
     tmp_path: Path,
     monkeypatch,
     capsys,

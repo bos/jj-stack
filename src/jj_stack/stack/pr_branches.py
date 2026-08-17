@@ -1,4 +1,4 @@
-"""Stable naming policy for jj-stack review branches."""
+"""Stable naming policy for jj-stack PR branches."""
 
 from __future__ import annotations
 
@@ -8,94 +8,95 @@ from typing import TYPE_CHECKING
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
-from jj_stack.models.review_state import ReviewIdentity, ReviewState
-from jj_stack.models.stack import LocalRevision
-from jj_stack.review_namespace import current_review_namespace
+from jj_stack.models.stack import LocalCommit
+from jj_stack.models.tracking import PRIdentity, TrackingState
+from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 
 if TYPE_CHECKING:
     from jj_stack.jj.client import JjClient
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedReviewBranch:
-    """Stable review branch selected for one local change."""
+class ResolvedPRBranch:
+    """Stable PR branch selected for one local change."""
 
     branch: str
     change_id: str
     recovered_target: str | None = None
 
 
-def prepare_visible_review_snapshots(
+def prepare_visible_pr_snapshots(
     *,
     jj_client: JjClient,
-    state: ReviewState,
+    state: TrackingState,
 ) -> None:
-    """Observe saved review bookmarks and narrow built-in bookmark immutability."""
+    """Observe saved PR bookmarks and narrow built-in bookmark immutability."""
 
-    visible = jj_client.visible_review_bookmark_targets()
+    visible = jj_client.visible_pr_bookmark_targets()
     claims: dict[str, list[tuple[str, str]]] = {}
-    for review in state.tracked_reviews():
-        branch = review.review_identity.head_ref
-        baseline = review.submitted_baseline.commit_id
+    for tracked_pr in state.tracked_prs():
+        branch = tracked_pr.pr_identity.head_ref
+        baseline = tracked_pr.submitted_baseline.commit_id
         if visible.get(branch) == frozenset({baseline}):
-            claims.setdefault(branch, []).append((review.change_id, baseline))
+            claims.setdefault(branch, []).append((tracked_pr.change_id, baseline))
     exact = {branch: items[0] for branch, items in claims.items() if len(items) == 1}
-    jj_client.accept_expected_review_bookmarks(
+    jj_client.accept_expected_pr_bookmarks(
         tuple((branch, change_id, commit_id) for branch, (change_id, commit_id) in exact.items())
     )
 
 
-def resolve_review_branches(
+def resolve_pr_branches(
     *,
-    revisions: tuple[LocalRevision, ...],
-    review_identities: Mapping[str, ReviewIdentity],
-) -> tuple[ResolvedReviewBranch, ...]:
+    changes: tuple[LocalCommit, ...],
+    pr_identities: Mapping[str, PRIdentity],
+) -> tuple[ResolvedPRBranch, ...]:
     """Resolve each branch from its saved identity or initial name."""
 
     resolutions = tuple(
-        ResolvedReviewBranch(
+        ResolvedPRBranch(
             branch=(
                 identity.head_ref
-                if (identity := review_identities.get(revision.change_id)) is not None
-                else current_review_namespace().generate_branch(revision)
+                if (identity := pr_identities.get(change.change_id)) is not None
+                else current_pr_branch_namespace().generate_branch(change)
             ),
-            change_id=revision.change_id,
+            change_id=change.change_id,
         )
-        for revision in revisions
+        for change in changes
     )
-    ensure_unique_review_branches(resolutions)
+    ensure_unique_pr_branches(resolutions)
     return resolutions
 
 
-def ensure_new_review_branches_unclaimed(
-    resolutions: tuple[ResolvedReviewBranch, ...],
-    review_identities: Mapping[str, ReviewIdentity],
-    repository_key: tuple[str, str],
+def ensure_new_pr_branches_unclaimed(
+    resolutions: tuple[ResolvedPRBranch, ...],
+    pr_identities: Mapping[str, PRIdentity],
+    repo_key: tuple[str, str],
 ) -> None:
     saved_by_branch = {
         identity.head_ref: change_id
-        for change_id, identity in review_identities.items()
-        if identity.repository_key == repository_key
+        for change_id, identity in pr_identities.items()
+        if identity.repo_key == repo_key
     }
     collisions = tuple(
         resolution.branch
         for resolution in resolutions
-        if resolution.change_id not in review_identities
+        if resolution.change_id not in pr_identities
         and resolution.branch in saved_by_branch
         and saved_by_branch[resolution.branch] != resolution.change_id
     )
     if collisions:
         raise CliError(
-            t"Cannot create a review on saved branch {ui.join(ui.bookmark, collisions)}.",
+            t"Cannot create a pull request on saved PR branch "
+            t"{ui.join(ui.bookmark, collisions)}.",
             hint=t"Run {ui.cmd('jj-stack list')} to find the change that owns it, then clean "
-            t"up that review or change the new change's subject.",
+            t"up that pull request or change the new change's subject.",
         )
 
 
-def ensure_unique_review_branches(
-    resolutions: tuple[ResolvedReviewBranch, ...],
+def ensure_unique_pr_branches(
+    resolutions: tuple[ResolvedPRBranch, ...],
 ) -> None:
-    duplicates = duplicate_review_branch_claims(
+    duplicates = duplicate_pr_branch_claims(
         (resolution.branch, resolution.change_id) for resolution in resolutions
     )
     if not duplicates:
@@ -106,11 +107,11 @@ def ensure_unique_review_branches(
     )
     raise CliError(
         t"Selected stack resolves multiple changes to the same branch: {collisions}.",
-        hint="Change an untracked change's subject or repair the saved review links.",
+        hint="Change an untracked change's subject or repair the saved pull request links.",
     )
 
 
-def duplicate_review_branch_claims(
+def duplicate_pr_branch_claims(
     claims: Iterable[tuple[str, str]],
 ) -> dict[str, tuple[str, ...]]:
     """Return branches claimed by more than one distinct change."""

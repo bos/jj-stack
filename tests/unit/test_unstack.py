@@ -13,7 +13,7 @@ def test_unstack_rejects_remote_stack_number_with_local_only_mode_before_bootstr
     monkeypatch.setattr(
         "jj_stack.commands.unstack.bootstrap_context",
         lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("invalid options must not bootstrap the repository")
+            AssertionError("invalid options must not bootstrap the repo")
         ),
     )
 
@@ -23,8 +23,8 @@ def test_unstack_rejects_remote_stack_number_with_local_only_mode_before_bootstr
             debug=False,
             dry_run=False,
             local=True,
-            pull_request=None,
-            repository=None,
+            pr=None,
+            repo=None,
             revset=None,
             stack=7,
         )

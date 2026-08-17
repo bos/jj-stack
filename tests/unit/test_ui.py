@@ -38,7 +38,7 @@ def test_cli_color_config_read_ignores_working_copy(
 
     assert (
         cli_module._load_configured_jj_color(
-            repository=tmp_path,
+            repo=tmp_path,
             cli_args=JjCliArgs(),
         )
         == "debug"
@@ -48,7 +48,7 @@ def test_cli_color_config_read_ignores_working_copy(
 def test_time_output_prefix_uses_prefix_and_timestamp_semantic_style(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = Path.cwd()
+    repo = Path.cwd()
     stdout = 'colors.prefix.bold\0true\ncolors.timestamp\0"cyan"\n'
 
     def fake_run(command, **kwargs):
@@ -63,7 +63,7 @@ def test_time_output_prefix_uses_prefix_and_timestamp_semantic_style(
         stdout=output,
         stderr=StringIO(),
         color_mode="always",
-        repository=repository,
+        repo=repo,
         time_output=True,
     ):
         console_module.output("timed")
@@ -89,7 +89,7 @@ def test_machine_output_bypasses_terminal_formatting() -> None:
 def test_semantic_style_uses_machine_readable_jj_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = Path.cwd()
+    repo = Path.cwd()
     stdout = (
         'colors.change_id\0"ansi-color-81"\n'
         "colors.working_copy.bold\0true\n"
@@ -99,7 +99,7 @@ def test_semantic_style_uses_machine_readable_jj_config(
     def fake_run(command, **kwargs):
         assert command[:4] == ["jj", "--ignore-working-copy", "config", "list"]
         assert "colors" in command
-        assert kwargs["cwd"] == repository
+        assert kwargs["cwd"] == repo
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
@@ -108,7 +108,7 @@ def test_semantic_style_uses_machine_readable_jj_config(
         stdout=StringIO(),
         stderr=StringIO(),
         color_mode="always",
-        repository=repository,
+        repo=repo,
     ):
         assert console_module.semantic_style("missing") is None
         assert console_module.semantic_style("change_id") == _style_cls()(color="color(81)")
@@ -121,7 +121,7 @@ def test_semantic_style_uses_machine_readable_jj_config(
 def test_rich_text_renders_template_semantics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = Path.cwd()
+    repo = Path.cwd()
     stdout = (
         'colors.local_bookmarks\0"green"\n'
         "colors.change_id.bold\0true\n"
@@ -137,7 +137,7 @@ def test_rich_text_renders_template_semantics(
         stdout=StringIO(),
         stderr=StringIO(),
         color_mode="always",
-        repository=repository,
+        repo=repo,
     ):
         text = console_module.rich_text(
             t"delete {ui_module.bookmark('jj-stack/feature-aaaaaaaa')} for "
@@ -156,7 +156,7 @@ def test_rich_text_renders_template_semantics(
 def test_joined_semantic_template_interpolation_renders_plain_text_and_styles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = Path.cwd()
+    repo = Path.cwd()
     stdout = 'colors.local_bookmarks\0"green"\n'
     first = "jj-stack/fix-one-aaaaaaaa"
     second = "jj-stack/fix-two-bbbbbbbb"
@@ -176,7 +176,7 @@ def test_joined_semantic_template_interpolation_renders_plain_text_and_styles(
         stdout=StringIO(),
         stderr=StringIO(),
         color_mode="always",
-        repository=repository,
+        repo=repo,
     ):
         text = console_module.rich_text(message)
 
@@ -194,7 +194,7 @@ def test_joined_semantic_template_interpolation_renders_plain_text_and_styles(
 def test_revset_uses_semantic_style(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = Path.cwd()
+    repo = Path.cwd()
     stdout = 'colors.revset\0"blue"\n'
 
     def fake_run(command, **kwargs):
@@ -206,7 +206,7 @@ def test_revset_uses_semantic_style(
         stdout=StringIO(),
         stderr=StringIO(),
         color_mode="always",
-        repository=repository,
+        repo=repo,
     ):
         text = console_module.rich_text(ui_module.revset("trunk()"))
 

@@ -15,7 +15,7 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
 
 ## Reference documents
 
-- **[code-reviews.md](code-reviews.md)** — how to approach reviews for code
+- **[code-reviews.md](code-reviews.md)** — how to approach reviews of code
   and docs, with emphasis on real regressions and unnecessary complexity.
 - **[property-testing.md](property-testing.md)** — the generated integration harness and how to
   run it.

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from jj_stack.models.github import GithubPullRequest, GithubStack
+from jj_stack.models.github import GithubPR, GithubStack
 
 
-def _graphql_pull_request_payload(review_decision: object) -> dict[str, object]:
+def _graphql_pr_payload(review_decision: object) -> dict[str, object]:
     return {
         "autoMergeRequest": None,
         "baseRefName": "main",
@@ -17,14 +17,14 @@ def _graphql_pull_request_payload(review_decision: object) -> dict[str, object]:
         "reviewDecision": review_decision,
         "state": "OPEN",
         "title": "feature 1",
-        "url": "https://github.test/octo-org/stacked-review/pull/1",
+        "url": "https://github.test/octo-org/stacked-prs/pull/1",
     }
 
 
 def test_graphql_review_decision_normalizes_known_states_and_drops_unknown() -> None:
-    approved = GithubPullRequest.model_validate(_graphql_pull_request_payload("APPROVED"))
-    changes = GithubPullRequest.model_validate(_graphql_pull_request_payload("CHANGES_REQUESTED"))
-    unknown = GithubPullRequest.model_validate(_graphql_pull_request_payload("REVIEW_REQUIRED"))
+    approved = GithubPR.model_validate(_graphql_pr_payload("APPROVED"))
+    changes = GithubPR.model_validate(_graphql_pr_payload("CHANGES_REQUESTED"))
+    unknown = GithubPR.model_validate(_graphql_pr_payload("REVIEW_REQUIRED"))
 
     assert approved.review_decision == "approved"
     assert approved.head.sha == "head-commit-id"
@@ -46,8 +46,8 @@ def test_github_stack_splits_history_and_rejects_nonprefix_history() -> None:
 
     stack = GithubStack.model_validate({"number": 7, "pull_requests": [historical, active]})
 
-    assert stack.historical_pull_request_numbers == (1,)
-    assert stack.active_pull_request_numbers == (2,)
+    assert stack.historical_pr_numbers == (1,)
+    assert stack.active_pr_numbers == (2,)
     with pytest.raises(ValueError, match="bottom prefix"):
         GithubStack.model_validate({"number": 7, "pull_requests": [active, historical]})
 
@@ -63,5 +63,5 @@ def test_github_stack_defaults_missing_merge_state_to_active() -> None:
         }
     )
 
-    assert stack.active_pull_request_numbers == (1, 2)
-    assert stack.historical_pull_request_numbers == ()
+    assert stack.active_pr_numbers == (1, 2)
+    assert stack.historical_pr_numbers == ()

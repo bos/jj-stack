@@ -1,4 +1,4 @@
 interface:
   display_name: "JJ Stack"
-  short_description: "Work with jj-stack review stacks"
-  default_prompt: "Use $jj-stack to handle this repository’s pull request or branch task."
+  short_description: "Work with jj-stack PR stacks"
+  default_prompt: "Use $jj-stack to handle this repo’s pull request or branch task."

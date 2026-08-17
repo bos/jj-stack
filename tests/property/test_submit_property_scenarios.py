@@ -72,7 +72,7 @@ def test_lifecycles(tmp_path, monkeypatch, capsys, scenario: LifecycleScenario) 
     STACK_EDIT_SCENARIOS,
     ids=lambda scenario: scenario.name,
 )
-def test_submit_property_stack_edits_preserve_review_identity(
+def test_submit_property_stack_edits_preserve_pr_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -99,7 +99,7 @@ def test_submit_property_stack_edits_preserve_review_identity(
     STACK_JOIN_SCENARIOS,
     ids=lambda scenario: scenario.name,
 )
-def test_submit_property_stack_join_preserves_review_identity(
+def test_submit_property_stack_join_preserves_pr_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -215,12 +215,12 @@ def test_submit_property_failed_submit_retry_converges(
         args = () if revset is None else (revset,)
         return run_main(repo, config_path, "submit", *args)
 
-    def relink(pull_request_number: int, change_id: str) -> int:
+    def relink(pr_number: int, change_id: str) -> int:
         return run_main(
             repo,
             config_path,
             "relink",
-            str(pull_request_number),
+            str(pr_number),
             change_id,
         )
 
@@ -256,55 +256,47 @@ def _install_submit_retry_fault(
         _install_remote_push_fault(monkeypatch)
         return
 
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
     failed = False
     target_title = subject_for_label(scenario.failure_label)
 
     class FaultingGithubClient(GithubClient):
-        async def create_pull_request(self, *, base, body, draft=False, head, title):
+        async def create_pr(self, *, base, body, draft=False, head, title):
             nonlocal failed
-            pull_request = await super().create_pull_request(
+            pr = await super().create_pr(
                 base=base,
                 body=body,
                 draft=draft,
                 head=head,
                 title=title,
             )
-            if (
-                not failed
-                and scenario.failure_point == "create_pull_request"
-                and title == target_title
-            ):
+            if not failed and scenario.failure_point == "create_pr" and title == target_title:
                 failed = True
                 raise GithubClientError(
                     "Simulated pull request creation failure",
                     status_code=500,
                 )
-            return pull_request
+            return pr
 
-        async def update_pull_request(
+        async def update_pr(
             self,
             *,
-            pull_number,
+            pr_number,
             base=None,
             body=None,
             title=None,
         ):
             nonlocal failed
-            pull_request = await super().update_pull_request(
-                pull_number=pull_number,
+            pr = await super().update_pr(
+                pr_number=pr_number,
                 base=base,
                 body=body,
                 title=title,
             )
-            if (
-                not failed
-                and scenario.failure_point == "update_pull_request"
-                and pull_request.title == target_title
-            ):
+            if not failed and scenario.failure_point == "update_pr" and pr.title == target_title:
                 failed = True
                 raise GithubClientError("Simulated pull request update failure", status_code=500)
-            return pull_request
+            return pr
 
         async def add_labels(self, *, issue_number, labels):
             nonlocal failed
@@ -314,8 +306,8 @@ def _install_submit_retry_fault(
             )
             if (
                 not failed
-                and scenario.failure_point == "pull_request_metadata"
-                and fake_repo.pull_requests[issue_number].title == target_title
+                and scenario.failure_point == "pr_metadata"
+                and fake_repo.prs[issue_number].title == target_title
             ):
                 failed = True
                 raise GithubClientError("Simulated label sync failure", status_code=500)
@@ -331,11 +323,11 @@ def _install_submit_retry_fault(
 
 def _install_remote_push_fault(monkeypatch: pytest.MonkeyPatch) -> None:
     failed = False
-    original_mutate_review_refs = submit_command.JjClient.mutate_remote_review_refs
+    original_mutate_pr_branch_refs = submit_command.JjClient.mutate_remote_pr_branch_refs
 
-    def mutate_review_refs_then_fail(self, *, remote, updates) -> None:
+    def mutate_pr_branch_refs_then_fail(self, *, remote, updates) -> None:
         nonlocal failed
-        original_mutate_review_refs(
+        original_mutate_pr_branch_refs(
             self,
             remote=remote,
             updates=updates,
@@ -346,6 +338,6 @@ def _install_remote_push_fault(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         submit_command.JjClient,
-        "mutate_remote_review_refs",
-        mutate_review_refs_then_fail,
+        "mutate_remote_pr_branch_refs",
+        mutate_pr_branch_refs_then_fail,
     )

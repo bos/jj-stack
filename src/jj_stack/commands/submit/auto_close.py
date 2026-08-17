@@ -8,13 +8,13 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
 
-from .models import PreparedSubmitRevision, PullRequestSyncPlan
+from .models import PreparedSubmitChange, PRSyncPlan
 
 
-async def retarget_review_bases_before_branch_push(
+async def retarget_pr_bases_before_branch_push(
     *,
     github_client: GithubClient,
-    plans: tuple[PullRequestSyncPlan, ...],
+    plans: tuple[PRSyncPlan, ...],
     trunk_branch: str,
 ) -> None:
     """Move PR bases that would auto-close after the push to trunk first."""
@@ -22,7 +22,7 @@ async def retarget_review_bases_before_branch_push(
     await run_bounded_tasks(
         concurrency=DEFAULT_BOUNDED_CONCURRENCY,
         items=plans,
-        run_item=lambda plan: _retarget_review_base_before_branch_push(
+        run_item=lambda plan: _retarget_pr_base_before_branch_push(
             github_client=github_client,
             plan=plan,
             trunk_branch=trunk_branch,
@@ -30,13 +30,13 @@ async def retarget_review_bases_before_branch_push(
     )
 
 
-def predict_pull_requests_auto_closed_by_push(
+def predict_prs_auto_closed_by_push(
     *,
     jj_client: JjClient,
-    plans: tuple[PullRequestSyncPlan, ...],
-    prepared_revisions: tuple[PreparedSubmitRevision, ...],
+    plans: tuple[PRSyncPlan, ...],
+    prepared_changes: tuple[PreparedSubmitChange, ...],
     remote_targets: dict[str, str],
-) -> tuple[PullRequestSyncPlan, ...]:
+) -> tuple[PRSyncPlan, ...]:
     """Pending PRs that GitHub will auto-close (as merged) after the planned push.
 
     GitHub auto-closes an open PR when its head ref becomes contained in its base
@@ -46,19 +46,19 @@ def predict_pull_requests_auto_closed_by_push(
     """
 
     push_targets = {
-        prepared_revision.branch: prepared_revision.revision.commit_id
-        for prepared_revision in prepared_revisions
+        prepared_change.branch: prepared_change.change.commit_id
+        for prepared_change in prepared_changes
     }
-    candidates: list[tuple[str, str, PullRequestSyncPlan]] = []
+    candidates: list[tuple[str, str, PRSyncPlan]] = []
     for plan in plans:
-        pull_request = plan.discovered_pull_request
-        if pull_request is None or pull_request.state != "open":
+        pr = plan.discovered_pr
+        if pr is None or pr.state != "open":
             continue
-        head_after_push = push_targets.get(pull_request.head.ref)
+        head_after_push = push_targets.get(pr.head.ref)
         if head_after_push is None:
             continue
         base_after_push = _resolve_post_push_commit(
-            ref=pull_request.base.ref,
+            ref=pr.base.ref,
             push_targets=push_targets,
             remote_targets=remote_targets,
         )
@@ -87,22 +87,22 @@ def _resolve_post_push_commit(
     return remote_targets.get(ref)
 
 
-async def _retarget_review_base_before_branch_push(
+async def _retarget_pr_base_before_branch_push(
     *,
     github_client: GithubClient,
-    plan: PullRequestSyncPlan,
+    plan: PRSyncPlan,
     trunk_branch: str,
 ) -> None:
-    pull_request = plan.discovered_pull_request
-    if pull_request is None:
+    pr = plan.discovered_pr
+    if pr is None:
         raise AssertionError("Pre-push retarget requires a discovered pull request.")
     try:
-        await github_client.update_pull_request(
-            pull_number=pull_request.number,
+        await github_client.update_pr(
+            pr_number=pr.number,
             base=trunk_branch,
         )
     except GithubClientError as error:
         raise CliError(
-            t"Could not retarget PR #{pull_request.number} to "
-            t"{ui.bookmark(trunk_branch)} before pushing review branches"
+            t"Could not retarget PR #{pr.number} to "
+            t"{ui.bookmark(trunk_branch)} before pushing PR branches"
         ) from error

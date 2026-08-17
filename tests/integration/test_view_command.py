@@ -6,7 +6,7 @@ from pathlib import Path
 from jj_stack.errors import EXIT_AMBIGUOUS, EXIT_FAILURE, EXIT_INCOMPLETE, EXIT_NO_STACK
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
-from jj_stack.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.state.store import TrackingStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -47,39 +47,39 @@ def test_view_json_reports_public_stack_status(
     stack = payload["stacks"][0]
     assert set(stack) == {"changes"}
 
-    revision = stack["changes"][0]
+    change = stack["changes"][0]
     assert {
         "branch",
         "change_id",
-        "pull_request",
+        "pr",
         "status",
         "subject",
-    } <= set(revision)
-    assert set(revision) <= {
+    } <= set(change)
+    assert set(change) <= {
         "branch",
         "change_id",
         "current",
-        "pull_request",
+        "pr",
         "status",
         "subject",
     }
-    assert revision["change_id"] == change_id
-    assert revision["branch"].startswith("jj-stack/feature-1-")
-    assert revision["status"] == "open"
-    assert revision["subject"] == "feature 1"
-    assert revision["pull_request"]["number"] == 1
-    assert "remote_branch" not in revision
-    assert "saved_pull_request" not in revision
+    assert change["change_id"] == change_id
+    assert change["branch"].startswith("jj-stack/feature-1-")
+    assert change["status"] == "open"
+    assert change["subject"] == "feature 1"
+    assert change["pr"]["number"] == 1
+    assert "remote_branch" not in change
+    assert "saved_pr" not in change
 
 
-def test_view_and_list_show_queued_reviews(
+def test_view_and_list_show_queued_prs(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.pull_requests[1].is_queued = True
+    fake_repo.prs[1].is_queued = True
 
     assert run_main(repo, config_path, "view") == 0
     viewed = capsys.readouterr()
@@ -112,7 +112,7 @@ def test_view_warns_and_reports_empty_working_copy_from_another_workspace(
         ],
         repo,
     )
-    other_working_copy = JjClient(other_workspace).resolve_revision("@")
+    other_working_copy = JjClient(other_workspace).resolve_commit("@")
 
     exit_code = run_main(repo, config_path, "view", other_working_copy.change_id)
     captured = capsys.readouterr()
@@ -120,7 +120,7 @@ def test_view_warns_and_reports_empty_working_copy_from_another_workspace(
     assert exit_code == 0, captured.err
     assert other_working_copy.change_id[:8] in captured.out
     assert other_working_copy.change_id[:8] in captured.err
-    assert "empty working-copy commit" in captured.err
+    assert "empty working-copy change" in captured.err
 
 
 def test_view_warns_and_reports_merge_commit_first_parent_path(
@@ -136,7 +136,7 @@ def test_view_warns_and_reports_merge_commit_first_parent_path(
     commit_file(repo, "feature right", "right.txt")
     right = selected_stack(repo).head
     run_command(["jj", "new", "-m", "merge head", left.commit_id, right.commit_id], repo)
-    merge = JjClient(repo).resolve_revision("@")
+    merge = JjClient(repo).resolve_commit("@")
 
     exit_code = run_main(repo, config_path, "view", "@")
     captured = capsys.readouterr()
@@ -173,7 +173,7 @@ def test_view_warns_and_reports_undescribed_working_copy_inside_stack(
     )
     write_file(undescribed_workspace / "undescribed.txt", "undescribed\n")
     run_command(["jj", "status"], undescribed_workspace)
-    undescribed = JjClient(undescribed_workspace).resolve_revision("@")
+    undescribed = JjClient(undescribed_workspace).resolve_commit("@")
     child_workspace = tmp_path / "child-workspace"
     run_command(
         [
@@ -189,7 +189,7 @@ def test_view_warns_and_reports_undescribed_working_copy_inside_stack(
         repo,
     )
     commit_file(child_workspace, "feature 2", "feature-2.txt")
-    child_change_id = JjClient(child_workspace).resolve_revision("@-").change_id
+    child_change_id = JjClient(child_workspace).resolve_commit("@-").change_id
 
     exit_code = run_main(repo, config_path, "view", child_change_id)
     captured = capsys.readouterr()
@@ -216,7 +216,7 @@ def test_view_warns_and_reports_conflicted_rebase(
     run_command(["jj", "commit", "-m", "trunk conflict"], repo)
     run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
     run_command(["jj", "rebase", "-s", change_id, "-d", "main"], repo)
-    conflicted = JjClient(repo).resolve_revision(change_id)
+    conflicted = JjClient(repo).resolve_commit(change_id)
     assert conflicted.conflict
 
     exit_code = run_main(repo, config_path, "view", change_id)
@@ -228,7 +228,7 @@ def test_view_warns_and_reports_conflicted_rebase(
     assert "conflict" in captured.err
 
 
-def test_view_pull_request_selector_shows_the_complete_containing_stack(
+def test_view_pr_selector_shows_the_complete_containing_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -237,11 +237,11 @@ def test_view_pull_request_selector_shows_the_complete_containing_stack(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = selected_stack(repo)
-    first_change_id = stack.revisions[0].change_id
-    second_change_id = stack.revisions[1].change_id
-    state = ReviewStateStore.for_repo(repo).load()
-    first_pr_number = state.review_identities[first_change_id].pr_number
-    second_pr_number = state.review_identities[second_change_id].pr_number
+    first_change_id = stack.changes[0].change_id
+    second_change_id = stack.changes[1].change_id
+    state = TrackingStore.for_repo(repo).load()
+    first_pr_number = state.pr_identities[first_change_id].pr_number
+    second_pr_number = state.pr_identities[second_change_id].pr_number
     exit_code = run_main(
         repo,
         config_path,
@@ -274,9 +274,9 @@ def test_view_change_id_rejects_multiple_containing_paths(
     capsys.readouterr()
 
     stack = selected_stack(repo)
-    change_a = stack.revisions[0].change_id
-    change_b = stack.revisions[1].change_id
-    change_c = stack.revisions[2].change_id
+    change_a = stack.changes[0].change_id
+    change_b = stack.changes[1].change_id
+    change_c = stack.changes[2].change_id
 
     run_command(["jj", "rebase", "-s", change_c, "-d", change_a], repo)
     run_command(["jj", "edit", change_b], repo)
@@ -285,10 +285,10 @@ def test_view_change_id_rejects_multiple_containing_paths(
     captured = capsys.readouterr()
 
     assert exit_code == EXIT_AMBIGUOUS
-    assert "resolved to more than one revision" in captured.err
+    assert "resolved to more than one commit" in captured.err
 
 
-def test_view_pull_request_selector_requires_a_linked_local_change(
+def test_view_pr_selector_requires_a_linked_local_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -353,7 +353,7 @@ def test_view_renders_base_parent_for_stack_forked_from_trunk_ancestor(
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    base_commit_id = JjClient(repo).resolve_revision("@-").commit_id
+    base_commit_id = JjClient(repo).resolve_commit("@-").commit_id
 
     commit_file(repo, "trunk 1", "trunk-1.txt")
     run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
@@ -368,9 +368,9 @@ def test_view_renders_base_parent_for_stack_forked_from_trunk_ancestor(
 
     assert exit_code == 0
     assert "Unsubmitted stack:" in captured.out
-    assert stack.revisions[-1].subject in captured.out
+    assert stack.changes[-1].subject in captured.out
     assert stack.base_parent.subject in captured.out
-    assert captured.out.index(stack.revisions[-1].subject) < captured.out.index(
+    assert captured.out.index(stack.changes[-1].subject) < captured.out.index(
         stack.base_parent.subject
     )
     assert stack.trunk.subject not in captured.out
@@ -384,10 +384,10 @@ def test_view_preserves_remote_observations_when_github_lookup_fails(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
-    class FailingPullRequestLookupClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, *, head_refs):
+    class FailingPRLookupClient(GithubClient):
+        async def get_prs_by_head_refs(self, *, head_refs):
             raise GithubClientError(
                 'GitHub request failed: 404 {"message":"Not Found","documentation_url":"x"}',
                 status_code=404,
@@ -397,8 +397,8 @@ def test_view_preserves_remote_observations_when_github_lookup_fails(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.review.status",),
-        client_type=FailingPullRequestLookupClient,
+        modules=("jj_stack.stack.status",),
+        client_type=FailingPRLookupClient,
     )
 
     exit_code = run_main(repo, config_path, "view")
@@ -406,7 +406,7 @@ def test_view_preserves_remote_observations_when_github_lookup_fails(
     normalized_err = " ".join(captured.err.split())
 
     assert exit_code == EXIT_INCOMPLETE
-    assert "GitHub unavailable for octo-org/stacked-review:" in normalized_err
+    assert "GitHub unavailable for octo-org/stacked-prs:" in normalized_err
     assert "repo not found or inaccessible - check GITHUB_TOKEN or gh auth" in normalized_err
     assert "documentation_url" not in captured.out
     assert "saved PR #1" in captured.out
@@ -421,17 +421,17 @@ def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
 
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def get_pull_requests_by_head_refs(self, *, head_refs):
+        async def get_prs_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.review.status",),
+        modules=("jj_stack.stack.status",),
         client_type=OfflineGithubClient,
     )
 
@@ -445,7 +445,7 @@ def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
     assert "GitHub status unknown" not in captured.out
 
 
-def test_view_exits_nonzero_when_github_reports_multiple_pull_requests(
+def test_view_exits_nonzero_when_github_reports_multiple_prs(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -453,11 +453,11 @@ def test_view_exits_nonzero_when_github_reports_multiple_pull_requests(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = selected_stack(repo)
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
+    change_id = stack.changes[-1].change_id
+    state_store = TrackingStore.for_repo(repo)
     state_before = state_store.load()
-    bookmark = state_before.review_identities[change_id].head_ref
-    fake_repo.create_pull_request(
+    bookmark = state_before.pr_identities[change_id].head_ref
+    fake_repo.create_pr(
         base_ref="main",
         body="duplicate",
         head_ref=bookmark,
@@ -479,17 +479,17 @@ def test_view_reports_unsubmitted_after_state_loss(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = selected_stack(repo)
-    change_id = stack.revisions[-1].change_id
+    change_id = stack.changes[-1].change_id
     resolve_state_path(repo).unlink()
 
     exit_code = run_main(repo, config_path, "view", change_id)
     captured = capsys.readouterr()
-    refreshed_state = ReviewStateStore.for_repo(repo).load()
+    refreshed_state = TrackingStore.for_repo(repo).load()
 
     assert exit_code == 0
     assert "Unsubmitted stack:" in captured.out
     assert "PR #1" not in captured.out
-    assert refreshed_state.review_identities == {}
+    assert refreshed_state.pr_identities == {}
     assert refreshed_state.submitted_baselines == {}
 
     exit_code = run_main(repo, config_path, "view", "--json", change_id)
@@ -498,13 +498,13 @@ def test_view_reports_unsubmitted_after_state_loss(
     assert exit_code == 0
     payload = json.loads(captured.out)
     assert_json_output_matches_schema(payload, "view")
-    revision = payload["stacks"][0]["changes"][0]
-    assert revision["change_id"] == change_id
-    assert revision["status"] == "unsubmitted"
-    assert "branch" not in revision
+    change = payload["stacks"][0]["changes"][0]
+    assert change["change_id"] == change_id
+    assert change["status"] == "unsubmitted"
+    assert "branch" not in change
 
 
-def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
+def test_view_preserves_saved_pr_link_when_github_reports_missing(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -513,12 +513,12 @@ def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = selected_stack(repo)
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
+    change_id = stack.changes[-1].change_id
+    state_store = TrackingStore.for_repo(repo)
     initial_state = state_store.load()
-    assert initial_state.review_identities[change_id].pr_number == 1
+    assert initial_state.pr_identities[change_id].pr_number == 1
 
-    del fake_repo.pull_requests[1]
+    del fake_repo.prs[1]
 
     exit_code = run_main(repo, config_path, "view", change_id)
     captured = capsys.readouterr()
@@ -529,10 +529,10 @@ def test_view_preserves_saved_pull_request_link_when_github_reports_missing(
     assert "remembered PR #1" in captured.out
     assert_output_contains(captured.out, "jj-stack unstack --local")
     assert change_id in captured.out
-    assert refreshed_state.review_identities[change_id].pr_number == 1
+    assert refreshed_state.pr_identities[change_id].pr_number == 1
 
 
-def test_view_reports_merged_pull_request_state(
+def test_view_reports_merged_pr_state(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -541,10 +541,10 @@ def test_view_reports_merged_pull_request_state(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = selected_stack(repo)
-    change_id = stack.revisions[-1].change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    fake_repo.pull_requests[1].state = "closed"
-    fake_repo.pull_requests[1].merged_at = "2026-03-16T12:00:00Z"
+    change_id = stack.changes[-1].change_id
+    state_store = TrackingStore.for_repo(repo)
+    fake_repo.prs[1].state = "closed"
+    fake_repo.prs[1].merged_at = "2026-03-16T12:00:00Z"
 
     exit_code = run_main(repo, config_path, "view", change_id)
     captured = capsys.readouterr()

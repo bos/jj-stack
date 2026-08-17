@@ -9,46 +9,46 @@ from typing import Literal
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.commands.cleanup.command import cleanup_tracked_reviews
+from jj_stack.commands.cleanup.command import cleanup_tracked_prs
 from jj_stack.commands.submit.command import run_submit_async
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.render import print_submit_result
 from jj_stack.errors import CliError, ConflictedStackError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubTarget
-from jj_stack.jj.client import ReviewRefUpdate
-from jj_stack.models.review_state import SubmittedBaseline, TrackedReview
-from jj_stack.models.stack import LocalRevision
-from jj_stack.review.convergence_models import (
+from jj_stack.jj.client import PRRefUpdate
+from jj_stack.models.stack import LocalCommit
+from jj_stack.models.tracking import SubmittedBaseline, TrackedPR
+from jj_stack.stack.convergence_models import (
     ConvergenceActions,
     GithubStackMergePlan,
     GithubStackRebasePlan,
-    ReviewFinishPlan,
+    PRFinishPlan,
     SelectedConvergencePlan,
-    SkipReviewFinish,
+    SkipPRFinish,
 )
-from jj_stack.review.convergence_observation import dependent_path_heads
+from jj_stack.stack.convergence_observation import dependent_path_heads
 from jj_stack.ui import Message
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewFinishResult:
-    candidate: TrackedReview
+class PRFinishResult:
+    candidate: TrackedPR
     outcome: Literal["finished", "already_terminal", "skipped"]
     skip_reason: Message | None = None
 
 
-async def apply_review_finishes(
+async def apply_pr_finishes(
     *,
-    plans: tuple[ReviewFinishPlan, ...],
+    plans: tuple[PRFinishPlan, ...],
     dry_run: bool,
     github: GithubClient,
     trunk_branch: str,
-) -> tuple[ReviewFinishResult, ...]:
-    results: list[ReviewFinishResult] = []
+) -> tuple[PRFinishResult, ...]:
+    results: list[PRFinishResult] = []
     for plan in plans:
         results.append(
-            await _apply_review_finish(
+            await _apply_pr_finish(
                 plan=plan,
                 dry_run=dry_run,
                 github=github,
@@ -71,38 +71,38 @@ async def apply_review_finishes(
                 )
             else:
                 console.output(
-                    t"  {marker} finish merged PR #{result.candidate.review_identity.pr_number}"
+                    t"  {marker} finish merged PR #{result.candidate.pr_identity.pr_number}"
                 )
     return tuple(results)
 
 
-async def _apply_review_finish(
-    *, plan: ReviewFinishPlan, dry_run: bool, github: GithubClient, trunk_branch: str
-) -> ReviewFinishResult:
+async def _apply_pr_finish(
+    *, plan: PRFinishPlan, dry_run: bool, github: GithubClient, trunk_branch: str
+) -> PRFinishResult:
     candidate = plan.candidate
-    if isinstance(plan, SkipReviewFinish):
-        return ReviewFinishResult(candidate, "already_terminal")
+    if isinstance(plan, SkipPRFinish):
+        return PRFinishResult(candidate, "already_terminal")
     if dry_run:
-        return ReviewFinishResult(candidate, "finished")
-    console.output(t"Finishing PR #{plan.pull_request.number} for {candidate.change_id}...")
-    current = plan.pull_request
+        return PRFinishResult(candidate, "finished")
+    console.output(t"Finishing PR #{plan.pr.number} for {candidate.change_id}...")
+    current = plan.pr
     try:
         if current.base.ref != trunk_branch:
             current = (
-                await github.update_pull_request(pull_number=current.number, base=trunk_branch)
+                await github.update_pr(pr_number=current.number, base=trunk_branch)
             ).normalize_state()
         if current.state == "open" and current.base.ref != trunk_branch:
             reason: Message | None = t"PR #{current.number} did not stay retargeted to trunk"
         else:
             if current.state == "open":
-                await github.close_pull_request(pull_number=current.number)
+                await github.close_pr(pr_number=current.number)
             reason = None
     except GithubClientError as error:
         reason = t"could not finish cleanup for PR #{current.number}: {error}"
     return (
-        ReviewFinishResult(candidate, "skipped", reason)
+        PRFinishResult(candidate, "skipped", reason)
         if reason
-        else ReviewFinishResult(candidate, "finished")
+        else PRFinishResult(candidate, "finished")
     )
 
 
@@ -128,7 +128,7 @@ async def apply_selected_convergence(
                 trunk_commit_id=trunk_commit_id,
             )
         return 0
-    results = await apply_review_finishes(
+    results = await apply_pr_finishes(
         plans=tuple(change.finish for change in actions.on_trunk),
         dry_run=dry_run,
         github=github,
@@ -141,19 +141,19 @@ async def apply_selected_convergence(
         remote_name=target.remote.name,
         trunk_commit_id=trunk_commit_id,
     )
-    update_result = await _refresh_selected_reviews(
+    update_result = await _refresh_selected_prs(
         actions=actions,
         context=context,
         dry_run=dry_run,
     )
     if update_result != 0:
         return update_result
-    return await _cleanup_reconciled_reviews(
+    return await _cleanup_reconciled_prs(
         context=context,
         dry_run=dry_run,
         finish_results=results,
         github=github,
-        reviewed_survivors=actions.reviewed_survivors,
+        submitted_survivors=actions.submitted_survivors,
         dependencies=dependencies,
         target=target,
     )
@@ -166,11 +166,11 @@ def _apply_local_convergence(
     plan: SelectedConvergencePlan,
     remote_name: str,
     trunk_commit_id: str,
-) -> dict[str, tuple[LocalRevision, ...]]:
+) -> dict[str, tuple[LocalCommit, ...]]:
     actions = plan.actions
     adopted = plan.adopted_survivors if isinstance(plan, GithubStackMergePlan) else ()
     adopted_ids = {item.candidate.change_id for item in adopted}
-    revisions = (
+    commit_ids = (
         (
             *(item.commit_id for item in actions.survivors if item.change_id not in adopted_ids),
             *actions.working_copy_children,
@@ -183,19 +183,19 @@ def _apply_local_convergence(
     if adopted:
         top = adopted[-1]
         replaced = tuple(
-            item.local_revision.commit_id
+            item.local_change.commit_id
             for item in adopted
-            if item.local_revision.commit_id != item.remote_commit_id
+            if item.local_change.commit_id != item.remote_commit_id
         )
         destination = top.remote_commit_id
-        attachment = context.jj_client.import_remote_review_ref(
+        attachment = context.jj_client.import_remote_pr_branch_ref(
             remote=remote_name,
-            branch=top.candidate.review_identity.head_ref,
+            branch=top.candidate.pr_identity.head_ref,
             expected_target=destination,
             expected_change_id=top.candidate.change_id,
             expected_chain=tuple(
                 (
-                    item.candidate.review_identity.head_ref,
+                    item.candidate.pr_identity.head_ref,
                     item.remote_commit_id,
                     item.candidate.change_id,
                 )
@@ -208,28 +208,28 @@ def _apply_local_convergence(
         destination = trunk_commit_id
         attachment = nullcontext()
     with attachment:
-        if revisions:
-            context.jj_client.rebase_exact_revisions(
-                revisions=revisions,
+        if commit_ids:
+            context.jj_client.rebase_exact_commits(
+                commit_ids=commit_ids,
                 destination=destination,
             )
         if replaced:
-            context.jj_client.abandon_revisions(replaced)
+            context.jj_client.abandon_changes(replaced)
         dependencies = _observe_removal_dependencies(context=context, actions=actions)
         abandoned = tuple(
-            change.revision.commit_id
+            change.change.commit_id
             for change in actions.on_trunk
-            if change.revision is not None
-            and not change.revision.immutable
+            if change.change is not None
+            and not change.change.immutable
             and not dependencies.get(change.candidate.change_id)
         )
         if abandoned:
-            context.jj_client.abandon_revisions(abandoned)
+            context.jj_client.abandon_changes(abandoned)
         if adopted:
-            context.state_store.relink_reviews(
+            context.state_store.relink_prs(
                 replacements={
                     item.candidate.change_id: (
-                        item.candidate.review_identity,
+                        item.candidate.pr_identity,
                         SubmittedBaseline(commit_id=item.remote_commit_id),
                     )
                     for item in adopted
@@ -247,13 +247,13 @@ def _apply_github_stack_rebase(
 ) -> None:
     adopted = plan.adopted_survivors
     top = adopted[-1]
-    with context.jj_client.import_remote_review_ref(
+    with context.jj_client.import_remote_pr_branch_ref(
         remote=remote_name,
-        branch=top.candidate.review_identity.head_ref,
+        branch=top.candidate.pr_identity.head_ref,
         expected_target=top.remote_commit_id,
         expected_chain=tuple(
             (
-                item.candidate.review_identity.head_ref,
+                item.candidate.pr_identity.head_ref,
                 item.remote_commit_id,
                 (None, item.candidate.change_id),
             )
@@ -269,21 +269,21 @@ def _apply_github_stack_rebase(
         if operation_id is not None:
             context.jj_client.integrate_operation(operation_id)
         desired_by_change = {item.change_id: item for item in desired}
-        context.jj_client.mutate_remote_review_refs(
+        context.jj_client.mutate_remote_pr_branch_refs(
             remote=remote_name,
             updates=tuple(
-                ReviewRefUpdate(
-                    branch=item.candidate.review_identity.head_ref,
+                PRRefUpdate(
+                    branch=item.candidate.pr_identity.head_ref,
                     expected_target=item.remote_commit_id,
                     desired_target=desired_by_change[item.candidate.change_id].commit_id,
                 )
                 for item in adopted
             ),
         )
-        context.state_store.relink_reviews(
+        context.state_store.relink_prs(
             replacements={
                 item.candidate.change_id: (
-                    item.candidate.review_identity,
+                    item.candidate.pr_identity,
                     SubmittedBaseline(
                         commit_id=desired_by_change[item.candidate.change_id].commit_id
                     ),
@@ -298,48 +298,48 @@ def _verified_local_rebase(
     context: CommandContext,
     plan: GithubStackRebasePlan,
     trunk_commit_id: str,
-) -> tuple[tuple[LocalRevision, ...], str | None]:
+) -> tuple[tuple[LocalCommit, ...], str | None]:
     adopted = plan.adopted_survivors
     local = plan.actions.survivors
     desired = local
     operation_id: str | None = None
     if all(
-        item.local_revision.commit_id == item.candidate.submitted_baseline.commit_id
+        item.local_change.commit_id == item.candidate.submitted_baseline.commit_id
         for item in adopted
     ):
-        operation_id = context.jj_client.prepare_rebase_exact_revisions(
-            revisions=(
+        operation_id = context.jj_client.prepare_rebase_exact_commits(
+            commit_ids=(
                 *tuple(item.commit_id for item in local),
                 *plan.actions.working_copy_children,
             ),
             destination=trunk_commit_id,
         )
-        grouped = context.jj_client.query_revisions_at_operation(
+        grouped = context.jj_client.query_commits_at_operation(
             change_ids=tuple(item.change_id for item in local),
             operation_id=operation_id,
         )
         desired = tuple(
-            revisions[0] for item in local if len(revisions := grouped[item.change_id]) == 1
+            commits[0] for item in local if len(commits := grouped[item.change_id]) == 1
         )
         if len(desired) != len(local):
             raise CliError(
-                "The local changes did not have one exact result after rebasing onto trunk."
+                "A local change did not have exactly one commit after rebasing onto trunk."
             )
     expected_parent = trunk_commit_id
-    for revision in desired:
-        if revision.conflict:
+    for change in desired:
+        if change.conflict:
             raise CliError(
-                t"Rebasing {ui.change_id(revision.change_id)} locally produced conflicts.",
+                t"Rebasing {ui.change_id(change.change_id)} locally produced conflicts.",
                 hint=t"Rebase and resolve the stack with {ui.cmd('jj')}, then run "
                 t"{ui.cmd('jj-stack submit')}.",
             )
-        if revision.parents != (expected_parent,):
+        if change.parents != (expected_parent,):
             raise CliError(
                 "The local stack does not match GitHub's rebase onto fetched trunk.",
                 hint=t"Inspect the local and GitHub stacks, then restore or resubmit the "
-                t"intended review.",
+                t"intended pull requests.",
             )
-        expected_parent = revision.commit_id
+        expected_parent = change.commit_id
     desired_by_change = {item.change_id: item for item in desired}
     tree_pairs = tuple(
         (desired_by_change[item.candidate.change_id].commit_id, item.remote_commit_id)
@@ -351,13 +351,13 @@ def _verified_local_rebase(
     if any(trees[local_id] != trees[remote_id] for local_id, remote_id in tree_pairs):
         raise CliError(
             "GitHub's rewritten stack does not have the same contents as the local rebase.",
-            hint=t"Inspect the changed review branches on GitHub before choosing which version "
+            hint=t"Inspect the changed PR branches on GitHub before choosing which version "
             t"to keep.",
         )
     return desired, operation_id
 
 
-async def _refresh_selected_reviews(
+async def _refresh_selected_prs(
     *, actions: ConvergenceActions, context: CommandContext, dry_run: bool
 ) -> int:
     if not actions.on_trunk:
@@ -368,11 +368,11 @@ async def _refresh_selected_reviews(
             t"rebase and then compute updates for the remaining existing PRs."
         )
         return 0
-    if not actions.reviewed_survivors:
+    if not actions.submitted_survivors:
         if actions.survivors:
-            console.output("No existing reviews to update; trailing work remains local.")
+            console.output("No existing pull requests to update; trailing work remains local.")
         return 0
-    head_change_id = actions.reviewed_survivors[-1].change_id
+    head_change_id = actions.submitted_survivors[-1].change_id
     try:
         result = await run_submit_async(
             context=context,
@@ -383,24 +383,24 @@ async def _refresh_selected_reviews(
         raise ConflictedStackError(
             error.message,
             hint=t"The local rebase is complete. Resolve the conflicts with {ui.cmd('jj')}, "
-            t"then update the remaining reviews with "
+            t"then update the remaining pull requests with "
             t"{ui.cmd(f'jj-stack submit {head_change_id}')}",
         ) from error
     print_submit_result(result)
     return 0
 
 
-async def _cleanup_reconciled_reviews(
+async def _cleanup_reconciled_prs(
     *,
     context: CommandContext,
     dry_run: bool,
-    finish_results: tuple[ReviewFinishResult, ...],
+    finish_results: tuple[PRFinishResult, ...],
     github: GithubClient,
-    reviewed_survivors: tuple[LocalRevision, ...],
-    dependencies: dict[str, tuple[LocalRevision, ...]],
+    submitted_survivors: tuple[LocalCommit, ...],
+    dependencies: dict[str, tuple[LocalCommit, ...]],
     target: GithubTarget,
 ) -> int:
-    cleanup_candidates: list[TrackedReview] = []
+    cleanup_candidates: list[TrackedPR] = []
     for result in finish_results:
         if result.outcome == "skipped":
             continue
@@ -409,14 +409,14 @@ async def _cleanup_reconciled_reviews(
                 t"run {ui.join(lambda r: ui.cmd(f'jj-stack sync {r.change_id[:8]}'), heads)}"
             )
             console.output(
-                t"  ! kept PR #{result.candidate.review_identity.pr_number} and its review "
+                t"  ! kept PR #{result.candidate.pr_identity.pr_number} and its PR "
                 t"branch for {ui.change_id(result.candidate.change_id)}: another local stack "
                 t"still uses this merged change; {recovery}"
             )
             continue
         cleanup_candidates.append(result.candidate)
-    review_identities = context.state_store.load().review_identities
-    cleanup = await cleanup_tracked_reviews(
+    pr_identities = context.state_store.load().pr_identities
+    cleanup = await cleanup_tracked_prs(
         change_ids=tuple(item.change_id for item in cleanup_candidates),
         context=context,
         dry_run=dry_run,
@@ -424,8 +424,8 @@ async def _cleanup_reconciled_reviews(
         github_target=target,
         planned_detached_dependents=frozenset(
             identity.pr_number
-            for revision in reviewed_survivors
-            if (identity := review_identities.get(revision.change_id)) is not None
+            for change in submitted_survivors
+            if (identity := pr_identities.get(change.change_id)) is not None
         ),
         planned_local_removals=frozenset(item.change_id for item in cleanup_candidates),
     )
@@ -434,11 +434,11 @@ async def _cleanup_reconciled_reviews(
 
 def _observe_removal_dependencies(
     *, context: CommandContext, actions: ConvergenceActions
-) -> dict[str, tuple[LocalRevision, ...]]:
+) -> dict[str, tuple[LocalCommit, ...]]:
     anchors = {
         change.candidate.change_id: (
-            change.revision.commit_id
-            if change.revision is not None
+            change.change.commit_id
+            if change.change is not None
             else change.candidate.submitted_baseline.commit_id
         )
         for change in actions.on_trunk

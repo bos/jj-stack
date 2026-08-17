@@ -11,11 +11,11 @@ weight: 10
 - Python 3.14 or newer
 - [`uv`](https://docs.astral.sh/uv/)
 - `jj` 0.44.0 or newer
-- a GitHub repository you can push to, and GitHub authentication
+- a GitHub repo you can push to, and GitHub authentication
 
 GitHub stacked pull requests are in
 [public preview](https://docs.github.com/en/pull-requests/tutorials/roll-out-stacked-prs) and
-require no repository or organization setup.
+require no repo or organization setup.
 
 ## Install
 
@@ -27,9 +27,9 @@ uv tool install jj-stack
 
 To upgrade later, rerun the command with `--force`.
 
-## Prepare the repository
+## Prepare the repo
 
-Inside your `jj` repository, prepare it for use:
+Inside your `jj` repo, prepare it for use:
 
 ```console
 jj-stack doctor --fix
@@ -52,7 +52,7 @@ jj new -m "add UI"
 ```
 
 Keep using ordinary `jj` commands to create and rearrange your local changes. `jj-stack` will take
-care of the GitHub review side.
+care of the GitHub side.
 
 ## Inspect and submit
 

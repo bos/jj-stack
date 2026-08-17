@@ -30,14 +30,14 @@ from typing import Literal
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._json_status import review_change_json
+from jj_stack.commands._json_status import stack_change_json
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, error_message
 from jj_stack.formatting import (
-    RenderableRevision,
-    RevisionRenderClient,
-    format_pull_request_label,
-    render_revision_blocks,
-    render_revision_lines,
+    CommitRenderClient,
+    RenderableCommit,
+    format_pr_label,
+    render_commit_blocks,
+    render_commit_lines,
 )
 from jj_stack.github.error_messages import (
     github_unavailable_message,
@@ -49,34 +49,34 @@ from jj_stack.jj.client import (
     UnsupportedStackError,
     divergent_change_id_from_error,
 )
-from jj_stack.models.review_state import ReviewIdentity
-from jj_stack.review.change_status import (
-    ReviewChangeStatus,
-    classify_review_status_revision,
+from jj_stack.models.tracking import PRIdentity
+from jj_stack.pr_branch_namespace import current_pr_branch_namespace
+from jj_stack.stack.change_status import (
+    ChangeStatus,
+    classify_stack_status_change,
 )
-from jj_stack.review.selected import is_change_id_prefix
-from jj_stack.review.selection import (
-    resolve_linked_change_for_pull_request,
+from jj_stack.stack.selected import is_change_id_prefix
+from jj_stack.stack.selection import (
+    resolve_linked_change_for_pr,
     resolve_selected_revset,
 )
-from jj_stack.review.status import (
+from jj_stack.stack.status import (
     PreparedStack,
     PreparedStatus,
-    PullRequestLookup,
-    ReviewStatusRevision,
+    PRLookup,
+    StackStatusChange,
     StatusResult,
     prepare_status,
     status_preparation_cli_error,
     stream_status,
 )
-from jj_stack.review_namespace import current_review_namespace
 
 _SUMMARY_SECTION_HEAD_COUNT = 3
 _SUMMARY_SECTION_TAIL_COUNT = 3
 
-HELP = "Check the review status of one or more `jj` stacks"
+HELP = "Check the PR status of one or more `jj` stacks"
 
-ViewSelectorKind = Literal["pull_request", "revset"]
+ViewSelectorKind = Literal["pr", "revset"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,11 +95,11 @@ class _ResolvedViewSelector:
 
 
 @dataclass(frozen=True, slots=True)
-class _ClassifiedStatusRevision:
-    """Rendered status revision paired with its derived review status."""
+class _ClassifiedStatusChange:
+    """Rendered status change paired with its derived PR status."""
 
-    revision: ReviewStatusRevision
-    status: ReviewChangeStatus
+    change: StackStatusChange
+    status: ChangeStatus
 
 
 def view(
@@ -107,8 +107,8 @@ def view(
     as_json: bool,
     cli_args: JjCliArgs,
     debug: bool,
-    pull_request: str | Sequence[str] | None,
-    repository: Path | None,
+    pr: str | Sequence[str] | None,
+    repo: Path | None,
     revset: str | Sequence[str] | None,
     selectors: Sequence[ViewSelector] | None = None,
     verbose: bool,
@@ -116,14 +116,14 @@ def view(
     """CLI entrypoint for `view`."""
 
     context = bootstrap_context(
-        repository=repository,
+        repo=repo,
         cli_args=cli_args,
         debug=debug,
     )
     return _run_status(
         context=context,
         selectors=_normalize_status_selectors(
-            pull_request=pull_request,
+            pr=pr,
             revset=revset,
             selectors=selectors,
         ),
@@ -192,7 +192,7 @@ def _run_status(
             continue
 
         change_ids = tuple(
-            revision.revision.change_id for revision in prepared_status.prepared.status_revisions
+            change.change.change_id for change in prepared_status.prepared.status_changes
         )
         stack_key = (prepared_status.prepared.stack.base_parent.commit_id, *change_ids)
         if stack_key in rendered_stack_keys:
@@ -236,7 +236,7 @@ def _run_status(
 
 def _normalize_status_selectors(
     *,
-    pull_request: str | Sequence[str] | None,
+    pr: str | Sequence[str] | None,
     revset: str | Sequence[str] | None,
     selectors: Sequence[ViewSelector] | None,
 ) -> tuple[ViewSelector, ...]:
@@ -244,13 +244,11 @@ def _normalize_status_selectors(
         return tuple(selectors)
 
     ordered: list[ViewSelector] = []
-    if pull_request is not None:
-        if isinstance(pull_request, str):
-            ordered.append(ViewSelector(kind="pull_request", value=pull_request))
+    if pr is not None:
+        if isinstance(pr, str):
+            ordered.append(ViewSelector(kind="pr", value=pr))
         else:
-            ordered.extend(
-                ViewSelector(kind="pull_request", value=value) for value in pull_request
-            )
+            ordered.extend(ViewSelector(kind="pr", value=value) for value in pr)
     if revset is not None:
         if isinstance(revset, str):
             ordered.append(ViewSelector(kind="revset", value=revset))
@@ -264,14 +262,14 @@ def _resolve_status_selector(
     context: CommandContext,
     selector: ViewSelector,
 ) -> _ResolvedViewSelector:
-    if selector.kind == "pull_request":
-        pull_request_number, resolved_revset = resolve_linked_change_for_pull_request(
+    if selector.kind == "pr":
+        pr_number, resolved_revset = resolve_linked_change_for_pr(
             jj_client=context.jj_client,
-            pull_request_reference=selector.value,
+            pr_reference=selector.value,
             revset=None,
         )
         return _ResolvedViewSelector(
-            note=t"Using PR #{pull_request_number} -> {ui.revset(resolved_revset)}",
+            note=t"Using PR #{pr_number} -> {ui.revset(resolved_revset)}",
             revset=None,
             containing_change_id=resolved_revset,
         )
@@ -299,12 +297,12 @@ def _change_id_selector(*, context: CommandContext, value: str | None) -> str | 
         return None
     assert value is not None
     try:
-        revision = context.jj_client.resolve_revision(value)
+        change = context.jj_client.resolve_commit(value)
     except JjCommandError as error:
         if divergent_change_id_from_error(error) == value:
             return value
         raise
-    return value if revision.change_id.startswith(value) else None
+    return value if change.change_id.startswith(value) else None
 
 
 def _prepare_status_for_revset(
@@ -344,32 +342,32 @@ def _prepare_status_with_spinner(
 
 
 def _local_history_warnings(prepared_status: PreparedStatus) -> tuple[ui.Message, ...]:
-    """Describe selected local states that inspection tolerates but review mutation rejects."""
+    """Describe local states that inspection tolerates but stack mutation rejects."""
 
     warnings: list[ui.Message] = []
-    for revision in prepared_status.prepared.stack.revisions:
-        change_id = ui.change_id(revision.change_id)
-        if len(revision.parents) > 1:
+    for change in prepared_status.prepared.stack.changes:
+        change_id = ui.change_id(change.change_id)
+        if len(change.parents) > 1:
             warnings.append(
-                t"Change {change_id} is a merge commit. Showing its first-parent path; "
-                t"commands that change review state require a linear stack."
+                t"Change {change_id} is a merge change. Showing its first-parent path; "
+                t"commands that change stack state require a linear stack."
             )
-        if revision.is_working_copy and revision.empty:
+        if change.is_working_copy and change.empty:
             warnings.append(
-                t"Change {change_id} is an empty working-copy commit. Showing it for inspection; "
-                t"it cannot be submitted for review."
+                t"Change {change_id} is an empty working-copy change. Showing it for inspection; "
+                t"it cannot be submitted."
             )
-        elif revision.is_working_copy and not revision.description.strip():
+        elif change.is_working_copy and not change.description.strip():
             warnings.append(
                 t"Change {change_id} has no description. Showing it for inspection, but it "
                 t"cannot be submitted until it is described with {ui.cmd('jj describe')}."
             )
-        if revision.divergent:
+        if change.divergent:
             warnings.append(
                 t"Change {change_id} has divergent local commits. Showing the selected path; "
-                t"commands that change review state will stop until the divergence is resolved."
+                t"commands that change stack state will stop until the divergence is resolved."
             )
-        if revision.conflict:
+        if change.conflict:
             warnings.append(
                 t"Change {change_id} has unresolved conflicts. Showing it for inspection; "
                 t"submit and merge remain blocked until the conflicts are resolved."
@@ -378,7 +376,7 @@ def _local_history_warnings(prepared_status: PreparedStatus) -> tuple[ui.Message
 
 
 def _status_heading(selector: ViewSelector) -> ui.Message:
-    if selector.kind == "pull_request":
+    if selector.kind == "pr":
         return f"Status for PR {selector.value}:"
     return t"Status for {ui.revset(selector.value)}:"
 
@@ -391,7 +389,7 @@ def _json_prepared_status(
     progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         result = stream_status(
-            on_revision=lambda _revision, _github_available: progress.advance(),
+            on_change=lambda _change, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
     return (
@@ -421,21 +419,19 @@ def _json_status_result(
 ) -> dict[str, object]:
     stack_model = prepared_status.prepared.stack
     current_change_ids = {
-        revision.change_id for revision in stack_model.revisions if revision.current_working_copy
+        change.change_id for change in stack_model.changes if change.current_working_copy
     }
     stack: dict[str, object] = {
         "changes": [
-            review_change_json(
-                revision,
-                current=revision.change_id in current_change_ids,
+            stack_change_json(
+                change,
+                current=change.change_id in current_change_ids,
             )
-            for revision in result.revisions
+            for change in result.changes
         ],
     }
     if selector is not None:
-        stack["selector"] = (
-            f"PR {selector.value}" if selector.kind == "pull_request" else selector.value
-        )
+        stack["selector"] = f"PR {selector.value}" if selector.kind == "pr" else selector.value
     return stack
 
 
@@ -455,13 +451,13 @@ def _render_prepared_status(
     progress_total = prepared_status.github_inspection_count()
     with console.progress(description="Inspecting GitHub", total=progress_total) as progress:
         result = stream_status(
-            on_revision=lambda _revision, _github_available: progress.advance(),
+            on_change=lambda _change, _github_available: progress.advance(),
             prepared_status=prepared_status,
         )
 
     github_message = github_unavailable_message(
         github_error=result.github_error,
-        github_repository=result.github_repository,
+        github_repo=result.github_repo,
     )
     github_lines = () if github_message is None else (github_message,)
     if result.github_error is not None:
@@ -469,7 +465,7 @@ def _render_prepared_status(
     else:
         _emit_lines(github_lines)
 
-    if not prepared_status.prepared.status_revisions:
+    if not prepared_status.prepared.status_changes:
         _emit_lines(
             render_empty_status_lines(
                 prepared_status=prepared_status,
@@ -477,11 +473,11 @@ def _render_prepared_status(
         )
         return 0
 
-    github_available = result.github_repository is not None and result.github_error is None
+    github_available = result.github_repo is not None and result.github_error is None
     with console.spinner(description="Rendering jj log"):
-        prerendered_blocks = _prefetch_revision_log_blocks(
+        prerendered_blocks = _prefetch_commit_log_blocks(
             client=prepared_status.prepared.client,
-            revisions=result.revisions,
+            changes=result.changes,
             trunk=prepared_status.prepared.stack.base_parent,
         )
     _emit_lines(
@@ -520,31 +516,31 @@ def render_status_summary_lines(
 ) -> tuple[str, ...]:
     """Render capped submitted and unsubmitted summaries before the trunk row."""
 
-    classified_revisions = tuple(
-        _ClassifiedStatusRevision(
-            revision=revision,
-            status=classify_review_status_revision(revision),
+    classified_changes = tuple(
+        _ClassifiedStatusChange(
+            change=change,
+            status=classify_stack_status_change(change),
         )
-        for revision in result.revisions
+        for change in result.changes
     )
-    unsubmitted_revisions = tuple(
+    unsubmitted_changes = tuple(
         classified
-        for classified in classified_revisions
-        if _classify_revision_for_summary(classified) == "unsubmitted"
+        for classified in classified_changes
+        if _classify_change_for_summary(classified) == "unsubmitted"
     )
-    submitted_revisions = tuple(
+    submitted_changes = tuple(
         classified
-        for classified in classified_revisions
-        if _classify_revision_for_summary(classified) == "submitted"
+        for classified in classified_changes
+        if _classify_change_for_summary(classified) == "submitted"
     )
 
     lines: list[str] = []
     unsubmitted_lines = _render_summary_section(
         "Unsubmitted stack",
         include_leading_separator=leading_separator,
-        revisions=unsubmitted_revisions,
+        changes=unsubmitted_changes,
         verbose=verbose,
-        renderer=lambda classified: _render_summary_revision_lines(
+        renderer=lambda classified: _render_summary_change_lines(
             classified=classified,
             client=client,
             github_available=github_available,
@@ -557,12 +553,12 @@ def render_status_summary_lines(
 
     submitted_lines = _render_summary_section(
         _render_submitted_section_title(
-            tuple(classified.revision for classified in submitted_revisions)
+            tuple(classified.change for classified in submitted_changes)
         ),
         include_leading_separator=False,
-        revisions=submitted_revisions,
+        changes=submitted_changes,
         verbose=verbose,
-        renderer=lambda classified: _render_summary_revision_lines(
+        renderer=lambda classified: _render_summary_change_lines(
             classified=classified,
             client=client,
             github_available=github_available,
@@ -587,9 +583,9 @@ def render_trunk_status_lines(
     """Render the trunk footer with the user's `jj log` formatting."""
 
     trunk = prepared.stack.base_parent
-    return render_revision_lines(
+    return render_commit_lines(
         client=prepared.client,
-        revision=trunk,
+        change=trunk,
         prerendered_lines=(
             prerendered_blocks.get(trunk.commit_id) if prerendered_blocks else None
         ),
@@ -606,49 +602,49 @@ def render_empty_status_lines(
         *render_trunk_status_lines(
             prepared=prepared_status.prepared,
         ),
-        "The selected stack has no changes to review.",
+        "The selected stack has no changes to show.",
     )
 
 
-def _prefetch_revision_log_blocks(
+def _prefetch_commit_log_blocks(
     *,
-    client: RevisionRenderClient,
-    revisions: tuple[ReviewStatusRevision, ...],
-    trunk: RenderableRevision,
+    client: CommitRenderClient,
+    changes: tuple[StackStatusChange, ...],
+    trunk: RenderableCommit,
 ) -> dict[str, tuple[str, ...]]:
-    """Render the `jj log` block for every revision we will print, in parallel."""
+    """Render the `jj log` block for every change we will print, in parallel."""
 
     seen: set[str] = set()
-    ordered: list[RenderableRevision] = []
-    for revision in (*revisions, trunk):
-        if revision.commit_id in seen:
+    ordered: list[RenderableCommit] = []
+    for change in (*changes, trunk):
+        if change.commit_id in seen:
             continue
-        seen.add(revision.commit_id)
-        ordered.append(revision)
-    return render_revision_blocks(client=client, revisions=tuple(ordered))
+        seen.add(change.commit_id)
+        ordered.append(change)
+    return render_commit_blocks(client=client, changes=tuple(ordered))
 
 
 def _render_summary_section(
     title: str,
     *,
     include_leading_separator: bool,
-    revisions: tuple,
+    changes: tuple,
     renderer,
     verbose: bool,
 ) -> tuple[str, ...]:
     """Render one capped summary section."""
 
-    if not revisions and not verbose:
+    if not changes and not verbose:
         return ()
 
     lines = [f"{title}:"]
     if include_leading_separator:
         lines.insert(0, "")
-    if not revisions:
+    if not changes:
         lines.append("  (none)")
         return tuple(lines)
 
-    rendered = [renderer(revision) for revision in revisions]
+    rendered = [renderer(change) for change in changes]
     if verbose or len(rendered) <= _SUMMARY_SECTION_HEAD_COUNT + _SUMMARY_SECTION_TAIL_COUNT + 1:
         for block in rendered:
             lines.extend(block)
@@ -663,21 +659,19 @@ def _render_summary_section(
     return tuple(lines)
 
 
-def _render_submitted_section_title(revisions: tuple) -> str:
+def _render_submitted_section_title(changes: tuple) -> str:
     """Render the submitted-section heading, linking the newest submitted PR when possible."""
 
-    if revisions:
-        _lookup = revisions[0].pull_request_lookup
-        top_pull_request_url = (
-            _lookup.pull_request.html_url
-            if _lookup is not None and _lookup.pull_request is not None
-            else None
+    if changes:
+        _lookup = changes[0].pr_lookup
+        top_pr_url = (
+            _lookup.pr.html_url if _lookup is not None and _lookup.pr is not None else None
         )
     else:
-        top_pull_request_url = None
-    if top_pull_request_url is None:
+        top_pr_url = None
+    if top_pr_url is None:
         return "Submitted stack"
-    return f"Submitted stack ({top_pull_request_url})"
+    return f"Submitted stack ({top_pr_url})"
 
 
 def render_status_advisory_lines(
@@ -686,52 +680,52 @@ def render_status_advisory_lines(
 ) -> tuple[ui.Renderable, ...]:
     """Render any advisories that follow the status stack output."""
 
-    namespace = current_review_namespace()
-    classified_revisions = tuple(
-        _ClassifiedStatusRevision(
-            revision=revision,
-            status=classify_review_status_revision(revision),
+    namespace = current_pr_branch_namespace()
+    classified_changes = tuple(
+        _ClassifiedStatusChange(
+            change=change,
+            status=classify_stack_status_change(change),
         )
-        for revision in result.revisions
+        for change in result.changes
     )
-    cleanup_revisions = [
+    cleanup_changes = [
         classified
-        for classified in classified_revisions
+        for classified in classified_changes
         if classified.status.pr_lifecycle == "merged"
     ]
-    divergent_revisions = [
+    divergent_changes = [
         classified
-        for classified in classified_revisions
+        for classified in classified_changes
         if classified.status.local == "divergent" and classified.status.pr_lifecycle != "merged"
     ]
-    link_revisions = [
+    link_changes = [
         classified
-        for classified in classified_revisions
-        if _classified_revision_has_link_advisory(classified)
+        for classified in classified_changes
+        if _classified_change_has_link_advisory(classified)
     ]
     submitted_disagreements = result.submitted_state_disagreements
     policy_warning_rows: list[tuple[ui.TableCell, ui.TableCell]] = []
-    for classified in cleanup_revisions:
-        revision = classified.revision
-        lookup = revision.pull_request_lookup
-        pull_request = lookup.pull_request if lookup is not None else None
-        if pull_request is None:
+    for classified in cleanup_changes:
+        change = classified.change
+        lookup = change.pr_lookup
+        pr = lookup.pr if lookup is not None else None
+        if pr is None:
             continue
-        base_ref = pull_request.base.ref
+        base_ref = pr.base.ref
         if not namespace.contains(base_ref):
             continue
         policy_warning_rows.append(
             (
-                "Repository policy",
-                t"Repository policy warning: PR #{pull_request.number} merged into "
+                "Repo policy",
+                t"Repo policy warning: PR #{pr.number} merged into "
                 t"{ui.bookmark(base_ref)}; configure GitHub to block merges of PRs "
                 t"targeting {ui.bookmark(namespace.branch_glob)}",
             )
         )
     if (
-        not cleanup_revisions
-        and not divergent_revisions
-        and not link_revisions
+        not cleanup_changes
+        and not divergent_changes
+        and not link_changes
         and not submitted_disagreements
         and not policy_warning_rows
     ):
@@ -751,7 +745,7 @@ def render_status_advisory_lines(
                 "Submit will push the current commit IDs and PR bases to GitHub",
             )
         )
-        if cleanup_revisions:
+        if cleanup_changes:
             rows.append(
                 (
                     "After cleanup",
@@ -775,7 +769,7 @@ def render_status_advisory_lines(
             )
         rows.extend(_submitted_state_disagreement_rows(submitted_disagreements))
 
-    if cleanup_revisions:
+    if cleanup_changes:
         rows.append(
             (
                 "Sync needed",
@@ -803,45 +797,43 @@ def render_status_advisory_lines(
                 ),
             )
         )
-        for revision in cleanup_revisions:
-            pull_request_number = revision.revision.pull_request_number()
-            pull_request_label = (
-                f"PR #{pull_request_number}" if pull_request_number is not None else "merged PR"
-            )
+        for change in cleanup_changes:
+            pr_number = change.change.pr_number()
+            pr_label = f"PR #{pr_number}" if pr_number is not None else "merged PR"
             rows.append(
                 (
-                    ui.change_id(revision.revision.change_id),
+                    ui.change_id(change.change.change_id),
                     (
-                        pull_request_label,
+                        pr_label,
                         " is merged, and later local changes are still based on it",
                     ),
                 )
             )
 
-    if link_revisions:
+    if link_changes:
         rows.append(
             _link_advisory_summary_row(
-                link_revisions=tuple(link_revisions),
+                link_changes=tuple(link_changes),
                 selected_revset=result.selected_revset,
             )
         )
-        for revision in link_revisions:
+        for change in link_changes:
             rows.append(
                 (
-                    ui.change_id(revision.revision.change_id),
-                    _describe_link_advisory(revision),
+                    ui.change_id(change.change.change_id),
+                    _describe_link_advisory(change),
                 )
             )
 
     rows.extend(policy_warning_rows)
 
-    for revision in divergent_revisions:
+    for change in divergent_changes:
         rows.append(
             (
-                ui.change_id(revision.revision.change_id),
-                t"Resolve the multiple visible revisions for this change before retrying "
+                ui.change_id(change.change.change_id),
+                t"Resolve the multiple visible commits for this change before retrying "
                 t"({ui.cmd('jj log -r')} "
-                t"{ui.revset(f'change_id({revision.revision.change_id})')})",
+                t"{ui.revset(f'change_id({change.change.change_id})')})",
             )
         )
     return ("", "Advisories:", _advisory_table(tuple(rows)))
@@ -902,32 +894,29 @@ def _advisory_table(rows: tuple[tuple[ui.TableCell, ui.TableCell], ...]) -> ui.D
 
 def _link_advisory_summary_row(
     *,
-    link_revisions: tuple[_ClassifiedStatusRevision, ...],
+    link_changes: tuple[_ClassifiedStatusChange, ...],
     selected_revset: str,
 ) -> tuple[ui.TableCell, ui.TableCell]:
-    states = {_link_advisory_kind(revision) for revision in link_revisions}
+    states = {_link_advisory_kind(change) for change in link_changes}
     change_phrase = (
-        "the change shown above"
-        if len(link_revisions) == 1
-        else "one or more changes shown above"
+        "the change shown above" if len(link_changes) == 1 else "one or more changes shown above"
     )
     cleanup_command = ui.cmd(f"jj-stack cleanup {selected_revset}")
     if states == {"closed"}:
-        label = "Closed GitHub PR" if len(link_revisions) == 1 else "Closed GitHub PRs"
-        closed_phrase = "a closed PR" if len(link_revisions) == 1 else "closed PRs"
+        label = "Closed GitHub PR" if len(link_changes) == 1 else "Closed GitHub PRs"
+        closed_phrase = "a closed PR" if len(link_changes) == 1 else "closed PRs"
         detail = (
             f"GitHub reports {closed_phrase} for {change_phrase}; submit will not "
-            "reuse closed reviews. Reopen the PR on GitHub to continue that review, "
-            "relink an open replacement, or remove the closed review's leftovers with ",
+            "reuse closed pull requests. Reopen the PR on GitHub to continue using it, "
+            "relink an open replacement, or remove the closed PR's leftovers with ",
             cleanup_command,
             " before submitting again.",
         )
         return label, detail
     if states == {"missing"}:
-        label = "Missing GitHub PR" if len(link_revisions) == 1 else "Missing GitHub PRs"
+        label = "Missing GitHub PR" if len(link_changes) == 1 else "Missing GitHub PRs"
         detail = (
-            "GitHub did not report a PR for the remembered review branch of "
-            f"{change_phrase}. Run ",
+            f"GitHub did not report a PR for the remembered PR branch of {change_phrase}. Run ",
             ui.cmd("jj git fetch"),
             " if branch state may be stale. Relink an open PR if one exists; otherwise forget "
             "the missing PR link with ",
@@ -936,16 +925,15 @@ def _link_advisory_summary_row(
         )
         return label, detail
     if states == {"ambiguous"}:
-        label = "Ambiguous GitHub PR" if len(link_revisions) == 1 else "Ambiguous GitHub PRs"
+        label = "Ambiguous GitHub PR" if len(link_changes) == 1 else "Ambiguous GitHub PRs"
         detail = (
-            "GitHub reports multiple PRs for the remembered review branch of "
-            f"{change_phrase}. Run ",
+            f"GitHub reports multiple PRs for the remembered PR branch of {change_phrase}. Run ",
             ui.cmd("jj git fetch"),
             " to refresh, then relink the intended open PR.",
         )
         return label, detail
     if states == {"remembered"}:
-        label = "Saved GitHub PR" if len(link_revisions) == 1 else "Saved GitHub PRs"
+        label = "Saved GitHub PR" if len(link_changes) == 1 else "Saved GitHub PRs"
         detail = (
             "GitHub found the remembered PR, but its head branch no longer matches "
             f"{change_phrase}. Relink it if that PR should stay attached; "
@@ -962,9 +950,9 @@ def _link_advisory_summary_row(
     return "GitHub PRs need repair", detail
 
 
-def _link_advisory_kind(classified: _ClassifiedStatusRevision) -> str:
-    revision = classified.revision
-    lookup = revision.pull_request_lookup
+def _link_advisory_kind(classified: _ClassifiedStatusChange) -> str:
+    change = classified.change
+    lookup = change.pr_lookup
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
     change_status = classified.status
@@ -975,52 +963,52 @@ def _link_advisory_kind(classified: _ClassifiedStatusRevision) -> str:
     raise AssertionError(f"Unexpected link advisory state: {change_status.pr_lifecycle}")
 
 
-def _render_summary_revision_lines(
+def _render_summary_change_lines(
     *,
-    classified: _ClassifiedStatusRevision,
+    classified: _ClassifiedStatusChange,
     client,
     github_available: bool,
     show_status: bool,
     prerendered_blocks: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[str, ...]:
-    """Render one revision inside a submitted or unsubmitted summary section."""
+    """Render one change inside a submitted or unsubmitted summary section."""
 
-    revision = classified.revision
+    change = classified.change
     summary = _format_status_summary(classified, github_available=github_available)
     if not show_status and summary == "not submitted":
         summary = None
-    return render_revision_lines(
+    return render_commit_lines(
         client=client,
-        revision=revision,
+        change=change,
         suffix=summary,
         prerendered_lines=(
-            prerendered_blocks.get(revision.commit_id) if prerendered_blocks else None
+            prerendered_blocks.get(change.commit_id) if prerendered_blocks else None
         ),
     )
 
 
-def _classify_revision_for_summary(
-    classified: _ClassifiedStatusRevision,
+def _classify_change_for_summary(
+    classified: _ClassifiedStatusChange,
 ) -> str:
-    """Classify a revision into submitted, unsubmitted, or other."""
+    """Classify a change into submitted, unsubmitted, or other."""
 
     change_status = classified.status
     if change_status.pr_lifecycle in {"open", "closed", "merged"}:
         return "submitted"
-    if change_status.saved_review_identity:
+    if change_status.saved_pr_identity:
         return "submitted"
     return "unsubmitted"
 
 
 def _format_status_summary(
-    classified: _ClassifiedStatusRevision,
+    classified: _ClassifiedStatusChange,
     *,
     github_available: bool,
 ) -> str:
-    revision = classified.revision
-    lookup = revision.pull_request_lookup
-    review_identity = revision.review_identity
-    saved_label = _format_saved_pull_request_label(review_identity)
+    change = classified.change
+    lookup = change.pr_lookup
+    pr_identity = change.pr_identity
+    saved_label = _format_saved_pr_label(pr_identity)
     change_status = classified.status
     summary: str
     if change_status.pr_lifecycle == "none" and not change_status.pr_lookup_error:
@@ -1033,12 +1021,12 @@ def _format_status_summary(
     elif change_status.pr_lifecycle == "open":
         if lookup is None:
             raise AssertionError("Open pull request status requires a pull request lookup.")
-        if lookup.pull_request is None:
+        if lookup.pr is None:
             raise AssertionError("Open pull request lookup must include a pull request.")
-        summary = _format_live_pull_request_label(
+        summary = _format_live_pr_label(
             lookup=lookup,
-            pull_request_number=lookup.pull_request.number,
-            is_draft=lookup.pull_request.is_draft,
+            pr_number=lookup.pr.number,
+            is_draft=lookup.pr.is_draft,
         )
         review_decision = change_status.pr_review_decision
         if review_decision == "unknown" and lookup.review_decision_error is not None:
@@ -1059,15 +1047,15 @@ def _format_status_summary(
     elif change_status.pr_lifecycle in {"closed", "merged"}:
         if lookup is None:
             raise AssertionError("Closed pull request status requires a pull request lookup.")
-        if lookup.pull_request is None:
+        if lookup.pr is None:
             raise AssertionError("Closed pull request lookup must include a pull request.")
-        pr_label = _format_live_pull_request_label(
+        pr_label = _format_live_pr_label(
             lookup=lookup,
-            pull_request_number=lookup.pull_request.number,
+            pr_number=lookup.pr.number,
             is_draft=False,
         )
         if change_status.pr_lifecycle == "merged":
-            summary = f"{pr_label} merged into {lookup.pull_request.base.ref}, cleanup needed"
+            summary = f"{pr_label} merged into {lookup.pr.base.ref}, cleanup needed"
         else:
             summary = f"{pr_label} closed"
     else:
@@ -1082,20 +1070,20 @@ def _format_status_summary(
             summary = message
 
     if change_status.local == "divergent" and change_status.pr_lifecycle != "merged":
-        summary = f"{summary}, multiple visible revisions"
+        summary = f"{summary}, multiple visible commits"
 
     return summary
 
 
-def _format_live_pull_request_label(
+def _format_live_pr_label(
     *,
-    lookup: PullRequestLookup,
-    pull_request_number: int,
+    lookup: PRLookup,
+    pr_number: int,
     is_draft: bool,
 ) -> str:
     prefix = "remembered " if lookup.source == "remembered" else ""
-    return format_pull_request_label(
-        pull_request_number,
+    return format_pr_label(
+        pr_number,
         is_draft=is_draft,
         prefix=prefix,
     )
@@ -1108,19 +1096,19 @@ def _emit_lines(
         emitter(line, soft_wrap=soft_wrap)
 
 
-def _format_saved_pull_request_label(review_identity: ReviewIdentity | None) -> str | None:
-    if review_identity is None:
+def _format_saved_pr_label(pr_identity: PRIdentity | None) -> str | None:
+    if pr_identity is None:
         return None
     # Identity-only tracking has no lifecycle to show; --fetch reports it live.
-    return format_pull_request_label(review_identity.pr_number, prefix="saved ")
+    return format_pr_label(pr_identity.pr_number, prefix="saved ")
 
 
-def _classified_revision_has_link_advisory(
-    classified: _ClassifiedStatusRevision,
+def _classified_change_has_link_advisory(
+    classified: _ClassifiedStatusChange,
 ) -> bool:
     change_status = classified.status
-    revision = classified.revision
-    lookup = revision.pull_request_lookup
+    change = classified.change
+    lookup = change.pr_lookup
     if lookup is None:
         return False
     if lookup.source == "remembered" and lookup.message is not None:
@@ -1128,15 +1116,15 @@ def _classified_revision_has_link_advisory(
     if change_status.pr_lifecycle == "ambiguous":
         return True
     if change_status.pr_lifecycle == "missing":
-        return change_status.has_stale_pull_request_link
+        return change_status.has_stale_pr_link
     if change_status.pr_lifecycle == "closed":
-        return lookup.pull_request is not None
+        return lookup.pr is not None
     return False
 
 
-def _describe_link_advisory(classified: _ClassifiedStatusRevision) -> ui.Message:
-    revision = classified.revision
-    lookup = revision.pull_request_lookup
+def _describe_link_advisory(classified: _ClassifiedStatusChange) -> ui.Message:
+    change = classified.change
+    lookup = change.pr_lookup
     if lookup is None:
         raise AssertionError("Link advisory requires a pull request lookup.")
     change_status = classified.status
@@ -1145,22 +1133,19 @@ def _describe_link_advisory(classified: _ClassifiedStatusRevision) -> ui.Message
     if change_status.pr_lifecycle == "ambiguous":
         return lookup.message or "GitHub reports more than one matching pull request"
     if change_status.pr_lifecycle == "missing":
-        review_identity = revision.review_identity
-        if review_identity is not None:
-            return (
-                f"GitHub did not report remembered PR #{review_identity.pr_number} "
-                "for this branch"
-            )
-        saved_label = _format_saved_pull_request_label(review_identity)
+        pr_identity = change.pr_identity
+        if pr_identity is not None:
+            return f"GitHub did not report remembered PR #{pr_identity.pr_number} for this branch"
+        saved_label = _format_saved_pr_label(pr_identity)
         if saved_label is None:
             return "GitHub did not report a pull request for this branch"
         return f"GitHub did not report {saved_label} for this branch"
     if change_status.pr_lifecycle == "closed":
-        pull_request = lookup.pull_request
-        if pull_request is None:
+        pr = lookup.pr
+        if pr is None:
             raise AssertionError("Closed pull request advisory requires a pull request.")
         return (
-            f"PR #{pull_request.number} is {pull_request.state}; submit will not reuse a "
-            "closed review automatically"
+            f"PR #{pr.number} is {pr.state}; submit will not reuse a "
+            "closed pull request automatically"
         )
     raise AssertionError(f"Unexpected link advisory state: {change_status.pr_lifecycle}")

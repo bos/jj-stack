@@ -28,7 +28,7 @@ the useful cases they enable, not by their own implementation complexity.
 The main risks in this project are disagreement among the local `jj` DAG, remote refs, GitHub, and
 local tracking. Useful cases include:
 
-- configuration lookup failures, invalid values, or settings inconsistent with the repository
+- configuration lookup failures, invalid values, or settings inconsistent with the repo
 - ordinary rewrites, relinks, divergence, conflicts, and nonlinear history
 - interrupted commands and partial cleanup
 - a supported command or documented external action following another before all systems agree
@@ -67,12 +67,12 @@ Existing tests are evidence of past intent, not a reason to keep unnecessary beh
 
 - **Unit or component tests** cover parsing, planning, models, and adapters with controlled
   collaborators. Temporary files and in-process HTTP transports can still belong here.
-- **Local integration tests** run the CLI with real `jj` and Git repositories and the fake GitHub
+- **Local integration tests** run the CLI with real `jj` and Git repos and the fake GitHub
   server. Use them when confidence depends on revsets, DAG or workspace behavior, subprocesses,
   or cross-system transitions.
 
 No credentialed live suite exists. Assumptions that depend on real GitHub require a separately
-approved experiment in a disposable repository. Record any known fake-server difference beside
+approved experiment in a disposable repo. Record any known fake-server difference beside
 the affected fake behavior and test.
 
 If a behavior has both component and integration risk, keep one representative integration test

@@ -20,8 +20,8 @@ def summarize_github_lookup_error(*, action: str, error: GithubClientError) -> s
         return "GitHub authentication failed - check GITHUB_TOKEN"
     if error.status_code == 403:
         return "GitHub access was denied - check GITHUB_TOKEN and repo access"
-    if error.is_repository_not_found():
-        message = "GitHub repository not found or inaccessible"
+    if error.is_repo_not_found():
+        message = "GitHub repo not found or inaccessible"
         if github_token_from_env() is None:
             return f"{message} - check GITHUB_TOKEN or gh auth"
         return message
@@ -31,15 +31,15 @@ def summarize_github_lookup_error(*, action: str, error: GithubClientError) -> s
 def github_unavailable_message(
     *,
     github_error: Message | None,
-    github_repository: GithubRepoAddress | None,
+    github_repo: GithubRepoAddress | None,
 ) -> Message | None:
     """Render a concise warning when GitHub-backed work could not proceed."""
 
     if github_error is None:
         return None
-    if github_repository is None:
+    if github_repo is None:
         return ("GitHub unavailable: ", github_error)
-    return ("GitHub unavailable for ", code(github_repository.full_name), ": ", github_error)
+    return ("GitHub unavailable for ", code(github_repo.full_name), ": ", github_error)
 
 
 def remote_unavailable_message(
@@ -61,8 +61,8 @@ def github_target_unavailable_messages(
     if not isinstance(target, UnresolvedGithubTarget):
         return ()
     return remote_and_github_unavailable_messages(
-        github_error=target.github_repository_error,
-        github_repository=None,
+        github_error=target.github_repo_error,
+        github_repo=None,
         remote=target.remote,
         remote_error=target.remote_error,
     )
@@ -71,7 +71,7 @@ def github_target_unavailable_messages(
 def remote_and_github_unavailable_messages(
     *,
     github_error: Message | None,
-    github_repository: GithubRepoAddress | None,
+    github_repo: GithubRepoAddress | None,
     remote: GitRemote | None,
     remote_error: Message | None,
 ) -> tuple[Message, ...]:
@@ -82,7 +82,7 @@ def remote_and_github_unavailable_messages(
         messages.append(remote_unavailable_message(remote_error=remote_error))
     github_message = github_unavailable_message(
         github_error=github_error,
-        github_repository=github_repository,
+        github_repo=github_repo,
     )
     if github_message is not None:
         messages.append(github_message)

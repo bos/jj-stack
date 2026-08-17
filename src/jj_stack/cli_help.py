@@ -563,7 +563,7 @@ def _help_paragraphs(text: str) -> tuple[str, ...]:
 
 
 def _help_inline_code(text: str) -> ui.SemanticText:
-    if text.startswith("review/"):
+    if text.startswith("jj-stack/"):
         return ui.bookmark(text)
     if text.startswith("@") or ("(" in text and text.endswith(")")):
         return ui.revset(text)

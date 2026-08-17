@@ -25,7 +25,7 @@ _FAKE_GITHUB_GIT_ENV = {
 
 
 @dataclass(slots=True)
-class FakeGithubPullRequest:
+class FakeGithubPR:
     """Mutable pull request state served by the fake API."""
 
     base_ref: str
@@ -53,12 +53,12 @@ class FakeGithubPullRequest:
     def to_payload(
         self,
         *,
-        repository: FakeGithubRepository,
+        repo: FakeGithubRepo,
         web_origin: str,
     ) -> dict[str, object]:
-        self._refresh_head_sha(repository)
+        self._refresh_head_sha(repo)
         return {
-            "base": {"label": f"{repository.full_name}:{self.base_ref}", "ref": self.base_ref},
+            "base": {"label": f"{repo.full_name}:{self.base_ref}", "ref": self.base_ref},
             "body": self.body,
             "draft": self.is_draft,
             "head": {
@@ -66,7 +66,7 @@ class FakeGithubPullRequest:
                 "ref": self.head_ref,
                 "sha": self.head_sha,
             },
-            "html_url": f"{web_origin}/{repository.full_name}/pull/{self.number}",
+            "html_url": f"{web_origin}/{repo.full_name}/pull/{self.number}",
             "merge_commit_sha": self.merge_commit_sha,
             "merged_at": self.merged_at,
             "node_id": self.node_id,
@@ -78,17 +78,17 @@ class FakeGithubPullRequest:
     def to_graphql_payload(
         self,
         *,
-        repository: FakeGithubRepository,
+        repo: FakeGithubRepo,
         web_origin: str,
     ) -> dict[str, object]:
-        self._refresh_head_sha(repository)
+        self._refresh_head_sha(repo)
         return {
             "autoMergeRequest": {"enabledAt": "now"} if self.auto_merge_enabled else None,
             "baseRefName": self.base_ref,
             "body": self.body,
             "headRefName": self.head_ref,
             "headRefOid": self.head_sha,
-            "headRepositoryOwner": {"login": repository.owner},
+            "headRepositoryOwner": {"login": repo.owner},
             "id": self.node_id,
             "isDraft": self.is_draft,
             "mergeQueueEntry": {"id": "queue-entry"} if self.is_queued else None,
@@ -99,20 +99,20 @@ class FakeGithubPullRequest:
             "number": self.number,
             "state": self.graphql_state.upper(),
             "title": self.title,
-            "url": f"{web_origin}/{repository.full_name}/pull/{self.number}",
+            "url": f"{web_origin}/{repo.full_name}/pull/{self.number}",
         }
 
-    def _refresh_head_sha(self, repository: FakeGithubRepository) -> None:
-        if current_head := repository.ref_target(self.head_ref):
+    def _refresh_head_sha(self, repo: FakeGithubRepo) -> None:
+        if current_head := repo.ref_target(self.head_ref):
             self.head_sha = current_head
 
 
 @dataclass(slots=True)
-class FakeGithubPullRequestReview:
+class FakeGithubPRReview:
     """Mutable pull request review state served by the fake API."""
 
     id: int
-    pull_request_number: int
+    pr_number: int
     reviewer_login: str
     state: str
 
@@ -135,7 +135,7 @@ class FakeStackMergeOperation:
     expected_head_sha: str
     merge_action: str
     merge_method: str | None
-    pull_number: int
+    pr_number: int
     uuid: str
     final_sha: str | None = None
     message: str | None = None
@@ -143,11 +143,11 @@ class FakeStackMergeOperation:
 
 
 @dataclass(slots=True, frozen=True)
-class FakeGithubPullRequestEvent:
+class FakeGithubPREvent:
     """Observable PR mutation recorded by the fake API."""
 
     kind: str
-    pull_request_number: int
+    pr_number: int
 
 
 @dataclass(slots=True)
@@ -172,15 +172,15 @@ class FakeGithubIssueComment:
 
 
 @dataclass(slots=True)
-class FakeGithubRepository:
-    """Repository metadata plus its backing bare Git repository."""
+class FakeGithubRepo:
+    """Repo metadata plus its backing bare Git repo."""
 
     default_branch: str | None
     git_dir: Path
     name: str
     owner: str
-    # The default repository allows only squash merges. Tests that need other
-    # repository policies flip these settings directly.
+    # The default repo allows only squash merges. Tests that need other repo policies flip these
+    # settings directly.
     allow_merge_commit: bool = False
     allow_rebase_merge: bool = False
     allow_squash_merge: bool = True
@@ -190,18 +190,16 @@ class FakeGithubRepository:
     auto_merge_reachable_heads: bool = True
     next_issue_comment_id: int = 1
     next_github_stack_number: int = 1
-    next_pull_request_number: int = 1
-    next_pull_request_review_id: int = 1
+    next_pr_number: int = 1
+    next_pr_review_id: int = 1
     issue_comments: dict[int, list[FakeGithubIssueComment]] = field(default_factory=dict)
     github_stacks: dict[int, tuple[int, ...]] = field(default_factory=dict)
-    pull_request_events: list[FakeGithubPullRequestEvent] = field(default_factory=list)
-    pull_requests: dict[int, FakeGithubPullRequest] = field(default_factory=dict)
-    pull_request_reviews: dict[int, list[FakeGithubPullRequestReview]] = field(
-        default_factory=dict
-    )
+    pr_events: list[FakeGithubPREvent] = field(default_factory=list)
+    prs: dict[int, FakeGithubPR] = field(default_factory=dict)
+    pr_reviews: dict[int, list[FakeGithubPRReview]] = field(default_factory=dict)
     # Test hook: PR numbers GitHub should report as not mergeable (pending
     # required checks, conflicts, or branch protection).
-    unmergeable_pull_numbers: set[int] = field(default_factory=set)
+    unmergeable_pr_numbers: set[int] = field(default_factory=set)
 
     @property
     def full_name(self) -> str:
@@ -216,7 +214,7 @@ class FakeGithubRepository:
             "full_name": self.full_name,
         }
 
-    def create_pull_request(
+    def create_pr(
         self,
         *,
         base_ref: str,
@@ -224,9 +222,9 @@ class FakeGithubRepository:
         draft: bool = False,
         head_ref: str,
         title: str,
-    ) -> FakeGithubPullRequest:
-        number = self.next_pull_request_number
-        self.next_pull_request_number += 1
+    ) -> FakeGithubPR:
+        number = self.next_pr_number
+        self.next_pr_number += 1
         # Tests may construct a historical PR after deleting or without creating
         # its source branch. Real GitHub still retains the PR's last head OID.
         head_sha = self.ref_target(head_ref) or self.ref_target(base_ref)
@@ -234,7 +232,7 @@ class FakeGithubRepository:
             raise AssertionError(
                 f"Fake GitHub branches {head_ref!r} and {base_ref!r} do not exist."
             )
-        pull_request = FakeGithubPullRequest(
+        pr = FakeGithubPR(
             base_ref=base_ref,
             body=body,
             head_label=f"{self.owner}:{head_ref}",
@@ -247,24 +245,24 @@ class FakeGithubRepository:
             number=number,
             title=title,
         )
-        self.pull_requests[number] = pull_request
-        return pull_request
+        self.prs[number] = pr
+        return pr
 
-    def find_pull_request_by_node_id(self, node_id: str) -> FakeGithubPullRequest | None:
-        for pull_request in self.pull_requests.values():
-            if pull_request.node_id == node_id:
-                return pull_request
+    def find_pr_by_node_id(self, node_id: str) -> FakeGithubPR | None:
+        for pr in self.prs.values():
+            if pr.node_id == node_id:
+                return pr
         return None
 
-    def stack_number_for_pull(self, pull_number: int) -> int | None:
-        for stack_number, pull_numbers in self.github_stacks.items():
-            if pull_number in pull_numbers:
+    def stack_number_for_pr(self, pr_number: int) -> int | None:
+        for stack_number, pr_numbers in self.github_stacks.items():
+            if pr_number in pr_numbers:
                 return stack_number
         return None
 
-    def refresh_pull_request_state(
+    def refresh_pr_state(
         self,
-        pull_request: FakeGithubPullRequest,
+        pr: FakeGithubPR,
         *,
         branch_heads: dict[str, str] | None = None,
     ) -> None:
@@ -274,72 +272,72 @@ class FakeGithubRepository:
         # direct push, so the closed-but-not-merged finalization family is
         # untestable against this fake. Do not infer real GitHub behavior from
         # this transition without an approved live experiment.
-        if not self.auto_merge_reachable_heads or pull_request.state != "open":
+        if not self.auto_merge_reachable_heads or pr.state != "open":
             return
         if branch_heads is None:
             branch_heads = self.branch_heads()
-        base_commit = branch_heads.get(pull_request.base_ref)
-        head_commit = branch_heads.get(pull_request.head_ref)
+        base_commit = branch_heads.get(pr.base_ref)
+        head_commit = branch_heads.get(pr.head_ref)
         if base_commit is None or head_commit is None:
             return
         if not self.is_ancestor(head_commit, base_commit):
             return
-        if pull_request.merged_at is None:
-            pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        self.update_pull_request_state(
-            pull_request,
+        if pr.merged_at is None:
+            pr.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        self.update_pr_state(
+            pr,
             state="closed",
         )
 
-    def refresh_pull_requests(
+    def refresh_prs(
         self,
-        pull_requests: Iterable[FakeGithubPullRequest],
+        prs: Iterable[FakeGithubPR],
     ) -> None:
         """Refresh many pull requests off one shared branch-head snapshot."""
 
-        to_refresh = [candidate for candidate in pull_requests if candidate.state == "open"]
+        to_refresh = [candidate for candidate in prs if candidate.state == "open"]
         if not to_refresh:
             return
         branch_heads = self.branch_heads()
-        for pull_request in to_refresh:
-            self.refresh_pull_request_state(pull_request, branch_heads=branch_heads)
+        for pr in to_refresh:
+            self.refresh_pr_state(pr, branch_heads=branch_heads)
 
-    def update_pull_request_base(
+    def update_pr_base(
         self,
-        pull_request: FakeGithubPullRequest,
+        pr: FakeGithubPR,
         *,
         base_ref: str,
     ) -> None:
-        if pull_request.base_ref == base_ref:
+        if pr.base_ref == base_ref:
             return
-        pull_request.base_ref = base_ref
-        self.pull_request_events.append(
-            FakeGithubPullRequestEvent(
+        pr.base_ref = base_ref
+        self.pr_events.append(
+            FakeGithubPREvent(
                 kind="base",
-                pull_request_number=pull_request.number,
+                pr_number=pr.number,
             )
         )
 
-    def update_pull_request_state(
+    def update_pr_state(
         self,
-        pull_request: FakeGithubPullRequest,
+        pr: FakeGithubPR,
         *,
         state: str,
     ) -> None:
-        if pull_request.state == state:
+        if pr.state == state:
             return
-        pull_request.state = state
-        self.pull_request_events.append(
-            FakeGithubPullRequestEvent(
+        pr.state = state
+        self.pr_events.append(
+            FakeGithubPREvent(
                 kind="state",
-                pull_request_number=pull_request.number,
+                pr_number=pr.number,
             )
         )
 
     def ref_target(self, branch: str) -> str | None:
         return self.branch_heads().get(branch)
 
-    def apply_squash_merge(self, pull_request: FakeGithubPullRequest) -> str:
+    def apply_squash_merge(self, pr: FakeGithubPR) -> str:
         """Squash-merge the PR's head into its base on the backing Git repo.
 
         Real GitHub computes a three-way merge before squashing. Using the head
@@ -349,8 +347,8 @@ class FakeGithubRepository:
         """
 
         heads = self.branch_heads()
-        head_commit = heads[pull_request.head_ref]
-        base_commit = heads[pull_request.base_ref]
+        head_commit = heads[pr.head_ref]
+        base_commit = heads[pr.base_ref]
         tree = self._run_backing_git("rev-parse", f"{head_commit}^{{tree}}")
         squash_commit = self._run_backing_git(
             "commit-tree",
@@ -358,72 +356,72 @@ class FakeGithubRepository:
             "-p",
             base_commit,
             "-m",
-            f"{pull_request.title} (#{pull_request.number})",
+            f"{pr.title} (#{pr.number})",
             env=_FAKE_GITHUB_GIT_ENV,
         )
         self._run_backing_git(
             "update-ref",
-            f"refs/heads/{pull_request.base_ref}",
+            f"refs/heads/{pr.base_ref}",
             squash_commit,
         )
-        pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        pull_request.merge_commit_sha = squash_commit
-        self.update_pull_request_state(
-            pull_request,
+        pr.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        pr.merge_commit_sha = squash_commit
+        self.update_pr_state(
+            pr,
             state="closed",
         )
         return squash_commit
 
-    def apply_pull_request_merge(
+    def apply_pr_merge(
         self,
-        pull_request: FakeGithubPullRequest,
+        pr: FakeGithubPR,
         *,
         merge_method: str,
     ) -> str:
         """Apply one ordinary PR merge using GitHub's requested commit shape."""
 
         if merge_method == "merge":
-            return self.apply_merge_commit((pull_request,))
+            return self.apply_merge_commit((pr,))
         if merge_method == "rebase":
-            return self.apply_rebase_merge(pull_request)
+            return self.apply_rebase_merge(pr)
         if merge_method == "squash":
-            return self.apply_squash_merge(pull_request)
+            return self.apply_squash_merge(pr)
         raise AssertionError(f"Unknown fake GitHub merge method {merge_method!r}.")
 
-    def apply_rebase_merge(self, pull_request: FakeGithubPullRequest) -> str:
-        """Replay one reviewed commit onto its base while preserving its message."""
+    def apply_rebase_merge(self, pr: FakeGithubPR) -> str:
+        """Replay one submitted commit onto its base while preserving its message."""
 
         heads = self.branch_heads()
         rebase_commit = self._replay_commit(
-            commit_id=heads[pull_request.head_ref],
+            commit_id=heads[pr.head_ref],
             extra_header="x-fake-rebase-merge true",
-            parent_commit_id=heads[pull_request.base_ref],
+            parent_commit_id=heads[pr.base_ref],
         )
         self._run_backing_git(
             "update-ref",
-            f"refs/heads/{pull_request.base_ref}",
+            f"refs/heads/{pr.base_ref}",
             rebase_commit,
         )
-        pull_request.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        pull_request.merge_commit_sha = rebase_commit
-        self.update_pull_request_state(
-            pull_request,
+        pr.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        pr.merge_commit_sha = rebase_commit
+        self.update_pr_state(
+            pr,
             state="closed",
         )
         return rebase_commit
 
     def apply_merge_commit(
         self,
-        pull_requests: tuple[FakeGithubPullRequest, ...],
+        prs: tuple[FakeGithubPR, ...],
     ) -> str:
         """Merge one PR or stack PR prefix through a shared merge commit."""
 
-        if not pull_requests:
+        if not prs:
             raise AssertionError("A merge commit requires at least one pull request.")
         heads = self.branch_heads()
-        base_ref = pull_requests[0].base_ref
+        base_ref = prs[0].base_ref
         base_commit = heads[base_ref]
-        head_commit = heads[pull_requests[-1].head_ref]
+        head_commit = heads[prs[-1].head_ref]
         tree = self._run_backing_git("rev-parse", f"{head_commit}^{{tree}}")
         merge_commit = self._run_backing_git(
             "commit-tree",
@@ -433,7 +431,7 @@ class FakeGithubRepository:
             "-p",
             head_commit,
             "-m",
-            f"Merge through PR #{pull_requests[-1].number}",
+            f"Merge through PR #{prs[-1].number}",
             env=_FAKE_GITHUB_GIT_ENV,
         )
         self._run_backing_git(
@@ -442,18 +440,18 @@ class FakeGithubRepository:
             merge_commit,
         )
         merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        for pull_request in pull_requests:
-            pull_request.merged_at = merged_at
-            pull_request.merge_commit_sha = merge_commit
-            self.update_pull_request_state(
-                pull_request,
+        for pr in prs:
+            pr.merged_at = merged_at
+            pr.merge_commit_sha = merge_commit
+            self.update_pr_state(
+                pr,
                 state="closed",
             )
         return merge_commit
 
-    def rewrite_pull_request_onto_base(
+    def rewrite_pr_onto_base(
         self,
-        pull_request: FakeGithubPullRequest,
+        pr: FakeGithubPR,
         *,
         base_ref: str,
     ) -> str:
@@ -461,20 +459,20 @@ class FakeGithubRepository:
 
         heads = self.branch_heads()
         rewritten = self._replay_commit(
-            commit_id=heads[pull_request.head_ref],
+            commit_id=heads[pr.head_ref],
             extra_header="x-fake-stack-rewrite true",
             parent_commit_id=heads[base_ref],
         )
         self._run_backing_git(
             "update-ref",
-            f"refs/heads/{pull_request.head_ref}",
+            f"refs/heads/{pr.head_ref}",
             rewritten,
         )
-        self.update_pull_request_base(
-            pull_request,
+        self.update_pr_base(
+            pr,
             base_ref=base_ref,
         )
-        pull_request.head_sha = rewritten
+        pr.head_sha = rewritten
         return rewritten
 
     def advance_branch(self, branch: str, *, path: str, contents: str) -> str:
@@ -508,9 +506,9 @@ class FakeGithubRepository:
         parent = original_heads[base_ref]
         rewritten_heads: list[str] = []
         expected_base = base_ref
-        for pull_number in members:
-            pull_request = self.pull_requests[pull_number]
-            original = original_heads[pull_request.head_ref]
+        for pr_number in members:
+            pr = self.prs[pr_number]
+            original = original_heads[pr.head_ref]
             original_parent = self._run_backing_git("rev-parse", f"{original}^")
             tree = self._run_backing_git(
                 "merge-tree",
@@ -528,28 +526,28 @@ class FakeGithubRepository:
             )
             self._run_backing_git(
                 "update-ref",
-                f"refs/heads/{pull_request.head_ref}",
+                f"refs/heads/{pr.head_ref}",
                 rewritten,
             )
-            self.update_pull_request_base(pull_request, base_ref=expected_base)
-            pull_request.head_sha = rewritten
+            self.update_pr_base(pr, base_ref=expected_base)
+            pr.head_sha = rewritten
             rewritten_heads.append(rewritten)
-            expected_base = pull_request.head_ref
+            expected_base = pr.head_ref
             parent = rewritten
         return tuple(rewritten_heads)
 
-    def replace_pull_request_head_contents(
+    def replace_pr_head_contents(
         self,
-        pull_request: FakeGithubPullRequest,
+        pr: FakeGithubPR,
         *,
         path: str,
         contents: str,
     ) -> str:
         """Replace one rewritten PR head with a same-parent commit containing another file."""
 
-        head = self.ref_target(pull_request.head_ref)
+        head = self.ref_target(pr.head_ref)
         if head is None:
-            raise AssertionError(f"Missing fake GitHub branch {pull_request.head_ref}")
+            raise AssertionError(f"Missing fake GitHub branch {pr.head_ref}")
         parent = self._run_backing_git("rev-parse", f"{head}^")
         original_tree = self._run_backing_git("rev-parse", f"{head}^{{tree}}")
         tree = self._tree_with_file(original_tree, path=path, contents=contents)
@@ -562,10 +560,10 @@ class FakeGithubRepository:
         )
         self._run_backing_git(
             "update-ref",
-            f"refs/heads/{pull_request.head_ref}",
+            f"refs/heads/{pr.head_ref}",
             rewritten,
         )
-        pull_request.head_sha = rewritten
+        pr.head_sha = rewritten
         return rewritten
 
     def _tree_with_file(self, tree: str, *, path: str, contents: str) -> str:
@@ -576,12 +574,12 @@ class FakeGithubRepository:
             stdin=f"{entries}\n100644 blob {blob}\t{path}\n",
         )
 
-    def force_push_pull_request_head(self, pull_request: FakeGithubPullRequest) -> str:
+    def force_push_pr_head(self, pr: FakeGithubPR) -> str:
         """Rewrite one PR head externally while preserving its jj change ID."""
 
-        head = self.ref_target(pull_request.head_ref)
+        head = self.ref_target(pr.head_ref)
         if head is None:
-            raise AssertionError(f"Missing fake GitHub branch {pull_request.head_ref}")
+            raise AssertionError(f"Missing fake GitHub branch {pr.head_ref}")
         parent = self._run_backing_git("rev-parse", f"{head}^")
         rewritten = self._replay_commit(
             commit_id=head,
@@ -591,10 +589,10 @@ class FakeGithubRepository:
         )
         self._run_backing_git(
             "update-ref",
-            f"refs/heads/{pull_request.head_ref}",
+            f"refs/heads/{pr.head_ref}",
             rewritten,
         )
-        pull_request.head_sha = rewritten
+        pr.head_sha = rewritten
         return rewritten
 
     def _replay_commit(
@@ -684,26 +682,26 @@ class FakeGithubRepository:
         )
         return completed.returncode == 0
 
-    def list_pull_request_reviews(self, pull_number: int) -> list[FakeGithubPullRequestReview]:
-        self._require_issue_number(pull_number)
-        return list(self.pull_request_reviews.get(pull_number, ()))
+    def list_pr_reviews(self, pr_number: int) -> list[FakeGithubPRReview]:
+        self._require_issue_number(pr_number)
+        return list(self.pr_reviews.get(pr_number, ()))
 
-    def create_pull_request_review(
+    def create_pr_review(
         self,
         *,
-        pull_number: int,
+        pr_number: int,
         reviewer_login: str,
         state: str,
-    ) -> FakeGithubPullRequestReview:
-        self._require_issue_number(pull_number)
-        review = FakeGithubPullRequestReview(
-            id=self.next_pull_request_review_id,
-            pull_request_number=pull_number,
+    ) -> FakeGithubPRReview:
+        self._require_issue_number(pr_number)
+        review = FakeGithubPRReview(
+            id=self.next_pr_review_id,
+            pr_number=pr_number,
             reviewer_login=reviewer_login,
             state=state,
         )
-        self.next_pull_request_review_id += 1
-        self.pull_request_reviews.setdefault(pull_number, []).append(review)
+        self.next_pr_review_id += 1
+        self.pr_reviews.setdefault(pr_number, []).append(review)
         return review
 
     def list_issue_comments(self, issue_number: int) -> list[FakeGithubIssueComment]:
@@ -750,7 +748,7 @@ class FakeGithubRepository:
         return False
 
     def _require_issue_number(self, issue_number: int) -> None:
-        if issue_number not in self.pull_requests:
+        if issue_number not in self.prs:
             raise HTTPException(status_code=404, detail="Not Found")
 
 
@@ -758,12 +756,12 @@ class FakeGithubRepository:
 class FakeGithubState:
     """Static state served by the fake GitHub app."""
 
-    repositories: dict[tuple[str, str], FakeGithubRepository]
+    repos: dict[tuple[str, str], FakeGithubRepo]
     web_origin: str = "https://github.test"
 
     @classmethod
-    def single_repository(cls, repository: FakeGithubRepository) -> FakeGithubState:
-        return cls(repositories={(repository.owner, repository.name): repository})
+    def single_repo(cls, repo: FakeGithubRepo) -> FakeGithubState:
+        return cls(repos={(repo.owner, repo.name): repo})
 
 
 def create_app(fake_state: FakeGithubState) -> FastAPI:
@@ -784,61 +782,61 @@ def create_app(fake_state: FakeGithubState) -> FastAPI:
             status_code=error.status_code,
         )
 
-    _register_repository_routes(app, fake_state)
+    _register_repo_routes(app, fake_state)
     _register_github_stack_routes(app, fake_state)
     _register_graphql_routes(app, fake_state)
-    _register_pull_request_routes(app, fake_state)
+    _register_pr_routes(app, fake_state)
     _register_issue_comment_routes(app, fake_state)
     return app
 
 
-def _register_repository_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
-    """Register repository metadata routes on the fake GitHub app."""
+def _register_repo_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
+    """Register repo metadata routes on the fake GitHub app."""
 
-    @app.get("/repos/{owner}/{repo}")
-    async def get_repository(owner: str, repo: str) -> dict[str, object]:
-        repository = fake_state.repositories.get((owner, repo))
-        if repository is None:
+    @app.get("/repos/{owner}/{repo_name}")
+    async def get_repo(owner: str, repo_name: str) -> dict[str, object]:
+        repo = fake_state.repos.get((owner, repo_name))
+        if repo is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        return repository.to_payload()
+        return repo.to_payload()
 
 
 def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
     """Register the observed stack routes."""
 
-    @app.get("/repos/{owner}/{repo}/stacks")
-    async def list_stacks(owner: str, repo: str) -> list[dict[str, object]]:
-        repository = _get_repository(fake_state, owner, repo)
+    @app.get("/repos/{owner}/{repo_name}/stacks")
+    async def list_stacks(owner: str, repo_name: str) -> list[dict[str, object]]:
+        repo = _get_repo(fake_state, owner, repo_name)
         return [
-            _stack_payload(repository, number, members)
-            for number, members in sorted(_github_stacks(repository).items())
+            _stack_payload(repo, number, members)
+            for number, members in sorted(_github_stacks(repo).items())
         ]
 
-    @app.get("/repos/{owner}/{repo}/stacks/{stack_number}")
+    @app.get("/repos/{owner}/{repo_name}/stacks/{stack_number}")
     async def get_stack(
         owner: str,
-        repo: str,
+        repo_name: str,
         stack_number: int,
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        members = _github_stacks(repository).get(stack_number)
+        repo = _get_repo(fake_state, owner, repo_name)
+        members = _github_stacks(repo).get(stack_number)
         if members is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        return _stack_payload(repository, stack_number, members)
+        return _stack_payload(repo, stack_number, members)
 
-    @app.post("/repos/{owner}/{repo}/stacks", status_code=201)
+    @app.post("/repos/{owner}/{repo_name}/stacks", status_code=201)
     async def create_stack(
         owner: str,
-        repo: str,
+        repo_name: str,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
+        repo = _get_repo(fake_state, owner, repo_name)
         members = _require_int_list(payload, "pull_requests")
         if len(members) < 2:
             raise HTTPException(status_code=422, detail="A stack requires two pull requests.")
         already = sorted(
             set(members).intersection(
-                member for existing in _github_stacks(repository).values() for member in existing
+                member for existing in _github_stacks(repo).values() for member in existing
             )
         )
         if already:
@@ -851,28 +849,28 @@ def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
                 ),
             )
         _validate_stack_members(
-            repository,
+            repo,
             admitted_members=members,
             chained_members=members,
             complete_members=members,
         )
-        stacks = _github_stacks(repository)
-        number = repository.next_github_stack_number
+        stacks = _github_stacks(repo)
+        number = repo.next_github_stack_number
         while number in stacks:
             number += 1
-        repository.next_github_stack_number = number + 1
+        repo.next_github_stack_number = number + 1
         stacks[number] = members
-        return _stack_payload(repository, number, members)
+        return _stack_payload(repo, number, members)
 
-    @app.post("/repos/{owner}/{repo}/stacks/{stack_number}/add")
+    @app.post("/repos/{owner}/{repo_name}/stacks/{stack_number}/add")
     async def append_to_stack(
         owner: str,
-        repo: str,
+        repo_name: str,
         stack_number: int,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        stacks = _github_stacks(repository)
+        repo = _get_repo(fake_state, owner, repo_name)
+        stacks = _github_stacks(repo)
         existing = stacks.get(stack_number)
         added = _require_int_list(payload, "pull_requests")
         if existing is None:
@@ -881,29 +879,29 @@ def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
             raise HTTPException(status_code=422, detail="No pull requests to append.")
         members = (*existing, *added)
         active_existing = GithubStack.model_validate(
-            _stack_payload(repository, stack_number, existing)
-        ).active_pull_request_numbers
+            _stack_payload(repo, stack_number, existing)
+        ).active_pr_numbers
         _validate_stack_members(
-            repository,
+            repo,
             admitted_members=added,
             allowed_stack=stack_number,
             chained_members=(*active_existing, *added),
             complete_members=members,
         )
         stacks[stack_number] = members
-        return _stack_payload(repository, stack_number, members)
+        return _stack_payload(repo, stack_number, members)
 
     @app.post(
-        "/repos/{owner}/{repo}/stacks/{stack_number}/unstack",
+        "/repos/{owner}/{repo_name}/stacks/{stack_number}/unstack",
         response_model=None,
     )
-    async def unstack(owner: str, repo: str, stack_number: int) -> Response:
-        repository = _get_repository(fake_state, owner, repo)
-        stacks = _github_stacks(repository)
+    async def unstack(owner: str, repo_name: str, stack_number: int) -> Response:
+        repo = _get_repo(fake_state, owner, repo_name)
+        stacks = _github_stacks(repo)
         if stack_number not in stacks:
             raise HTTPException(status_code=404, detail="Not Found")
         members = stacks[stack_number]
-        prs = repository.pull_requests
+        prs = repo.prs
         retained = tuple(
             number for number in members if prs[number].is_queued or prs[number].merged_at
         )
@@ -911,7 +909,7 @@ def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
             raise HTTPException(status_code=422, detail="No pull requests can be removed.")
         if retained:
             stacks[stack_number] = retained
-            return JSONResponse(_stack_payload(repository, stack_number, retained))
+            return JSONResponse(_stack_payload(repo, stack_number, retained))
         del stacks[stack_number]
         return Response(status_code=204)
 
@@ -930,157 +928,157 @@ def _register_graphql_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
         if not isinstance(raw_variables, dict):
             raise HTTPException(status_code=422, detail="Expected 'variables' to be an object.")
         if "markPullRequestReadyForReview" in query:
-            pull_request_id = _require_graphql_variable(raw_variables, "pullRequestId")
-            pull_request, repository = _find_pull_request_by_node_id(
+            pr_id = _require_graphql_variable(raw_variables, "pullRequestId")
+            pr, repo = _find_pr_by_node_id(
                 fake_state,
-                pull_request_id,
+                pr_id,
             )
-            repository.refresh_pull_request_state(pull_request)
-            pull_request.is_draft = False
+            repo.refresh_pr_state(pr)
+            pr.is_draft = False
             return {
                 "data": {
                     "markPullRequestReadyForReview": {
-                        "pullRequest": pull_request.to_graphql_payload(
-                            repository=repository,
+                        "pullRequest": pr.to_graphql_payload(
+                            repo=repo,
                             web_origin=fake_state.web_origin,
                         )
                     }
                 }
             }
         if "convertPullRequestToDraft" in query:
-            pull_request_id = _require_graphql_variable(raw_variables, "pullRequestId")
-            pull_request, repository = _find_pull_request_by_node_id(
+            pr_id = _require_graphql_variable(raw_variables, "pullRequestId")
+            pr, repo = _find_pr_by_node_id(
                 fake_state,
-                pull_request_id,
+                pr_id,
             )
-            repository.refresh_pull_request_state(pull_request)
-            pull_request.is_draft = True
+            repo.refresh_pr_state(pr)
+            pr.is_draft = True
             return {
                 "data": {
                     "convertPullRequestToDraft": {
-                        "pullRequest": pull_request.to_graphql_payload(
-                            repository=repository,
+                        "pullRequest": pr.to_graphql_payload(
+                            repo=repo,
                             web_origin=fake_state.web_origin,
                         )
                     }
                 }
             }
         owner = _require_graphql_variable(raw_variables, "owner")
-        repo = _require_graphql_variable(raw_variables, "repo")
-        repository = _get_repository(fake_state, owner, repo)
+        repo_name = _require_graphql_variable(raw_variables, "repo")
+        repo = _get_repo(fake_state, owner, repo_name)
         return {
             "data": {
-                "repository": _graphql_repository_payload(
+                "repository": _graphql_repo_payload(
                     query=query,
-                    repository=repository,
+                    repo=repo,
                     web_origin=fake_state.web_origin,
                 )
             }
         }
 
 
-def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
+def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
     """Register pull-request, issue, label, and review routes."""
 
-    @app.post("/repos/{owner}/{repo}/pulls", status_code=201)
-    async def create_pull_request(
+    @app.post("/repos/{owner}/{repo_name}/pulls", status_code=201)
+    async def create_pr(
         owner: str,
-        repo: str,
+        repo_name: str,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
+        repo = _get_repo(fake_state, owner, repo_name)
         title = _require_string(payload, "title")
         head_ref = _require_string(payload, "head")
         base_ref = _require_string(payload, "base")
         body = _optional_string(payload, "body") or ""
         draft = _optional_bool(payload, "draft") or False
-        _require_branch(repository, head_ref)
-        _require_branch(repository, base_ref)
-        pull_request = repository.create_pull_request(
+        _require_branch(repo, head_ref)
+        _require_branch(repo, base_ref)
+        pr = repo.create_pr(
             base_ref=base_ref,
             body=body,
             draft=draft,
             head_ref=head_ref,
             title=title,
         )
-        return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
+        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
 
-    @app.get("/repos/{owner}/{repo}/pulls/{pull_number}")
-    async def get_pull_request(
+    @app.get("/repos/{owner}/{repo_name}/pulls/{pr_number}")
+    async def get_pr(
         owner: str,
-        repo: str,
-        pull_number: int,
+        repo_name: str,
+        pr_number: int,
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        pull_request = repository.pull_requests.get(pull_number)
-        if pull_request is None:
+        repo = _get_repo(fake_state, owner, repo_name)
+        pr = repo.prs.get(pr_number)
+        if pr is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        repository.refresh_pull_request_state(pull_request)
-        return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
+        repo.refresh_pr_state(pr)
+        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
 
-    @app.patch("/repos/{owner}/{repo}/pulls/{pull_number}")
-    async def update_pull_request(
+    @app.patch("/repos/{owner}/{repo_name}/pulls/{pr_number}")
+    async def update_pr(
         owner: str,
-        repo: str,
-        pull_number: int,
+        repo_name: str,
+        pr_number: int,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        pull_request = repository.pull_requests.get(pull_number)
-        if pull_request is None:
+        repo = _get_repo(fake_state, owner, repo_name)
+        pr = repo.prs.get(pr_number)
+        if pr is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        if "base" in payload and repository.stack_number_for_pull(pull_number) is not None:
+        if "base" in payload and repo.stack_number_for_pr(pr_number) is not None:
             raise HTTPException(
                 status_code=422,
                 detail="A stacked pull request's base cannot be updated directly.",
             )
-        repository.refresh_pull_request_state(pull_request)
+        repo.refresh_pr_state(pr)
         title = _require_string(payload, "title") if "title" in payload else None
         body = (_optional_string(payload, "body") or "") if "body" in payload else None
         base_ref = _require_string(payload, "base") if "base" in payload else None
         if base_ref is not None:
-            _require_branch(repository, base_ref)
+            _require_branch(repo, base_ref)
         if title is not None:
-            pull_request.title = title
+            pr.title = title
         if body is not None:
-            pull_request.body = body
+            pr.body = body
         if base_ref is not None:
-            repository.update_pull_request_base(
-                pull_request,
+            repo.update_pr_base(
+                pr,
                 base_ref=base_ref,
             )
-        repository.refresh_pull_request_state(pull_request)
-        return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
+        repo.refresh_pr_state(pr)
+        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
 
-    @app.put("/repos/{owner}/{repo}/pulls/{pull_number}/merge-async")
+    @app.put("/repos/{owner}/{repo_name}/pulls/{pr_number}/merge-async")
     async def submit_stack_merge(
         owner: str,
-        repo: str,
-        pull_number: int,
+        repo_name: str,
+        pr_number: int,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> Response:
-        repository = _get_repository(fake_state, owner, repo)
-        pull_request = repository.pull_requests.get(pull_number)
-        if pull_request is None:
+        repo = _get_repo(fake_state, owner, repo_name)
+        pr = repo.prs.get(pr_number)
+        if pr is None:
             raise HTTPException(status_code=404, detail="Not Found")
         merge_action = _require_string(payload, "merge_action")
         merge_method = _optional_string(payload, "merge_method")
         expected_head_sha = _require_string(payload, "sha")
         allowed = {
-            "merge": repository.allow_merge_commit,
-            "rebase": repository.allow_rebase_merge,
-            "squash": repository.allow_squash_merge,
+            "merge": repo.allow_merge_commit,
+            "rebase": repo.allow_rebase_merge,
+            "squash": repo.allow_squash_merge,
         }
         if merge_action not in {"direct_merge", "merge_queue"}:
             raise HTTPException(status_code=400, detail="Unknown merge action.")
-        if repository.merge_queue_enabled != (merge_action == "merge_queue"):
+        if repo.merge_queue_enabled != (merge_action == "merge_queue"):
             raise HTTPException(status_code=400, detail="Merge action does not match policy.")
         if merge_action == "direct_merge" and not allowed.get(merge_method or "", False):
             raise HTTPException(status_code=400, detail="Merge method is not allowed.")
-        live_head = repository.ref_target(pull_request.head_ref)
+        live_head = repo.ref_target(pr.head_ref)
         if live_head != expected_head_sha:
             raise HTTPException(status_code=400, detail="Target head changed.")
-        existing = repository.stack_merge_operations.get(pull_number)
+        existing = repo.stack_merge_operations.get(pr_number)
         if existing is not None:
             if (
                 existing.expected_head_sha != expected_head_sha
@@ -1090,122 +1088,122 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
                 return JSONResponse(_stack_merge_payload(existing), status_code=409)
             status_code = 409 if existing.status == "pending" else 200
             return JSONResponse(_stack_merge_payload(existing), status_code=status_code)
-        stack_number = repository.stack_number_for_pull(pull_number)
-        active_pull_numbers = (
+        stack_number = repo.stack_number_for_pr(pr_number)
+        active_pr_numbers = (
             GithubStack.model_validate(
                 _stack_payload(
-                    repository,
+                    repo,
                     stack_number,
-                    _github_stacks(repository)[stack_number],
+                    _github_stacks(repo)[stack_number],
                 )
-            ).active_pull_request_numbers
+            ).active_pr_numbers
             if stack_number is not None
-            else (pull_number,)
+            else (pr_number,)
         )
-        if pull_number not in active_pull_numbers or pull_request.is_draft:
+        if pr_number not in active_pr_numbers or pr.is_draft:
             raise HTTPException(status_code=400, detail="Target is not mergeable.")
         operation = FakeStackMergeOperation(
             expected_head_sha=expected_head_sha,
             merge_action=merge_action,
             merge_method=merge_method,
-            pull_number=pull_number,
-            uuid=f"fake-stack-merge-{len(repository.stack_merge_operations) + 1}",
+            pr_number=pr_number,
+            uuid=f"fake-stack-merge-{len(repo.stack_merge_operations) + 1}",
         )
-        repository.stack_merge_operations[pull_number] = operation
-        repository.stack_merge_requests.append(
-            (pull_number, merge_method, merge_action, expected_head_sha)
+        repo.stack_merge_operations[pr_number] = operation
+        repo.stack_merge_requests.append(
+            (pr_number, merge_method, merge_action, expected_head_sha)
         )
         return JSONResponse(_stack_merge_payload(operation), status_code=202)
 
-    @app.get("/repos/{owner}/{repo}/pulls/{pull_number}/merge-async/{operation_uuid}")
+    @app.get("/repos/{owner}/{repo_name}/pulls/{pr_number}/merge-async/{operation_uuid}")
     async def poll_stack_merge(
         owner: str,
-        repo: str,
-        pull_number: int,
+        repo_name: str,
+        pr_number: int,
         operation_uuid: str,
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        operation = repository.stack_merge_operations.get(pull_number)
+        repo = _get_repo(fake_state, owner, repo_name)
+        operation = repo.stack_merge_operations.get(pr_number)
         if operation is None or operation.uuid != operation_uuid:
             raise HTTPException(status_code=404, detail="Not Found")
         if operation.status == "pending":
-            _complete_stack_merge(repository, operation)
+            _complete_stack_merge(repo, operation)
         return _stack_merge_payload(operation)
 
-    @app.patch("/repos/{owner}/{repo}/issues/{issue_number}")
+    @app.patch("/repos/{owner}/{repo_name}/issues/{issue_number}")
     async def update_issue(
         owner: str,
-        repo: str,
+        repo_name: str,
         issue_number: int,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        pull_request = repository.pull_requests.get(issue_number)
-        if pull_request is None:
+        repo = _get_repo(fake_state, owner, repo_name)
+        pr = repo.prs.get(issue_number)
+        if pr is None:
             raise HTTPException(status_code=404, detail="Not Found")
         state = _require_string(payload, "state")
         if state not in {"open", "closed"}:
             raise HTTPException(status_code=422, detail="Unsupported issue state.")
-        repository.update_pull_request_state(
-            pull_request,
+        repo.update_pr_state(
+            pr,
             state=state,
         )
         if state == "closed":
-            repository.refresh_pull_request_state(pull_request)
-        return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
+            repo.refresh_pr_state(pr)
+        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
 
     @app.post(
-        "/repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers",
+        "/repos/{owner}/{repo_name}/pulls/{pr_number}/requested_reviewers",
         status_code=201,
     )
     async def request_reviewers(
         owner: str,
-        repo: str,
-        pull_number: int,
+        repo_name: str,
+        pr_number: int,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        pull_request = repository.pull_requests.get(pull_number)
-        if pull_request is None:
+        repo = _get_repo(fake_state, owner, repo_name)
+        pr = repo.prs.get(pr_number)
+        if pr is None:
             raise HTTPException(status_code=404, detail="Not Found")
         reviewers = payload.get("reviewers", [])
         team_reviewers = payload.get("team_reviewers", [])
         if isinstance(reviewers, list):
             for reviewer in reviewers:
                 normalized = str(reviewer)
-                if normalized not in pull_request.requested_reviewers:
-                    pull_request.requested_reviewers.append(normalized)
+                if normalized not in pr.requested_reviewers:
+                    pr.requested_reviewers.append(normalized)
         if isinstance(team_reviewers, list):
             for team_reviewer in team_reviewers:
                 normalized = str(team_reviewer)
-                if normalized not in pull_request.requested_team_reviewers:
-                    pull_request.requested_team_reviewers.append(normalized)
-        return pull_request.to_payload(repository=repository, web_origin=fake_state.web_origin)
+                if normalized not in pr.requested_team_reviewers:
+                    pr.requested_team_reviewers.append(normalized)
+        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
 
-    @app.post("/repos/{owner}/{repo}/issues/{issue_number}/labels")
+    @app.post("/repos/{owner}/{repo_name}/issues/{issue_number}/labels")
     async def add_labels(
         owner: str,
-        repo: str,
+        repo_name: str,
         issue_number: int,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> list[dict[str, object]]:
-        repository = _get_repository(fake_state, owner, repo)
-        pull_request = repository.pull_requests.get(issue_number)
-        if pull_request is None:
+        repo = _get_repo(fake_state, owner, repo_name)
+        pr = repo.prs.get(issue_number)
+        if pr is None:
             raise HTTPException(status_code=404, detail="Not Found")
         labels = payload.get("labels", [])
         if isinstance(labels, list):
-            pull_request.labels = [str(label) for label in labels]
-        return [{"name": label} for label in pull_request.labels]
+            pr.labels = [str(label) for label in labels]
+        return [{"name": label} for label in pr.labels]
 
-    @app.get("/repos/{owner}/{repo}/pulls/{pull_number}/reviews")
-    async def list_pull_request_reviews(
+    @app.get("/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews")
+    async def list_pr_reviews(
         owner: str,
-        repo: str,
-        pull_number: int,
+        repo_name: str,
+        pr_number: int,
     ) -> list[dict[str, object]]:
-        repository = _get_repository(fake_state, owner, repo)
-        reviews = repository.list_pull_request_reviews(pull_number)
+        repo = _get_repo(fake_state, owner, repo_name)
+        reviews = repo.list_pr_reviews(pr_number)
         return [
             review.to_payload() for review in sorted(reviews, key=lambda candidate: candidate.id)
         ]
@@ -1214,42 +1212,42 @@ def _register_pull_request_routes(app: FastAPI, fake_state: FakeGithubState) -> 
 def _register_issue_comment_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
     """Register issue comment routes on the fake GitHub app."""
 
-    @app.get("/repos/{owner}/{repo}/issues/{issue_number}/comments")
+    @app.get("/repos/{owner}/{repo_name}/issues/{issue_number}/comments")
     async def list_issue_comments(
         owner: str,
-        repo: str,
+        repo_name: str,
         issue_number: int,
     ) -> list[dict[str, object]]:
-        repository = _get_repository(fake_state, owner, repo)
-        comments = repository.list_issue_comments(issue_number)
+        repo = _get_repo(fake_state, owner, repo_name)
+        comments = repo.list_issue_comments(issue_number)
         return [
             comment.to_payload()
             for comment in sorted(comments, key=lambda candidate: candidate.id)
         ]
 
-    @app.post("/repos/{owner}/{repo}/issues/{issue_number}/comments", status_code=201)
+    @app.post("/repos/{owner}/{repo_name}/issues/{issue_number}/comments", status_code=201)
     async def create_issue_comment(
         owner: str,
-        repo: str,
+        repo_name: str,
         issue_number: int,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        comment = repository.create_issue_comment(
+        repo = _get_repo(fake_state, owner, repo_name)
+        comment = repo.create_issue_comment(
             body=_require_string(payload, "body"),
             issue_number=issue_number,
         )
         return comment.to_payload()
 
-    @app.patch("/repos/{owner}/{repo}/issues/comments/{comment_id}")
+    @app.patch("/repos/{owner}/{repo_name}/issues/comments/{comment_id}")
     async def update_issue_comment(
         owner: str,
-        repo: str,
+        repo_name: str,
         comment_id: int,
         payload: Annotated[dict[str, object], Body(...)],
     ) -> dict[str, object]:
-        repository = _get_repository(fake_state, owner, repo)
-        comment = repository.update_issue_comment(
+        repo = _get_repo(fake_state, owner, repo_name)
+        comment = repo.update_issue_comment(
             body=_require_string(payload, "body"),
             comment_id=comment_id,
         )
@@ -1258,30 +1256,30 @@ def _register_issue_comment_routes(app: FastAPI, fake_state: FakeGithubState) ->
         return comment.to_payload()
 
     @app.delete(
-        "/repos/{owner}/{repo}/issues/comments/{comment_id}",
+        "/repos/{owner}/{repo_name}/issues/comments/{comment_id}",
         response_model=None,
         status_code=204,
     )
     async def delete_issue_comment(
         owner: str,
-        repo: str,
+        repo_name: str,
         comment_id: int,
     ) -> Response:
-        repository = _get_repository(fake_state, owner, repo)
-        deleted = repository.delete_issue_comment(comment_id=comment_id)
+        repo = _get_repo(fake_state, owner, repo_name)
+        deleted = repo.delete_issue_comment(comment_id=comment_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Not Found")
         return Response(status_code=204)
 
 
-def initialize_bare_repository(
+def initialize_bare_repo(
     root_dir: Path,
     *,
     owner: str,
     name: str,
     default_branch: str = "main",
-) -> FakeGithubRepository:
-    """Create a bare Git repository that the fake server can expose."""
+) -> FakeGithubRepo:
+    """Create a bare Git repo that the fake server can expose."""
 
     owner_dir = root_dir / owner
     owner_dir.mkdir(parents=True, exist_ok=True)
@@ -1301,7 +1299,7 @@ def initialize_bare_repository(
         text=True,
     )
 
-    return FakeGithubRepository(
+    return FakeGithubRepo(
         default_branch=default_branch,
         git_dir=git_dir,
         name=name,
@@ -1309,21 +1307,21 @@ def initialize_bare_repository(
     )
 
 
-def _get_repository(state: FakeGithubState, owner: str, repo: str) -> FakeGithubRepository:
-    repository = state.repositories.get((owner, repo))
-    if repository is None:
+def _get_repo(state: FakeGithubState, owner: str, repo_name: str) -> FakeGithubRepo:
+    repo = state.repos.get((owner, repo_name))
+    if repo is None:
         raise HTTPException(status_code=404, detail="Not Found")
-    return repository
+    return repo
 
 
-def _find_pull_request_by_node_id(
+def _find_pr_by_node_id(
     state: FakeGithubState,
     node_id: str,
-) -> tuple[FakeGithubPullRequest, FakeGithubRepository]:
-    for repository in state.repositories.values():
-        pull_request = repository.find_pull_request_by_node_id(node_id)
-        if pull_request is not None:
-            return pull_request, repository
+) -> tuple[FakeGithubPR, FakeGithubRepo]:
+    for repo in state.repos.values():
+        pr = repo.find_pr_by_node_id(node_id)
+        if pr is not None:
+            return pr, repo
     raise HTTPException(status_code=404, detail="Not Found")
 
 
@@ -1354,13 +1352,13 @@ def _require_int_list(payload: dict[str, object], key: str) -> tuple[int, ...]:
     return tuple(value)
 
 
-def _github_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...]]:
+def _github_stacks(repo: FakeGithubRepo) -> dict[int, tuple[int, ...]]:
     # GitHub refuses to put one pull request in two stacks: creating a second reports
     # "Pull requests #N are already part of a stack" (422, confirmed against the API). Tests
     # assign this mapping directly, so refuse the impossible shape here rather than let a fixture
     # justify production code defending against it. Unstack can leave one member.
     seen: set[int] = set()
-    for members in repository.github_stacks.values():
+    for members in repo.github_stacks.values():
         assert len(members) >= 1, f"fake GitHub was given an empty stack {members}"
         overlap = seen.intersection(members)
         assert not overlap, (
@@ -1368,40 +1366,38 @@ def _github_stacks(repository: FakeGithubRepository) -> dict[int, tuple[int, ...
             "which GitHub rejects"
         )
         seen.update(members)
-    return repository.github_stacks
+    return repo.github_stacks
 
 
 def _stack_payload(
-    repository: FakeGithubRepository,
+    repo: FakeGithubRepo,
     number: int,
     members: tuple[int, ...],
 ) -> dict[str, object]:
     return {
         "number": number,
-        "pull_requests": [
-            _stack_pull_request_payload(repository, pull_number) for pull_number in members
-        ],
+        "pull_requests": [_stack_pr_payload(repo, pr_number) for pr_number in members],
     }
 
 
-def _stack_pull_request_payload(
-    repository: FakeGithubRepository,
-    pull_number: int,
+def _stack_pr_payload(
+    repo: FakeGithubRepo,
+    pr_number: int,
 ) -> dict[str, object]:
-    pull_request = repository.pull_requests.get(pull_number)
-    if pull_request is None:
+    pr = repo.prs.get(pr_number)
+    if pr is None:
         return {
-            "head": {"ref": f"jj-stack/pull-{pull_number}", "sha": f"head-{pull_number}"},
+            "head": {"ref": f"jj-stack/pull-{pr_number}", "sha": f"head-{pr_number}"},
             "merged_at": None,
-            "number": pull_number,
+            "number": pr_number,
             "state": "open",
         }
-    pull_request._refresh_head_sha(repository)
+    pr._refresh_head_sha(repo)
     return {
-        "head": {"ref": pull_request.head_ref, "sha": pull_request.head_sha},
-        "merged_at": pull_request.merged_at,
-        "number": pull_number,
-        "state": pull_request.state,
+        "head": {"ref": pr.head_ref, "sha": pr.head_sha},
+        "merged_at": pr.merged_at,
+        "number": pr_number,
+        "state": pr.state,
     }
 
 
@@ -1420,86 +1416,78 @@ def _stack_merge_payload(operation: FakeStackMergeOperation) -> dict[str, object
 
 
 def _complete_stack_merge(
-    repository: FakeGithubRepository,
+    repo: FakeGithubRepo,
     operation: FakeStackMergeOperation,
 ) -> None:
-    stack_number = repository.stack_number_for_pull(operation.pull_number)
+    stack_number = repo.stack_number_for_pr(operation.pr_number)
     if stack_number is None:
-        candidate_numbers = (operation.pull_number,)
+        candidate_numbers = (operation.pr_number,)
         survivors: tuple[int, ...] = ()
     else:
         stack = GithubStack.model_validate(
-            _stack_payload(repository, stack_number, _github_stacks(repository)[stack_number])
+            _stack_payload(repo, stack_number, _github_stacks(repo)[stack_number])
         )
-        target_index = stack.active_pull_request_numbers.index(operation.pull_number)
-        candidate_numbers = stack.active_pull_request_numbers[: target_index + 1]
-        survivors = stack.active_pull_request_numbers[len(candidate_numbers) :]
-    candidates = tuple(repository.pull_requests[number] for number in candidate_numbers)
+        target_index = stack.active_pr_numbers.index(operation.pr_number)
+        candidate_numbers = stack.active_pr_numbers[: target_index + 1]
+        survivors = stack.active_pr_numbers[len(candidate_numbers) :]
+    candidates = tuple(repo.prs[number] for number in candidate_numbers)
     if any(
-        pull_request.state != "open"
-        or pull_request.is_draft
-        or pull_request.number in repository.unmergeable_pull_numbers
-        for pull_request in candidates
+        pr.state != "open" or pr.is_draft or pr.number in repo.unmergeable_pr_numbers
+        for pr in candidates
     ):
         operation.status = "failed"
         operation.message = "The GitHub stack prefix is not mergeable."
         return
     if operation.merge_action == "merge_queue":
-        for pull_request in candidates:
-            pull_request.is_queued = True
+        for pr in candidates:
+            pr.is_queued = True
         operation.status = "enqueued"
         operation.message = "Pull requests were added to the merge queue."
         return
-    for pull_request in candidates:
-        if pull_request.base_ref != repository.default_branch:
-            repository.update_pull_request_base(
-                pull_request,
-                base_ref=repository.default_branch or "main",
+    for pr in candidates:
+        if pr.base_ref != repo.default_branch:
+            repo.update_pr_base(
+                pr,
+                base_ref=repo.default_branch or "main",
             )
     if operation.merge_method == "merge":
-        repository.apply_merge_commit(candidates)
+        repo.apply_merge_commit(candidates)
     else:
         assert operation.merge_method is not None
-        for pull_request in candidates:
-            repository.apply_pull_request_merge(
-                pull_request,
+        for pr in candidates:
+            repo.apply_pr_merge(
+                pr,
                 merge_method=operation.merge_method,
             )
-    previous_base = repository.default_branch or "main"
-    for pull_number in survivors:
-        pull_request = repository.pull_requests[pull_number]
-        repository.rewrite_pull_request_onto_base(
-            pull_request,
+    previous_base = repo.default_branch or "main"
+    for pr_number in survivors:
+        pr = repo.prs[pr_number]
+        repo.rewrite_pr_onto_base(
+            pr,
             base_ref=previous_base,
         )
-        previous_base = pull_request.head_ref
-    operation.final_sha = repository.ref_target(repository.default_branch or "main")
+        previous_base = pr.head_ref
+    operation.final_sha = repo.ref_target(repo.default_branch or "main")
     operation.status = "merged"
 
 
 def _validate_stack_members(
-    repository: FakeGithubRepository,
+    repo: FakeGithubRepo,
     *,
     admitted_members: tuple[int, ...],
     allowed_stack: int | None = None,
     chained_members: tuple[int, ...],
     complete_members: tuple[int, ...],
 ) -> None:
-    pull_requests = {number: repository.pull_requests.get(number) for number in complete_members}
+    prs = {number: repo.prs.get(number) for number in complete_members}
     if len(set(complete_members)) != len(complete_members):
         raise HTTPException(status_code=422, detail="Duplicate pull request.")
-    if any(pull_request is None for pull_request in pull_requests.values()):
+    if any(pr is None for pr in prs.values()):
         raise HTTPException(status_code=422, detail="Pull request does not exist.")
-    resolved = {
-        number: pull_request
-        for number, pull_request in pull_requests.items()
-        if pull_request is not None
-    }
-    repository.refresh_pull_requests(resolved.values())
+    resolved = {number: pr for number, pr in prs.items() if pr is not None}
+    repo.refresh_prs(resolved.values())
     if any(
-        (pull_request := resolved[number]).state != "open"
-        or pull_request.auto_merge_enabled
-        or pull_request.is_queued
+        (pr := resolved[number]).state != "open" or pr.auto_merge_enabled or pr.is_queued
         for number in admitted_members
     ):
         raise HTTPException(status_code=422, detail="Pull request is not admissible.")
@@ -1512,19 +1500,19 @@ def _validate_stack_members(
         )
     ):
         raise HTTPException(status_code=422, detail="Pull request bases do not form a chain.")
-    for number, existing in _github_stacks(repository).items():
+    for number, existing in _github_stacks(repo).items():
         if number != allowed_stack and not set(existing).isdisjoint(admitted_members):
             raise HTTPException(
                 status_code=422, detail="Pull request already belongs to a stack."
             )
 
 
-def _require_branch(repository: FakeGithubRepository, branch: str) -> None:
+def _require_branch(repo: FakeGithubRepo, branch: str) -> None:
     completed = subprocess.run(
         [
             "git",
             "--git-dir",
-            str(repository.git_dir),
+            str(repo.git_dir),
             "show-ref",
             "--verify",
             f"refs/heads/{branch}",
@@ -1552,18 +1540,18 @@ def _require_graphql_variable(payload: dict[str, object], key: str) -> str:
     raise HTTPException(status_code=422, detail=f"Expected GraphQL variable {key!r}.")
 
 
-def _graphql_repository_payload(
+def _graphql_repo_payload(
     *,
     query: str,
-    repository: FakeGithubRepository,
+    repo: FakeGithubRepo,
     web_origin: str,
 ) -> dict[str, object]:
     if "BaseBranchMergeQueue" in query:
         return {
-            "mergeQueue": ({"id": "merge-queue"} if repository.merge_queue_enabled else None),
+            "mergeQueue": ({"id": "merge-queue"} if repo.merge_queue_enabled else None),
             "ref": {
                 "rules": {
-                    "nodes": ([{"type": "MERGE_QUEUE"}] if repository.merge_queue_enabled else [])
+                    "nodes": ([{"type": "MERGE_QUEUE"}] if repo.merge_queue_enabled else [])
                 }
             },
         }
@@ -1602,35 +1590,30 @@ def _graphql_repository_payload(
     if ref_queries:
         payload: dict[str, object] = {}
         for alias, ref_kind, ref_value, first, states in ref_queries:
-            matching_pull_requests = [
-                pull_request
-                for pull_request in repository.pull_requests.values()
-                if (pull_request.head_ref if ref_kind == "head" else pull_request.base_ref)
-                == ref_value
+            matching_prs = [
+                pr
+                for pr in repo.prs.values()
+                if (pr.head_ref if ref_kind == "head" else pr.base_ref) == ref_value
             ]
-            repository.refresh_pull_requests(matching_pull_requests)
-            matching_pull_requests = sorted(
-                (
-                    pull_request
-                    for pull_request in matching_pull_requests
-                    if not states or pull_request.graphql_state in states
-                ),
+            repo.refresh_prs(matching_prs)
+            matching_prs = sorted(
+                (pr for pr in matching_prs if not states or pr.graphql_state in states),
                 key=lambda candidate: candidate.number,
             )
             payload[alias] = {
                 "nodes": [
-                    _graphql_pull_request_payload(
-                        pull_request=pull_request,
-                        repository=repository,
+                    _graphql_pr_payload(
+                        pr=pr,
+                        repo=repo,
                         web_origin=web_origin,
                         refreshed=True,
                     )
-                    for pull_request in matching_pull_requests
+                    for pr in matching_prs
                 ][:first]
             }
         return payload
 
-    pull_request_number_queries: list[tuple[str, int]] = []
+    pr_number_queries: list[tuple[str, int]] = []
     for line in lines:
         alias, separator, selection = line.strip().partition(":")
         if not separator or not alias.isidentifier():
@@ -1639,26 +1622,26 @@ def _graphql_repository_payload(
         if not selection.startswith("pullRequest(number:"):
             continue
         number_text = selection.removeprefix("pullRequest(number:").partition(")")[0]
-        pull_request_number_queries.append((alias, int(number_text.strip())))
+        pr_number_queries.append((alias, int(number_text.strip())))
 
-    if not pull_request_number_queries:
+    if not pr_number_queries:
         raise HTTPException(status_code=422, detail="Unsupported GraphQL query.")
 
     payload: dict[str, object] = {}
-    requested_pull_requests = [
-        pull_request
-        for _alias, pull_number in pull_request_number_queries
-        if (pull_request := repository.pull_requests.get(pull_number)) is not None
+    requested_prs = [
+        pr
+        for _alias, pr_number in pr_number_queries
+        if (pr := repo.prs.get(pr_number)) is not None
     ]
-    repository.refresh_pull_requests(requested_pull_requests)
-    for alias, pull_number in pull_request_number_queries:
-        pull_request = repository.pull_requests.get(pull_number)
-        if pull_request is None:
+    repo.refresh_prs(requested_prs)
+    for alias, pr_number in pr_number_queries:
+        pr = repo.prs.get(pr_number)
+        if pr is None:
             payload[alias] = None
             continue
-        graphql_payload = _graphql_pull_request_payload(
-            pull_request=pull_request,
-            repository=repository,
+        graphql_payload = _graphql_pr_payload(
+            pr=pr,
+            repo=repo,
             web_origin=web_origin,
             refreshed=True,
         )
@@ -1667,7 +1650,7 @@ def _graphql_repository_payload(
                 "nodes": [
                     comment.to_graphql_payload()
                     for comment in sorted(
-                        repository.list_issue_comments(pull_number),
+                        repo.list_issue_comments(pr_number),
                         key=lambda candidate: candidate.id,
                     )
                 ],
@@ -1677,30 +1660,30 @@ def _graphql_repository_payload(
     return payload
 
 
-def _graphql_pull_request_payload(
+def _graphql_pr_payload(
     *,
-    pull_request: FakeGithubPullRequest,
-    repository: FakeGithubRepository,
+    pr: FakeGithubPR,
+    repo: FakeGithubRepo,
     web_origin: str,
     refreshed: bool = False,
 ) -> dict[str, object]:
     if not refreshed:
-        repository.refresh_pull_request_state(pull_request)
-    payload = pull_request.to_graphql_payload(
-        repository=repository,
+        repo.refresh_pr_state(pr)
+    payload = pr.to_graphql_payload(
+        repo=repo,
         web_origin=web_origin,
     )
-    payload["reviewDecision"] = _graphql_review_decision(repository, pull_request.number)
+    payload["reviewDecision"] = _graphql_review_decision(repo, pr.number)
     return payload
 
 
 def _graphql_review_decision(
-    repository: FakeGithubRepository,
-    pull_number: int,
+    repo: FakeGithubRepo,
+    pr_number: int,
 ) -> str | None:
     review_states = {
         str(raw_review["state"]).upper()
-        for raw_review in _latest_opinionated_review_payloads(repository, pull_number)
+        for raw_review in _latest_opinionated_review_payloads(repo, pr_number)
     }
     if "CHANGES_REQUESTED" in review_states:
         return "CHANGES_REQUESTED"
@@ -1710,12 +1693,12 @@ def _graphql_review_decision(
 
 
 def _latest_opinionated_review_payloads(
-    repository: FakeGithubRepository,
-    pull_number: int,
+    repo: FakeGithubRepo,
+    pr_number: int,
 ) -> list[dict[str, object]]:
-    latest_by_reviewer: dict[str, FakeGithubPullRequestReview] = {}
+    latest_by_reviewer: dict[str, FakeGithubPRReview] = {}
     reviews = sorted(
-        repository.list_pull_request_reviews(pull_number),
+        repo.list_pr_reviews(pr_number),
         key=lambda item: item.id,
     )
     for review in reviews:

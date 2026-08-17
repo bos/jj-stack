@@ -61,11 +61,11 @@ logger = logging.getLogger(__name__)
 _COLOR_CHOICES: tuple[RequestedColorMode, ...] = ("always", "never", "debug", "auto")
 _TOP_LEVEL_HELP_USAGE = "jj-stack [--help] [--color WHEN] [--version] [<command> ...]"
 _TOP_LEVEL_HELP_DESCRIPTION = """
-`jj-stack` lets you review a series of `jj` changes on GitHub as stacked pull requests.
+`jj-stack` lets you submit a stack of `jj` changes for review on GitHub.
 
-Use it to submit and refresh changes for review, inspect pull request status, merge reviewed
-changes, and clean up after a review. Keep creating and editing changes with `jj`; `jj-stack`
-submits and updates them for review on GitHub.
+Use it to submit and refresh pull requests, inspect their status, merge pull
+requests, and clean up after they close or merge. Keep creating and editing changes with `jj`;
+`jj-stack` submits and updates their pull requests on GitHub.
 
 Running `jj-stack` with no command shows the current stack. A typical workflow is
 `jj-stack submit`, `jj-stack view`, then `jj-stack merge`. After a direct merge, `jj-stack`
@@ -77,7 +77,7 @@ _HELP_FLAGS = frozenset({"-h", "--help"})
 _COMPLETION_HELP = "Print shell completion setup for bash, zsh, or fish"
 _HELP_HELP = "Show top-level help, or help for one command"
 _COMPLETION_DESCRIPTION = """
-Print the shell completion script for bash, zsh, or fish. It does not inspect the repository or
+Print the shell completion script for bash, zsh, or fish. It does not inspect the repo or
 GitHub.
 
 If you already have a `jj` alias that runs `jj-stack`, such as `jj stack`, and use `jj`'s built-in
@@ -126,7 +126,7 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
         (HelpCommand("help", _HELP_HELP, hidden=True),),
     ),
 )
-_PULL_REQUEST_OPTION_STRINGS = ("-p", "--pull-request")
+_PR_OPTION_STRINGS = ("-p", "--pull-request")
 _COMMAND_ALIASES: dict[str, tuple[str, ...]] = {
     "submit": ("sub",),
     "view": ("status", "st", "v"),
@@ -201,7 +201,7 @@ def build_parser() -> ArgumentParser:
         dest="command",
         parser_class=_CommandArgumentParser,
     )
-    submit_parser = _add_revision_command(
+    submit_parser = _add_revset_command(
         subcommands,
         command="submit",
         aliases=_COMMAND_ALIASES["submit"],
@@ -209,7 +209,7 @@ def build_parser() -> ArgumentParser:
         description_text=submit_command.__doc__ or "",
         handler=_forward_handler(submit_command.submit, open_="open"),
         revset_help=(
-            t"Revision or change ID to submit; defaults to {ui.revset('@')} when the "
+            t"Revset selecting the stack to submit; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
@@ -221,10 +221,9 @@ def build_parser() -> ArgumentParser:
     add_help_argument(
         submit_parser,
         "--base",
-        metavar="REVISION",
+        metavar="REVSET",
         help=(
-            "Submit only changes after this reviewed ancestor, using its review branch as the "
-            "base"
+            "Submit only changes after this submitted ancestor, using its PR branch as the base"
         ),
     )
     add_help_argument(
@@ -316,7 +315,7 @@ def build_parser() -> ArgumentParser:
             "existing pull request"
         ),
     )
-    view_parser = _add_revision_command(
+    view_parser = _add_revset_command(
         subcommands,
         command="view",
         aliases=_COMMAND_ALIASES["view"],
@@ -335,7 +334,8 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         view_parser,
-        *_PULL_REQUEST_OPTION_STRINGS,
+        *_PR_OPTION_STRINGS,
+        dest="pr",
         metavar="PR",
         action="append",
         help=(
@@ -376,14 +376,14 @@ def build_parser() -> ArgumentParser:
         description_text=relink_command.__doc__ or "",
         handler=_forward_handler(relink_command.relink),
     )
-    merge_parser = _add_revision_command(
+    merge_parser = _add_revset_command(
         subcommands,
         command="merge",
         help_text=normalized_help_text(merge_command.HELP),
         description_text=merge_command.__doc__ or "",
         handler=_forward_handler(merge_command.merge),
         revset_help=(
-            t"Revision or change ID to merge; defaults to {ui.revset('@')} when the "
+            t"Revset selecting the stack to merge; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
             t"cannot be combined with {ui.option('--pull-request')}"
         ),
@@ -395,7 +395,8 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         merge_parser,
-        *_PULL_REQUEST_OPTION_STRINGS,
+        *_PR_OPTION_STRINGS,
+        dest="pr",
         metavar="PR",
         help=("Merge this PR and all PRs below it; after a direct merge, sync the entire stack"),
     )
@@ -408,17 +409,17 @@ def build_parser() -> ArgumentParser:
         help=(
             t"GitHub merge method: {ui.metavar('merge')}, {ui.metavar('rebase')}, or "
             t"{ui.metavar('squash')}. Defaults to {ui.code('jj-stack.merge_method')}, or to "
-            t"the repository's only allowed method"
+            t"the repo's only allowed method"
         ),
     )
-    unstack_parser = _add_revision_command(
+    unstack_parser = _add_revset_command(
         subcommands,
         command="unstack",
         help_text=normalized_help_text(unstack_command.HELP),
         description_text=unstack_command.__doc__ or "",
         handler=_forward_handler(unstack_command.unstack),
         revset_help=(
-            t"Revision or change ID to unstack; defaults to {ui.revset('@')} when the "
+            t"Revset selecting the stack to unstack; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}; "
             t"cannot be combined with {ui.option('--pull-request')} or {ui.option('--stack')}"
         ),
@@ -435,7 +436,8 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         unstack_parser,
-        *_PULL_REQUEST_OPTION_STRINGS,
+        *_PR_OPTION_STRINGS,
+        dest="pr",
         metavar="PR",
         help="Select the local stack linked to this pull request number or URL",
     )
@@ -454,21 +456,21 @@ def build_parser() -> ArgumentParser:
         handler=_forward_handler(checkout_command.checkout),
     )
 
-    cleanup_parser = _add_revision_command(
+    cleanup_parser = _add_revset_command(
         subcommands,
         command="cleanup",
         help_text=normalized_help_text(cleanup_command.HELP),
         description_text=cleanup_command.__doc__ or "",
         handler=_forward_handler(cleanup_command.cleanup),
         revset_help=(
-            t"Revision or change ID whose stack should be cleaned up; omit it to check every "
+            t"Revset selecting the stack to clean up; omit it to check every "
             t"tracked pull request; cannot be combined with {ui.option('--pull-request')}"
         ),
     )
     cleanup_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview the cleanup without deleting review branches, comments, or tracking",
+        help="Preview the cleanup without deleting PR branches, comments, or tracking",
     )
     add_help_argument(
         cleanup_parser,
@@ -481,7 +483,8 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         cleanup_parser,
-        *_PULL_REQUEST_OPTION_STRINGS,
+        *_PR_OPTION_STRINGS,
+        dest="pr",
         metavar="PR",
         help=(
             t"Clean up this tracked pull request, or use {ui.metavar('orphans')} for every "
@@ -489,14 +492,14 @@ def build_parser() -> ArgumentParser:
         ),
     )
 
-    sync_parser = _add_revision_command(
+    sync_parser = _add_revset_command(
         subcommands,
         command="sync",
         help_text=normalized_help_text(sync_command.HELP),
         description_text=sync_command.__doc__ or "",
         handler=_forward_handler(sync_command.sync, all_="all"),
         revset_help=(
-            t"Revision or change ID to sync; defaults to {ui.revset('@')} when the "
+            t"Revset selecting the stack to sync; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
@@ -505,7 +508,7 @@ def build_parser() -> ArgumentParser:
         "--dry-run",
         action="store_true",
         help=(
-            "Preview the sync without changing pull requests, local commits, review branches, "
+            "Preview the sync without changing pull requests, local changes, PR branches, "
             "or tracking"
         ),
     )
@@ -515,8 +518,8 @@ def build_parser() -> ArgumentParser:
         "--all",
         action="store_true",
         help=(
-            "Finish reviews across all stacks when their submitted commits are already on trunk "
-            "and remove their saved PR links; never rebases or changes local commits"
+            "Finish merged PRs across all stacks when their submitted commits are already on "
+            "trunk and remove their saved links; never rebases or rewrites local changes"
         ),
     )
 
@@ -656,7 +659,7 @@ def _print_early_cli_error(
     with configured_console(
         cli_args=cli_args,
         color_mode=rich_color_mode(requested_color_mode),
-        repository=None,
+        repo=None,
         requested_color_mode=requested_color_mode,
         time_output=False,
     ):
@@ -709,16 +712,12 @@ def _color_arg_from_argv(argv: Sequence[str]) -> RequestedColorMode | None:
 
 def _load_configured_jj_color(
     *,
-    repository: Path | None,
+    repo: Path | None,
     cli_args: JjCliArgs,
 ) -> RequestedColorMode | None:
-    """Read `ui.color` from `jj` config without requiring repository bootstrap."""
+    """Read `ui.color` from `jj` config without requiring repo bootstrap."""
 
-    cwd = (
-        repository
-        if repository is not None and repository.exists() and repository.is_dir()
-        else Path.cwd()
-    )
+    cwd = repo if repo is not None and repo.exists() and repo.is_dir() else Path.cwd()
     try:
         completed = subprocess.run(
             ["jj", *cli_args.to_argv(), "--ignore-working-copy", "config", "get", "ui.color"],
@@ -767,13 +766,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     effective_color = "never" if args.command == "in-use" else args.color
     if effective_color is None:
         effective_color = _load_configured_jj_color(
-            repository=args.repository,
+            repo=args.repo,
             cli_args=cli_args,
         )
     with configured_console(
         cli_args=cli_args,
         color_mode=rich_color_mode(effective_color),
-        repository=args.repository,
+        repo=args.repo,
         requested_color_mode=args.color,
         time_output=args.time_output,
     ):
@@ -796,8 +795,8 @@ def _default_view_handler(args: Namespace) -> int:
         cli_args=args.cli_args,
         debug=args.debug,
         as_json=False,
-        pull_request=None,
-        repository=args.repository,
+        pr=None,
+        repo=args.repo,
         revset=None,
         selectors=(),
         verbose=False,
@@ -833,16 +832,16 @@ def _parse_view_command_args(argv: Sequence[str]) -> _ParsedViewCommandArgs | No
                 for value in trailing_revsets
             )
             break
-        if arg in {*_PULL_REQUEST_OPTION_STRINGS, "--repository", "--color"}:
+        if arg in {*_PR_OPTION_STRINGS, "--repository", "--color"}:
             if index + 1 >= len(command_argv):
                 options.extend(command_argv[index:])
                 break
             value = command_argv[index + 1]
             options.extend((arg, value))
-            if arg in _PULL_REQUEST_OPTION_STRINGS:
+            if arg in _PR_OPTION_STRINGS:
                 selectors.append(
                     view_command.ViewSelector(
-                        kind="pull_request",
+                        kind="pr",
                         value=value,
                     )
                 )
@@ -864,7 +863,7 @@ def _parse_view_command_args(argv: Sequence[str]) -> _ParsedViewCommandArgs | No
             if value is not None:
                 selectors.append(
                     view_command.ViewSelector(
-                        kind="pull_request",
+                        kind="pr",
                         value=value,
                     )
                 )
@@ -943,7 +942,7 @@ def _add_command_parser(
     return parser
 
 
-def _add_revision_command(
+def _add_revset_command(
     subcommands: _SubParsersAction[Any],
     *,
     command: str,
@@ -952,7 +951,7 @@ def _add_revision_command(
     description_text: str,
     handler: Callable[[Namespace], int],
     revset_nargs: str | int | None = "?",
-    revset_help: ui.Message | str = "Revision to operate on",
+    revset_help: ui.Message | str = "Revset selecting the stack to operate on",
 ) -> ArgumentParser:
     parser = _add_command_parser(
         subcommands,
@@ -981,12 +980,12 @@ def _add_relink_parser(
         description_text=description_text,
         handler=handler,
     )
-    add_help_argument(parser, "pull_request", metavar="PR", help="Pull request number or URL")
+    add_help_argument(parser, "pr", metavar="PR", help="Pull request number or URL")
     add_help_argument(
         parser,
         "revset",
         metavar="REVSET",
-        help="Revision or change ID to reconnect to the pull request",
+        help="Revset selecting the local change to reconnect to the pull request",
     )
     return parser
 
@@ -1009,7 +1008,8 @@ def _add_checkout_parser(
     selector = parser.add_mutually_exclusive_group(required=False)
     add_help_argument(
         selector,
-        *_PULL_REQUEST_OPTION_STRINGS,
+        *_PR_OPTION_STRINGS,
+        dest="pr",
         metavar="PR",
         help="Pull request to check out, by number or URL",
     )
@@ -1017,7 +1017,7 @@ def _add_checkout_parser(
         selector,
         "--revset",
         help=(
-            t"Local stack to check out by head revision; defaults to {ui.revset('@')} when the "
+            t"Revset selecting the local stack head; defaults to {ui.revset('@')} when the "
             t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
         ),
     )
@@ -1037,6 +1037,7 @@ def _add_common_options(
 ) -> None:
     parser.add_argument(
         "--repository",
+        dest="repo",
         type=Path,
         metavar="REPO",
         default=SUPPRESS if suppress_defaults else None,

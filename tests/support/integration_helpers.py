@@ -17,20 +17,20 @@ import httpxyz
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import short_change_id
-from jj_stack.jj.client import JjClient, ReviewRefUpdate
+from jj_stack.jj.client import JjClient, PRRefUpdate
 from jj_stack.models.stack import LocalStack
-from jj_stack.review.selected import select_review_path
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.stack.selected import select_stack_path
+from jj_stack.state.store import TrackingStore
 
 from .fake_github import (
-    FakeGithubRepository,
+    FakeGithubRepo,
     FakeGithubState,
     create_app,
-    initialize_bare_repository,
+    initialize_bare_repo,
 )
 
 _TEMPLATE_OWNER = "octo-org"
-_TEMPLATE_NAME = "stacked-review"
+_TEMPLATE_NAME = "stacked-prs"
 _TEST_JJ_IDENTITY = {
     "JJ_EMAIL": "test@example.com",
     "JJ_USER": "Test User",
@@ -43,14 +43,14 @@ _SUBMIT_CONFIG_MODULES = (
     "jj_stack.commands.unstack",
     "jj_stack.commands.cleanup.command",
     "jj_stack.commands.merge.command",
-    "jj_stack.review.status",
+    "jj_stack.stack.status",
 )
 
 
 def configure_fake_github_environment(
     *,
     command_modules: tuple[str, ...],
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     monkeypatch,
     tmp_path: Path,
     extra_config_lines: list[str] | None = None,
@@ -61,15 +61,15 @@ def configure_fake_github_environment(
         fake_repo,
         extra_lines=extra_config_lines,
     )
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
-    def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
+    def build_github_client(*, repo: GithubRepoAddress) -> GithubClient:
         return GithubClient(
             httpxyz.AsyncClient(
                 base_url="https://api.github.test",
                 transport=httpxyz.ASGITransport(app=app),
             ),
-            repository=repository,
+            repo=repo,
         )
 
     def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
@@ -98,13 +98,13 @@ def configure_fake_github_environment(
 def _copy_fake_github_repo_from_template(
     tmp_path: Path,
     template_root: Path,
-) -> tuple[Path, FakeGithubRepository]:
+) -> tuple[Path, FakeGithubRepo]:
     shutil.copytree(template_root / "repo", tmp_path / "repo")
     shutil.copytree(template_root / "remotes", tmp_path / "remotes")
     repo = tmp_path / "repo"
     git_dir = tmp_path / "remotes" / _TEMPLATE_OWNER / f"{_TEMPLATE_NAME}.git"
     run_command(["jj", "git", "remote", "set-url", "origin", str(git_dir)], repo)
-    fake_repo = FakeGithubRepository(
+    fake_repo = FakeGithubRepo(
         default_branch="main",
         git_dir=git_dir,
         name=_TEMPLATE_NAME,
@@ -117,9 +117,9 @@ def _init_fake_github_repo_fresh(
     tmp_path: Path,
     *,
     with_remote: bool,
-) -> tuple[Path, FakeGithubRepository]:
+) -> tuple[Path, FakeGithubRepo]:
     repo = tmp_path / "repo"
-    fake_repo = initialize_bare_repository(
+    fake_repo = initialize_bare_repo(
         tmp_path / "remotes",
         owner=_TEMPLATE_OWNER,
         name=_TEMPLATE_NAME,
@@ -189,7 +189,7 @@ def init_fake_github_repo(
     tmp_path: Path,
     *,
     with_remote: bool = True,
-) -> tuple[Path, FakeGithubRepository]:
+) -> tuple[Path, FakeGithubRepo]:
     if not with_remote:
         return _init_fake_github_repo_fresh(tmp_path, with_remote=False)
     template_root = _get_cached_template()
@@ -210,15 +210,15 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
         for index in range(1, size + 1):
             commit_file(repo, f"feature {index}", f"feature-{index}.txt")
 
-        app = create_app(FakeGithubState.single_repository(fake_repo))
+        app = create_app(FakeGithubState.single_repo(fake_repo))
 
-        def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
+        def build_github_client(*, repo: GithubRepoAddress) -> GithubClient:
             return GithubClient(
                 httpxyz.AsyncClient(
                     base_url="https://api.github.test",
                     transport=httpxyz.ASGITransport(app=app),
                 ),
-                repository=repository,
+                repo=repo,
             )
 
         def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
@@ -249,7 +249,7 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
             )
         if exit_code != 0:
             raise RuntimeError(f"submitted-stack template build failed: exit {exit_code}")
-        JjClient(repo).ensure_review_fetch_isolation(
+        JjClient(repo).ensure_pr_branch_fetch_isolation(
             remote="origin",
         )
 
@@ -268,17 +268,17 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
 
 def init_fake_github_repo_with_submitted_feature(
     tmp_path: Path,
-) -> tuple[Path, FakeGithubRepository]:
+) -> tuple[Path, FakeGithubRepo]:
     return init_fake_github_repo_with_submitted_stack(tmp_path, size=1)
 
 
 def selected_stack(repo: Path, revset: str | None = None) -> LocalStack:
     """Return the ordinary selected path for integration setup and assertions."""
 
-    return select_review_path(
+    return select_stack_path(
         jj_client=JjClient(repo),
         revset=revset,
-        state=ReviewStateStore.for_repo(repo).load(),
+        state=TrackingStore.for_repo(repo).load(),
     ).stack
 
 
@@ -286,7 +286,7 @@ def init_fake_github_repo_with_submitted_stack(
     tmp_path: Path,
     *,
     size: int,
-) -> tuple[Path, FakeGithubRepository]:
+) -> tuple[Path, FakeGithubRepo]:
     """Drop-in replacement for `init_fake_github_repo + N x commit_file + submit`.
 
     Returns a repo with `feature 1` .. `feature <size>` already committed
@@ -322,28 +322,28 @@ def init_fake_github_repo_with_submitted_stack(
 
 
 def _build_manual_pr_template(template_root: Path) -> None:
-    """Build a template with `feature 1` committed and a manual review PR.
+    """Build a template with `feature 1` committed and a manually created PR.
 
     Unlike the submitted-stack template this never runs jj-stack `main()`, so it
     has no state-home to rehome: only the jj repo, the remote, and the pickled
-    `fake_repo` carry state. The review branch exists only on the remote.
+    `fake_repo` carry state. The PR branch exists only on the remote.
     """
     repo, fake_repo = _copy_fake_github_repo_from_template(template_root, _get_cached_template())
     commit_file(repo, "feature 1", "feature-1.txt")
-    revision = selected_stack(repo).head
-    change_id = revision.change_id
+    change = selected_stack(repo).head
+    change_id = change.change_id
     manual_bookmark = f"jj-stack/manual-feature-{short_change_id(change_id)}"
-    JjClient(repo).mutate_remote_review_refs(
+    JjClient(repo).mutate_remote_pr_branch_refs(
         remote="origin",
         updates=(
-            ReviewRefUpdate(
+            PRRefUpdate(
                 branch=manual_bookmark,
                 expected_target=None,
-                desired_target=revision.commit_id,
+                desired_target=change.commit_id,
             ),
         ),
     )
-    fake_repo.create_pull_request(
+    fake_repo.create_pr(
         base_ref="main",
         body="manual body",
         head_ref=manual_bookmark,
@@ -354,8 +354,8 @@ def _build_manual_pr_template(template_root: Path) -> None:
 
 def init_fake_github_repo_with_manual_pr(
     tmp_path: Path,
-) -> tuple[Path, FakeGithubRepository]:
-    """Return a repo with `feature 1` committed and a manual review PR.
+) -> tuple[Path, FakeGithubRepo]:
+    """Return a repo with `feature 1` committed and a manually created PR.
 
     Mirrors the manual-PR setup shared by several relink tests. Callers still
     invoke `configure_submit_environment` to wire the monkeypatches for the
@@ -390,7 +390,7 @@ def init_repo(
 
 
 def write_fake_github_config(
-    tmp_path: Path, _fake_repo: FakeGithubRepository, *, extra_lines: list[str] | None = None
+    tmp_path: Path, _fake_repo: FakeGithubRepo, *, extra_lines: list[str] | None = None
 ) -> Path:
     config_path = tmp_path / "jj-stack-config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)

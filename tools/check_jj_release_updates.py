@@ -71,9 +71,9 @@ def latest_jj_release() -> tuple[str, str]:
     return release["tag_name"], release["html_url"]
 
 
-def find_open_issue(repository: str, token: str) -> dict | None:
+def find_open_issue(repo: str, token: str) -> dict | None:
     encoded_query = urllib.parse.quote(
-        f'repo:{repository} is:issue in:title state:open "{ISSUE_TITLE}"',
+        f'repo:{repo} is:issue in:title state:open "{ISSUE_TITLE}"',
         safe="",
     )
     search = github_request(
@@ -109,14 +109,14 @@ def tracking_issue_body(
 
 def sync_issue_state(
     *,
-    repository: str,
+    repo: str,
     token: str,
     latest_version: str,
     latest_url: str,
     tested_versions: list[str],
     ci_workflow: Path,
 ) -> None:
-    issue = find_open_issue(repository, token)
+    issue = find_open_issue(repo, token)
     if latest_version in tested_versions:
         if issue is not None:
             github_request(
@@ -137,7 +137,7 @@ def sync_issue_state(
     if issue is None:
         created = github_request(
             "POST",
-            f"https://api.github.com/repos/{repository}/issues",
+            f"https://api.github.com/repos/{repo}/issues",
             payload={"title": ISSUE_TITLE, "body": body},
             token=token,
         )
@@ -170,11 +170,11 @@ def main() -> int:
         return 0 if latest_version in tested_versions else 1
 
     token = os.environ.get("GITHUB_TOKEN")
-    repository = os.environ.get("REPOSITORY")
-    if not token or not repository:
+    repo = os.environ.get("REPOSITORY")
+    if not token or not repo:
         raise SystemExit("--write-issues requires GITHUB_TOKEN and REPOSITORY in the environment")
     sync_issue_state(
-        repository=repository,
+        repo=repo,
         token=token,
         latest_version=latest_version,
         latest_url=latest_url,

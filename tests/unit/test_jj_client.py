@@ -17,17 +17,17 @@ from jj_stack.jj.client import (
     _COMMIT_TEMPLATE,
     JjClient,
     JjCommandError,
-    ReviewRefUpdate,
+    PRRefUpdate,
     StaleWorkspaceError,
     _membership_scan_template,
 )
-from jj_stack.models.stack import LocalRevision
-from tests.support.revision_helpers import make_revision
+from jj_stack.models.stack import LocalCommit
+from tests.support.change_helpers import make_change
 
 _REPO_GIT_DIR = str(Path("/repo/.git"))
 
 
-def _revision_line(
+def _commit_line(
     *,
     commit_id: str,
     parents: list[str],
@@ -65,42 +65,42 @@ def _revision_line(
 
 
 class _AmbiguousRevsetClient(JjClient):
-    def _query_revisions(
+    def _query_commits(
         self,
         revset: str,
         *,
         limit: int | None = None,
-    ) -> list[LocalRevision]:
+    ) -> list[LocalCommit]:
         return [
-            make_revision(commit_id="one", change_id="one-change", description="one\n"),
-            make_revision(commit_id="two", change_id="two-change", description="two\n"),
+            make_change(commit_id="one", change_id="one-change", description="one\n"),
+            make_change(commit_id="two", change_id="two-change", description="two\n"),
         ]
 
 
 class _InvalidRevsetClient(JjClient):
-    def _query_revisions(
+    def _query_commits(
         self,
         revset: str,
         *,
         limit: int | None = None,
-    ) -> list[LocalRevision]:
+    ) -> list[LocalCommit]:
         raise JjCommandError("jj log failed: Error: Failed to parse revset: unexpected token")
 
 
-def test_resolve_revision_reports_ambiguous_revsets_with_ambiguous_exit_code() -> None:
+def test_resolve_commit_reports_ambiguous_revsets_with_ambiguous_exit_code() -> None:
     client = _AmbiguousRevsetClient(Path("/repo"))
 
     with pytest.raises(CliError) as excinfo:
-        client.resolve_revision("heads(all())")
+        client.resolve_commit("heads(all())")
 
     assert resolve_exit_code(excinfo.value) == EXIT_AMBIGUOUS
 
 
-def test_resolve_revision_reports_invalid_revsets_with_usage_exit_code() -> None:
+def test_resolve_commit_reports_invalid_revsets_with_usage_exit_code() -> None:
     client = _InvalidRevsetClient(Path("/repo"))
 
     with pytest.raises(CliError) as excinfo:
-        client.resolve_revision("bad(")
+        client.resolve_commit("bad(")
 
     assert resolve_exit_code(excinfo.value) == EXIT_USAGE
 
@@ -122,7 +122,7 @@ def test_membership_query_preserves_stale_workspace_guidance(
     monkeypatch.setattr(subprocess, "run", run)
 
     with pytest.raises(StaleWorkspaceError, match="workspace is stale") as excinfo:
-        JjClient(Path("/repo")).query_revisions_with_membership(
+        JjClient(Path("/repo")).query_commits_with_membership(
             "trunk()",
             membership_revsets=("trunk()",),
         )
@@ -194,7 +194,7 @@ def test_first_post_bootstrap_jj_call_uses_normal_snapshot_lifecycle(
     ]
 
 
-def test_find_private_commits_returns_matching_revisions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_find_private_commits_returns_matching_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     responses: dict[tuple[str, ...], str] = {
         ("jj", "config", "get", "git.private-commits"): "description(private)\n",
         (
@@ -205,7 +205,7 @@ def test_find_private_commits_returns_matching_revisions(monkeypatch: pytest.Mon
             "(description(private)) & ('head' | 'parent')",
             "-T",
             _template(),
-        ): _revision_line(
+        ): _commit_line(
             commit_id="head",
             parents=["parent"],
             change_id="head-change",
@@ -213,11 +213,11 @@ def test_find_private_commits_returns_matching_revisions(monkeypatch: pytest.Mon
         ),
     }
 
-    revisions = (
-        make_revision(commit_id="head", change_id="head-change", description="head\n"),
-        make_revision(commit_id="parent", change_id="parent-change", description="parent\n"),
+    changes = (
+        make_change(commit_id="head", change_id="head-change", description="head\n"),
+        make_change(commit_id="parent", change_id="parent-change", description="parent\n"),
     )
-    result = _client(monkeypatch, responses).find_private_commits(revisions)
+    result = _client(monkeypatch, responses).find_private_commits(changes)
 
     assert len(result) == 1
     assert result[0].commit_id == "head"
@@ -359,7 +359,7 @@ def test_remote_failure_redacts_http_userinfo_without_changing_subprocess_argv(
     assert remote_url in seen_commands[-1]
 
 
-def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
+def test_missing_pr_branch_fetch_isolation_is_a_shared_dry_run_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
@@ -397,7 +397,7 @@ def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
         raise AssertionError(f"unexpected command: {invocation!r}")
 
     monkeypatch.setattr(subprocess, "run", runner)
-    result = JjClient(Path("/repo")).ensure_review_fetch_isolation(
+    result = JjClient(Path("/repo")).ensure_pr_branch_fetch_isolation(
         remote="origin",
         dry_run=True,
     )
@@ -407,10 +407,10 @@ def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
     assert all("config --add" not in " ".join(command) for command in seen_commands)
 
 
-def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
+def test_pr_branch_fetch_isolation_normalizes_duplicate_exclusions_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    review_refspec = "^refs/heads/jj-stack/*"
+    pr_branch_refspec = "^refs/heads/jj-stack/*"
     positive_refspec = "+refs/heads/*:refs/remotes/origin/*"
     seen_commands: list[tuple[str, ...]] = []
     events: list[str] = []
@@ -448,9 +448,9 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
         ):
             events.append("post-read" if normalized else "initial-read")
             refspecs = (
-                (positive_refspec, review_refspec)
+                (positive_refspec, pr_branch_refspec)
                 if normalized
-                else (positive_refspec, review_refspec, review_refspec)
+                else (positive_refspec, pr_branch_refspec, pr_branch_refspec)
             )
             return subprocess.CompletedProcess(
                 command,
@@ -466,8 +466,8 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
             "--fixed-value",
             "--replace-all",
             "remote.origin.fetch",
-            review_refspec,
-            review_refspec,
+            pr_branch_refspec,
+            pr_branch_refspec,
         ):
             events.append("replace")
             normalized = True
@@ -475,7 +475,7 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
         raise AssertionError(f"unexpected command: {invocation!r}")
 
     monkeypatch.setattr(subprocess, "run", runner)
-    result = JjClient(Path("/repo")).ensure_review_fetch_isolation(
+    result = JjClient(Path("/repo")).ensure_pr_branch_fetch_isolation(
         remote="origin",
     )
 
@@ -493,8 +493,8 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
             "--fixed-value",
             "--replace-all",
             "remote.origin.fetch",
-            review_refspec,
-            review_refspec,
+            pr_branch_refspec,
+            pr_branch_refspec,
         )
     ]
     assert events == ["initial-read", "replace", "post-read"]
@@ -502,7 +502,7 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
     assert result.problem == "duplicate"
 
 
-def test_review_fetch_isolation_reports_the_effective_override_origin(
+def test_pr_branch_fetch_isolation_reports_the_effective_override_origin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
@@ -521,7 +521,7 @@ def test_review_fetch_isolation_reports_the_effective_override_origin(
     monkeypatch.setattr(subprocess, "run", runner)
 
     with pytest.raises(CliError) as raised:
-        JjClient(Path("/repo")).ensure_review_fetch_isolation(
+        JjClient(Path("/repo")).ensure_pr_branch_fetch_isolation(
             remote="origin",
         )
 
@@ -529,7 +529,7 @@ def test_review_fetch_isolation_reports_the_effective_override_origin(
     assert "jj config unset --repo" in str(raised.value)
 
 
-def test_imported_review_bookmark_scan_reports_every_reserved_namespace_ref(
+def test_imported_pr_bookmark_scan_reports_every_reserved_namespace_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = (
@@ -544,13 +544,13 @@ def test_imported_review_bookmark_scan_reports_every_reserved_namespace_ref(
 
     monkeypatch.setattr(subprocess, "run", runner)
 
-    assert JjClient(Path("/repo")).visible_review_bookmark_targets() == {
+    assert JjClient(Path("/repo")).visible_pr_bookmark_targets() == {
         "jj-stack/feature-abcdefgh": frozenset({"two"}),
         "jj-stack/not-managed": frozenset({"one"}),
     }
 
 
-def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push(
+def test_remote_pr_branch_ref_mutation_uses_one_atomic_exact_lease_push(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_commands: list[tuple[str, ...]] = []
@@ -605,15 +605,15 @@ def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push(
 
     monkeypatch.setattr(subprocess, "run", runner)
     client = JjClient(Path("/repo"))
-    client.mutate_remote_review_refs(
+    client.mutate_remote_pr_branch_refs(
         remote="origin",
         updates=(
-            ReviewRefUpdate(
+            PRRefUpdate(
                 branch=old_branch,
                 expected_target="old",
                 desired_target="updated",
             ),
-            ReviewRefUpdate(
+            PRRefUpdate(
                 branch=new_branch,
                 expected_target=None,
                 desired_target="created",
@@ -754,7 +754,7 @@ def test_temp_ref_cleanup_removes_raw_ref_when_forgetting_bookmark_fails(
     monkeypatch.setattr(subprocess, "run", runner)
 
     with pytest.raises(JjCommandError, match="forget failed"):
-        JjClient(Path("/repo"))._clear_review_temp_ref()
+        JjClient(Path("/repo"))._clear_pr_branch_temp_ref()
 
     assert not raw_ref_present
     assert any(command[3:4] == ("update-ref",) for command in seen_commands)
@@ -772,18 +772,18 @@ def _selection_scan_template(selection_revset: str) -> str:
     return _membership_scan_template(("trunk()", selection_revset))
 
 
-def _revision_with_flag_line(revision_line: str, *, is_trunk: bool) -> str:
+def _commit_with_flag_line(commit_line: str, *, is_trunk: bool) -> str:
     return (
         json.dumps(
-            {"revision": json.loads(revision_line), "membership": [is_trunk]},
+            {"commit": json.loads(commit_line), "membership": [is_trunk]},
             separators=(",", ":"),
         )
         + "\n"
     )
 
 
-def _revision_with_two_flags_line(
-    revision_line: str,
+def _commit_with_two_flags_line(
+    commit_line: str,
     *,
     is_trunk: bool,
     is_selected: bool,
@@ -791,7 +791,7 @@ def _revision_with_two_flags_line(
     return (
         json.dumps(
             {
-                "revision": json.loads(revision_line),
+                "commit": json.loads(commit_line),
                 "membership": [is_trunk, is_selected],
             },
             separators=(",", ":"),
@@ -814,12 +814,12 @@ def _selection_scan_command(selection_revset: str) -> tuple[str, ...]:
 
 def _selection_scan_response(*entries: tuple[str, bool, bool]) -> str:
     return "".join(
-        _revision_with_two_flags_line(
-            revision_line,
+        _commit_with_two_flags_line(
+            commit_line,
             is_trunk=is_trunk,
             is_selected=is_selected,
         )
-        for revision_line, is_trunk, is_selected in entries
+        for commit_line, is_trunk, is_selected in entries
     )
 
 

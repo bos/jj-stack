@@ -1,4 +1,4 @@
-"""Configured ownership policy for jj-stack review branches."""
+"""Configured ownership policy for jj-stack PR branches."""
 
 from __future__ import annotations
 
@@ -6,16 +6,16 @@ import re
 from dataclasses import dataclass
 
 from jj_stack.identifiers import short_change_id
-from jj_stack.models.stack import LocalRevision
+from jj_stack.models.stack import LocalCommit
 
 _DEFAULT_SLUG = "change"
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
-_current_namespace: ReviewNamespace | None = None
+_current_namespace: PRBranchNamespace | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewNamespace:
-    """The configured namespace jj-stack may use for review branches."""
+class PRBranchNamespace:
+    """The configured namespace jj-stack may use for PR branches."""
 
     prefix: str
 
@@ -37,12 +37,12 @@ class ReviewNamespace:
 
         return f"^refs/heads/{self.branch_glob}"
 
-    def generate_branch(self, revision: LocalRevision) -> str:
+    def generate_branch(self, change: LocalCommit) -> str:
         """Generate the initial readable branch name for a change."""
 
-        first_line = revision.description.splitlines()[0] if revision.description else ""
+        first_line = change.description.splitlines()[0] if change.description else ""
         slug = _NON_ALNUM_RE.sub("-", first_line.lower()).strip("-") or _DEFAULT_SLUG
-        return f"{self.branch_prefix}{slug}-{short_change_id(revision.change_id)}"
+        return f"{self.branch_prefix}{slug}-{short_change_id(change.change_id)}"
 
     def contains(self, branch: str) -> bool:
         """Return whether a branch belongs to this namespace."""
@@ -57,22 +57,22 @@ class ReviewNamespace:
         return f"refs/heads/{branch}"
 
 
-def install_review_namespace(prefix: str) -> None:
+def install_pr_branch_namespace(prefix: str) -> None:
     """Install the configured namespace for the current CLI invocation."""
 
     global _current_namespace
-    _current_namespace = ReviewNamespace(prefix)
+    _current_namespace = PRBranchNamespace(prefix)
 
 
-def current_review_namespace() -> ReviewNamespace:
+def current_pr_branch_namespace() -> PRBranchNamespace:
     """Return the namespace installed during command bootstrap."""
 
     if _current_namespace is None:
-        raise RuntimeError("review namespace has not been installed")
+        raise RuntimeError("PR branch namespace has not been installed")
     return _current_namespace
 
 
-def review_branch_matches_change(branch: str, change_id: str) -> bool:
+def pr_branch_matches_change(branch: str, change_id: str) -> bool:
     """Whether a branch carries the change's short-ID suffix."""
 
     return branch.endswith(f"-{short_change_id(change_id)}")

@@ -317,7 +317,7 @@ def _build_consoles(
     cli_args: JjCliArgs,
     color_mode: ColorMode = "auto",
     load_styles: bool = True,
-    repository: Path | None = None,
+    repo: Path | None = None,
     stderr: IO[str] | None = None,
     stdout: IO[str] | None = None,
     time_output: bool = False,
@@ -331,7 +331,7 @@ def _build_consoles(
     if load_styles and (
         _console_emits_color(stdout_console) or _console_emits_color(stderr_console)
     ):
-        semantic_styles = load_semantic_styles(repository=repository, cli_args=cli_args)
+        semantic_styles = load_semantic_styles(repo=repo, cli_args=cli_args)
     return (
         _build_console(
             stdout_console,
@@ -371,7 +371,7 @@ def configured_console(
     *,
     cli_args: JjCliArgs = _NO_CLI_ARGS,
     color_mode: ColorMode = "auto",
-    repository: Path | None = None,
+    repo: Path | None = None,
     requested_color_mode: RequestedColorMode | None = None,
     stderr: IO[str] | None = None,
     stdout: IO[str] | None = None,
@@ -396,7 +396,7 @@ def configured_console(
     _STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles(
         cli_args=cli_args,
         color_mode=color_mode,
-        repository=repository,
+        repo=repo,
         stderr=stderr,
         stdout=stdout,
         time_output=time_output,

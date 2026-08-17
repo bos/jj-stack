@@ -1,6 +1,6 @@
 ---
-title: Close or separate pull requests
-linkTitle: Close or separate PRs
+title: Separate a stack or close pull requests
+linkTitle: Separate or close
 description: >-
   Break up your GitHub stack without closing your pull requests, or close your work without
   merging it.
@@ -15,11 +15,10 @@ depends on whether your pull requests are still useful:
 - To abandon your work, close your pull requests and then use `cleanup` to remove what jj-stack
   no longer needs.
 
-## Keep your pull requests open but separate them
+## Remove a stack's GitHub grouping
 
-Use this when your pull requests are still useful but no longer need to depend on one another or
-merge in a particular order. For example, after revising your work, you may decide that each pull
-request can be reviewed and merged on its own.
+Use this when your pull requests are still useful but you no longer want GitHub to treat them as
+one native stack.
 
 Remove your GitHub stack grouping:
 
@@ -27,12 +26,14 @@ Remove your GitHub stack grouping:
 jj-stack unstack <head-change-id>
 ```
 
-Your pull requests remain open. You can review, update, or close them individually afterward.
+Your pull requests remain open. Their base branches and dependencies do not change, so removing
+the grouping does not necessarily make them independently mergeable. You can still review,
+update, or close them individually afterward.
 
 If jj-stack says the GitHub grouping no longer matches your local stack, rerun `unstack` with the
 `--stack <number>` command printed in the error.
 
-## Close your stack without merging it
+## Close the PRs in your stack without merging them
 
 Use this when you have decided not to land your changes—for example, because the work is no
 longer needed or another approach replaced it. Closing your pull requests records that decision
@@ -45,14 +46,14 @@ close each of your pull requests on GitHub or with `gh`:
 gh pr close <pr>
 ```
 
-Finally, remove your unused review branches, stack overview comments, and saved pull-request
+Finally, remove your unused PR branches, stack overview comments, and saved pull-request
 links:
 
 ```console
 jj-stack cleanup <head-change-id>
 ```
 
-Cleanup leaves a review branch in place if an open pull request still needs it. Close or retarget
+Cleanup leaves a PR branch in place if an open pull request still needs it. Close or retarget
 that pull request, then run the same cleanup command again.
 
 ## Close an orphaned pull request

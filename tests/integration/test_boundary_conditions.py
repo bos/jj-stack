@@ -51,7 +51,7 @@ def test_commands_report_non_github_remote_without_traceback(
     assert exit_code == 1
     assert_output_contains(
         captured.out + captured.err,
-        "Ensure its fetch and push URLs identify the same GitHub repository.",
+        "Ensure its fetch and push URLs identify the same GitHub repo.",
     )
     _assert_no_traceback(captured)
 
@@ -69,7 +69,7 @@ def test_stack_commands_reject_merge_commits_without_traceback(
     combined = captured.out + captured.err
 
     assert exit_code == EXIT_NO_STACK
-    assert "merge commits are not supported" in combined
+    assert "merge changes are not supported" in combined
     _assert_no_traceback(captured)
 
 
@@ -127,7 +127,7 @@ def _add_github_like_remote(repo: Path) -> None:
             "remote",
             "add",
             "origin",
-            "https://github.com/octo-org/stacked-review.git",
+            "https://github.com/octo-org/stacked-prs.git",
         ],
         repo,
     )

@@ -28,7 +28,7 @@ flowchart LR
 ## Titles and descriptions
 
 For each of your changes, the subject becomes its pull request title and the rest of the
-description becomes the body. If there is no body, `submit` tries the repository pull request
+description becomes the body. If there is no body, `submit` tries the repo's pull request
 template.
 
 You can review everything in your preferred editor before anything is pushed:
@@ -65,11 +65,11 @@ has its own editable draft choice.
 ## Reviewers and labels
 
 When choosing reviewers and labels for one of your pull requests or your whole stack, `jj-stack`
-starts with repository defaults from your `jj` config. It then adds any reviewers and labels you
+starts with repo defaults from your `jj` config. It then adds any reviewers and labels you
 name on the command line.
 
 An explicit `--label` is applied even when the pull request otherwise needs no update; labels
-from repository defaults alone do not turn an unchanged pull request into an update.
+from repo defaults alone do not turn an unchanged pull request into an update.
 
 After addressing review or automation feedback, you can request another look from reviewers who
 previously approved or asked for changes (i.e. revoking the approved state of your PRs):
@@ -83,7 +83,7 @@ jj-stack submit --re-request
 | Surface | Effect |
 |---|---|
 | Local `jj` history | Not rewritten |
-| Review branches | Created or updated |
+| PR branches | Created or updated |
 | Pull requests | Created or updated |
 | Pull request order | Updated to match the local change order |
 | Other local stacks | Not changed |
@@ -98,7 +98,7 @@ first.
 For the exact contract between local history and edits made in the GitHub UI, see
 [work with a stack on GitHub](working-on-github.md).
 
-(If you wanted to get pathological, you could move commit A from stack 1 to stack 2, and commit
-B from stack 2 to stack 1, in which case any automated stack surgery would start to get complex.
+(If you wanted to get pathological, you could move change A from stack 1 to stack 2, and change B
+from stack 2 to stack 1, in which case any automated stack surgery would start to get complex.
 `jj-stack submit` does *not* try to detect or deal with cases like this. If you really need to
 make complex changes to your stacks, do it step by step.)

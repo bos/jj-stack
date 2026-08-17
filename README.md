@@ -37,7 +37,7 @@ To invoke it as `jj stack` and complete that alias too, see
 
 ### Submit your first stack
 
-Start with a linear series of local `jj` changes on top of `trunk()`. In a new repository, check
+Start with a linear series of local `jj` changes on top of `trunk()`. In a new repo, check
 the setup and apply the safe local fixes:
 
 ```bash
@@ -57,12 +57,12 @@ jj-stack submit
 ```
 
 Revise the changes locally with `jj` and rerun `jj-stack submit` whenever the stack is ready to
-refresh. Use `jj-stack list` to see every tracked stack in the repository.
+refresh. Use `jj-stack list` to see every tracked stack in the repo.
 
 ## Mental model
 
 The local `jj` DAG determines which changes form a stack and their order. On GitHub, each change
-gets a stable review branch and a PR; every PR targets the review branch below it, except the
+gets a stable PR branch and a PR; every PR targets the PR branch below it, except the
 bottom PR, which targets trunk by default:
 
 ```text
@@ -72,8 +72,9 @@ jj-stack/refactor-model-... -> PR #1 (base: main)
 main                        -> trunk
 ```
 
-The review branches normally stay out of your local bookmark view. When you rewrite a change,
-`jj-stack` updates its existing branch and PR, along with the changes that depend on it.
+The PR branches normally stay out of your local bookmark view. When you rewrite a change,
+`jj-stack` updates that change's existing PR branch and PR, along with the PR branches and PRs for
+dependent changes.
 
 ## Everyday workflow
 

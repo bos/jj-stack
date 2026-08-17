@@ -13,30 +13,30 @@ from pathlib import Path
 from pydantic import JsonValue, ValidationError
 
 from jj_stack.errors import CliError
-from jj_stack.models.review_state import (
-    ReviewIdentity,
-    ReviewState,
+from jj_stack.models.tracking import (
+    PRIdentity,
     SubmittedBaseline,
+    TrackingState,
 )
-from jj_stack.review_namespace import review_branch_matches_change
+from jj_stack.pr_branch_namespace import pr_branch_matches_change
 
 STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"
 
 
-class ReviewStateError(CliError):
+class TrackingStateError(CliError):
     """Raised when the tracking data is unreadable or invalid."""
 
 
-class ReviewStateStore:
-    """Load and atomically write review tracking state."""
+class TrackingStore:
+    """Load and atomically write pull request tracking state."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
 
     @classmethod
-    def for_repo(cls, repo_root: Path) -> ReviewStateStore:
-        """Build a jj-stack data store for the supplied repository root."""
+    def for_repo(cls, repo_root: Path) -> TrackingStore:
+        """Build a jj-stack data store for the supplied repo root."""
 
         return cls(resolve_state_path(repo_root))
 
@@ -46,12 +46,12 @@ class ReviewStateStore:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as error:
-            raise ReviewStateError(
+            raise TrackingStateError(
                 f"Could not create jj-stack data directory {self._path.parent}: {error}"
             ) from error
         return self._path.parent
 
-    def load(self) -> ReviewState:
+    def load(self) -> TrackingState:
         """Load and validate the complete tracking file."""
 
         return self._load_state()
@@ -64,69 +64,69 @@ class ReviewStateStore:
         except FileNotFoundError:
             return False
         except OSError as error:
-            raise ReviewStateError(
+            raise TrackingStateError(
                 f"Could not inspect jj-stack data path {self._path}: {error}"
             ) from error
         self._load_state()
         return True
 
-    def create_review(
+    def create_pr(
         self,
         change_id: str,
         *,
-        identity: ReviewIdentity,
+        identity: PRIdentity,
         baseline: SubmittedBaseline,
-    ) -> ReviewState:
+    ) -> TrackingState:
         """Atomically create an identity and baseline when both records are absent."""
 
         _require_identity_matches_change(identity, change_id)
         state = self._load_state()
-        if change_id in state.review_identities:
-            raise ReviewStateError(f"Tracking data already exists for {change_id}.")
-        return self._persist(_replace_reviews(state, {change_id: (identity, baseline)}))
+        if change_id in state.pr_identities:
+            raise TrackingStateError(f"Tracking data already exists for {change_id}.")
+        return self._persist(_replace_prs(state, {change_id: (identity, baseline)}))
 
-    def relink_review(
+    def relink_pr(
         self,
         change_id: str,
         *,
-        identity: ReviewIdentity,
+        identity: PRIdentity,
         baseline: SubmittedBaseline,
-    ) -> ReviewState:
-        """Atomically replace one complete review pair."""
+    ) -> TrackingState:
+        """Atomically replace one complete pull request pair."""
 
-        return self.relink_reviews(
+        return self.relink_prs(
             replacements={change_id: (identity, baseline)},
         )
 
-    def relink_reviews(
+    def relink_prs(
         self,
         *,
-        replacements: Mapping[str, tuple[ReviewIdentity, SubmittedBaseline]],
-    ) -> ReviewState:
-        """Atomically replace complete review pairs."""
+        replacements: Mapping[str, tuple[PRIdentity, SubmittedBaseline]],
+    ) -> TrackingState:
+        """Atomically replace complete pull request pairs."""
 
         for change_id, (identity, _baseline) in replacements.items():
             _require_identity_matches_change(identity, change_id)
-        return self._persist(_replace_reviews(self._load_state(), replacements))
+        return self._persist(_replace_prs(self._load_state(), replacements))
 
-    def retire_review(
+    def retire_pr(
         self,
         change_id: str,
-    ) -> ReviewState:
-        """Atomically remove one complete review pair."""
+    ) -> TrackingState:
+        """Atomically remove one complete pull request pair."""
 
         state = self._load_state()
-        identities = dict(state.review_identities)
+        identities = dict(state.pr_identities)
         baselines = dict(state.submitted_baselines)
         del identities[change_id]
         del baselines[change_id]
         return self._persist(
-            ReviewState(review_identities=identities, submitted_baselines=baselines)
+            TrackingState(pr_identities=identities, submitted_baselines=baselines)
         )
 
-    def _load_state(self) -> ReviewState:
+    def _load_state(self) -> TrackingState:
         if not self._path.exists():
-            return ReviewState()
+            return TrackingState()
         if not self._path.is_file():
             raise self._invalid_state_error(f"jj-stack data path is not a file: {self._path}")
         try:
@@ -146,14 +146,14 @@ class ReviewStateStore:
                 f"Invalid jj-stack data in {self._path}: top level must be an object"
             )
         version = raw.get("version")
-        if version != 4:
+        if version != 5:
             raise self._invalid_state_error(
                 f"Invalid jj-stack data in {self._path}: unsupported version {version!r}"
             )
         try:
             _require_nested_versions(raw)
-            state = ReviewState.model_validate(raw)
-            for change_id, identity in state.review_identities.items():
+            state = TrackingState.model_validate(raw)
+            for change_id, identity in state.pr_identities.items():
                 _require_identity_matches_change(identity, change_id)
         except (ValidationError, ValueError) as error:
             raise self._invalid_state_error(
@@ -161,7 +161,7 @@ class ReviewStateStore:
             ) from error
         return state
 
-    def _persist(self, state: ReviewState) -> ReviewState:
+    def _persist(self, state: TrackingState) -> TrackingState:
         rendered = state.model_dump_json(exclude_none=True, indent=2) + "\n"
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,39 +178,39 @@ class ReviewStateStore:
                 Path(tmp_name).unlink(missing_ok=True)
                 raise
         except OSError as error:
-            raise ReviewStateError(
+            raise TrackingStateError(
                 f"Could not write jj-stack data file {self._path}: {error}"
             ) from error
         return state
 
-    def _invalid_state_error(self, message: str) -> ReviewStateError:
+    def _invalid_state_error(self, message: str) -> TrackingStateError:
         backup_path = self._path.with_name(f"{self._path.name}.bak")
         move_command = f"mv -i {shlex.quote(str(self._path))} {shlex.quote(str(backup_path))}"
-        return ReviewStateError(
+        return TrackingStateError(
             message,
             hint=(
-                f"Move the file aside with `{move_command}`, then explicitly re-adopt reviews "
-                "with `jj-stack checkout --pull-request PR` or "
+                f"Move the file aside with `{move_command}`, then explicitly re-adopt pull "
+                "requests with `jj-stack checkout --pull-request PR` or "
                 "`jj-stack relink PR CHANGE`."
             ),
         )
 
 
-def _replace_reviews(
-    state: ReviewState,
-    replacements: Mapping[str, tuple[ReviewIdentity, SubmittedBaseline]],
-) -> ReviewState:
-    identities = dict(state.review_identities)
+def _replace_prs(
+    state: TrackingState,
+    replacements: Mapping[str, tuple[PRIdentity, SubmittedBaseline]],
+) -> TrackingState:
+    identities = dict(state.pr_identities)
     baselines = dict(state.submitted_baselines)
     for change_id, (identity, baseline) in replacements.items():
         identities[change_id] = identity
         baselines[change_id] = baseline
-    return ReviewState(review_identities=identities, submitted_baselines=baselines)
+    return TrackingState(pr_identities=identities, submitted_baselines=baselines)
 
 
 def _require_nested_versions(raw: dict[str, JsonValue]) -> None:
     for field_name, label in (
-        ("review_identities", "review identity"),
+        ("pr_identities", "PR identity"),
         ("submitted_baselines", "submitted baseline"),
     ):
         records = raw.get(field_name)
@@ -221,11 +221,9 @@ def _require_nested_versions(raw: dict[str, JsonValue]) -> None:
                 raise ValueError(f"Persisted {label} is missing its version.")
 
 
-def _require_identity_matches_change(identity: ReviewIdentity, change_id: str) -> None:
-    if not review_branch_matches_change(identity.head_ref, change_id):
-        raise ValueError(
-            f"Review branch {identity.head_ref!r} does not match change {change_id!r}."
-        )
+def _require_identity_matches_change(identity: PRIdentity, change_id: str) -> None:
+    if not pr_branch_matches_change(identity.head_ref, change_id):
+        raise ValueError(f"PR branch {identity.head_ref!r} does not match change {change_id!r}.")
 
 
 def resolve_state_path(repo_root: Path) -> Path:
@@ -244,11 +242,11 @@ def _resolve_repo_storage_root(repo_root: Path) -> Path:
         try:
             target = repo_path.read_text(encoding="utf-8").strip()
         except OSError as error:
-            raise ReviewStateError(
-                f"Could not read jj repository path file {repo_path}: {error}"
+            raise TrackingStateError(
+                f"Could not read jj repo path file {repo_path}: {error}"
             ) from error
         if not target:
-            raise ReviewStateError(f"jj repository path file is empty: {repo_path}")
+            raise TrackingStateError(f"jj repo path file is empty: {repo_path}")
         repo_path = repo_path.parent / target
     return repo_path.resolve()
 

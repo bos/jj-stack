@@ -1,6 +1,6 @@
-"""Remove review branches, comments, and saved links no active pull request needs.
+"""Remove PR branches, comments, and saved links no active pull request needs.
 
-With no selector, it checks the whole repository. A revision limits cleanup to one local stack;
+With no selector, it checks the whole repo. A revset limits cleanup to one local stack;
 `--pull-request` selects one tracked pull request, and `--pull-request orphans` selects every
 tracked pull request whose local change is gone. Add `--close` to close selected open pull
 requests before cleanup.
@@ -8,7 +8,7 @@ requests before cleanup.
 Without `--close`, open pull requests are left alone. Already closed or merged pull requests do
 not need the flag and are cleaned up normally.
 
-If another open pull request still uses a review branch as its base, that branch stays. Close or
+If another open pull request still uses a PR branch as its base, that branch stays. Close or
 retarget the pull request named in the message, then rerun the same cleanup command.
 """
 
@@ -24,14 +24,13 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._cleanup_actions import (
     OverviewCommentLookup,
-    ReviewMutationAction,
     apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
-    check_tracked_review,
+    check_tracked_pr,
     emit_action_row,
     find_overview_comment,
     github_stack_cleanup_blocker,
-    plan_review_cleanup,
+    plan_pr_cleanup,
 )
 from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, run_bounded_tasks
 from jj_stack.errors import AmbiguousSelectionError, UsageError
@@ -43,16 +42,16 @@ from jj_stack.github.resolution import (
     resolve_github_target,
 )
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import ReviewRefUpdate
-from jj_stack.models.review_state import ReviewIdentity, ReviewState
-from jj_stack.review.change_status import enumerate_orphaned_records
-from jj_stack.review.observation import (
-    RepositoryObservation,
-    observe_reviews,
+from jj_stack.jj.client import PRRefUpdate
+from jj_stack.models.tracking import PRIdentity, TrackingState
+from jj_stack.stack.change_status import enumerate_orphaned_records
+from jj_stack.stack.pr_facts import (
+    RepoFacts,
+    observe_prs,
 )
-from jj_stack.review.repository import observe_repository_paths
-from jj_stack.review.selected import select_review_path
-from jj_stack.review.selection import resolve_pull_request_number
+from jj_stack.stack.repo import observe_repo_paths
+from jj_stack.stack.selected import select_stack_path
+from jj_stack.stack.selection import resolve_pr_number
 from jj_stack.state.operation_lock import (
     acquire_operation_lock,
 )
@@ -69,7 +68,7 @@ from .stale import (
     local_cleanup_observations,
 )
 
-HELP = "Remove review data that no active pull request needs"
+HELP = "Remove PR data that no active pull request needs"
 
 
 def _build_action_streamer(*, header: str) -> Callable[[CleanupAction], None]:
@@ -93,19 +92,19 @@ def cleanup(
     close: bool,
     debug: bool,
     dry_run: bool,
-    pull_request: str | None,
-    repository: Path | None,
+    pr: str | None,
+    repo: Path | None,
     revset: str | None,
 ) -> int:
     """CLI entrypoint for `cleanup`."""
 
-    if pull_request is not None and revset is not None:
-        raise UsageError("cleanup --pull-request cannot be combined with a revision.")
-    if close and pull_request is None:
+    if pr is not None and revset is not None:
+        raise UsageError("cleanup --pull-request cannot be combined with a revset.")
+    if close and pr is None:
         raise UsageError("cleanup --close requires --pull-request.")
 
     context = bootstrap_context(
-        repository=repository,
+        repo=repo,
         cli_args=cli_args,
         debug=debug,
     )
@@ -117,7 +116,7 @@ def cleanup(
             close=close,
             context=context,
             dry_run=dry_run,
-            pull_request=pull_request,
+            pr=pr,
             revset=revset,
         )
 
@@ -127,22 +126,22 @@ def _run_cleanup_command(
     close: bool,
     context: CommandContext,
     dry_run: bool,
-    pull_request: str | None,
+    pr: str | None,
     revset: str | None,
 ) -> int:
     """Render and run the stale cleanup command path."""
 
-    with console.spinner(description="Loading review state"):
+    with console.spinner(description="Loading PR state"):
         prepared_cleanup = _prepare_cleanup(
             close=close,
             context=context,
             dry_run=dry_run,
-            pull_request=pull_request,
+            pr=pr,
             revset=revset,
         )
     selected_change_ids = prepared_cleanup.selected_change_ids
     observed_change_ids = (
-        tuple(prepared_cleanup.state.review_identities)
+        tuple(prepared_cleanup.state.pr_identities)
         if selected_change_ids is None
         else selected_change_ids
     )
@@ -173,7 +172,7 @@ def _run_cleanup_command(
     return 1 if any(action.status == "blocked" for action in result.actions) else 0
 
 
-async def cleanup_tracked_reviews(
+async def cleanup_tracked_prs(
     *,
     change_ids: tuple[str, ...],
     context: CommandContext,
@@ -183,13 +182,13 @@ async def cleanup_tracked_reviews(
     planned_detached_dependents: frozenset[int] = frozenset(),
     planned_local_removals: frozenset[str] = frozenset(),
 ) -> CleanupResult:
-    """Run the cleanup implementation for reviews reconciled by another command."""
+    """Run cleanup for PRs reconciled by another command."""
 
     state = context.state_store.load()
     if not dry_run:
         context.state_store.require_writable()
     prepared_cleanup = PreparedCleanup(
-        close_open_pull_requests=False,
+        close_open_prs=False,
         context=context,
         github_target=github_target,
         dry_run=dry_run,
@@ -226,7 +225,7 @@ def _prepare_cleanup(
     close: bool,
     context: CommandContext,
     dry_run: bool,
-    pull_request: str | None,
+    pr: str | None,
     revset: str | None,
 ) -> PreparedCleanup:
     """Resolve local cleanup inputs before any GitHub network inspection."""
@@ -237,13 +236,13 @@ def _prepare_cleanup(
         state_store.require_writable()
     selected_change_ids = _resolve_cleanup_change_ids(
         context=context,
-        pull_request=pull_request,
+        pr=pr,
         revset=revset,
         state=state,
     )
 
     return PreparedCleanup(
-        close_open_pull_requests=close,
+        close_open_prs=close,
         context=context,
         github_target=None,
         dry_run=dry_run,
@@ -255,50 +254,46 @@ def _prepare_cleanup(
 def _resolve_cleanup_change_ids(
     *,
     context: CommandContext,
-    pull_request: str | None,
+    pr: str | None,
     revset: str | None,
-    state: ReviewState,
+    state: TrackingState,
 ) -> tuple[str, ...] | None:
     """Resolve an optional cleanup selector to saved change IDs."""
 
-    if pull_request == "orphans":
-        repository_paths = observe_repository_paths(
+    if pr == "orphans":
+        repo_paths = observe_repo_paths(
             jj_client=context.jj_client,
             state=state,
         )
-        tracked_stacks = tuple(
-            path.stack for path in repository_paths.paths if path.tracked_change_ids
-        )
+        tracked_stacks = tuple(path.stack for path in repo_paths.paths if path.tracked_change_ids)
         return tuple(
             orphan.change_id for orphan in enumerate_orphaned_records(state, tracked_stacks)
         )
-    if pull_request is not None:
-        pull_request_number = resolve_pull_request_number(
+    if pr is not None:
+        pr_number = resolve_pr_number(
             jj_client=context.jj_client,
-            pull_request_reference=pull_request,
+            pr_reference=pr,
         )
         matches = tuple(
             change_id
-            for change_id, identity in state.review_identities.items()
-            if identity.pr_number == pull_request_number
+            for change_id, identity in state.pr_identities.items()
+            if identity.pr_number == pr_number
         )
         if len(matches) > 1:
             raise AmbiguousSelectionError(
-                t"Multiple saved reviews claim PR #{pull_request_number}.",
+                t"Multiple saved links claim PR #{pr_number}.",
                 hint=t"Run {ui.cmd('list')} to inspect them and repair the incorrect link.",
             )
         return matches
     if revset is None:
         return None
-    stack = select_review_path(
+    stack = select_stack_path(
         jj_client=context.jj_client,
         revset=revset,
         state=state,
     ).stack
     return tuple(
-        revision.change_id
-        for revision in stack.revisions
-        if revision.change_id in state.review_identities
+        change.change_id for change in stack.changes if change.change_id in state.pr_identities
     )
 
 
@@ -324,7 +319,7 @@ async def _run_cleanup_async(
     github_target = prepared_cleanup.github_target
     if isinstance(github_target, GithubTarget) and prepared_changes:
         if github_client is not None:
-            await _run_tracked_review_cleanup_pass(
+            await _run_tracked_pr_cleanup_pass(
                 github_client=github_client,
                 prepared_changes=prepared_changes,
                 prepared_cleanup=prepared_cleanup,
@@ -332,8 +327,8 @@ async def _run_cleanup_async(
                 record_action=record_action,
             )
         else:
-            async with build_github_client(repository=github_target.repository) as client:
-                await _run_tracked_review_cleanup_pass(
+            async with build_github_client(repo=github_target.repo) as client:
+                await _run_tracked_pr_cleanup_pass(
                     github_client=client,
                     prepared_changes=prepared_changes,
                     prepared_cleanup=prepared_cleanup,
@@ -347,8 +342,8 @@ async def _run_cleanup_async(
                 CleanupAction(
                     kind="tracking",
                     status="blocked",
-                    body=t"cannot inspect PR #{candidate.review_identity.pr_number} for "
-                    t"{ui.change_id(candidate.change_id)} because the GitHub repository "
+                    body=t"cannot inspect PR #{candidate.pr_identity.pr_number} for "
+                    t"{ui.change_id(candidate.change_id)} because the GitHub repo "
                     t"cannot be resolved",
                 )
             )
@@ -363,12 +358,12 @@ def _run_local_cleanup_pass(
     prepared_changes: list[PreparedCleanupChange] = []
     selected_change_ids = prepared_cleanup.selected_change_ids
     change_ids = (
-        tuple(prepared_cleanup.state.review_identities)
+        tuple(prepared_cleanup.state.pr_identities)
         if selected_change_ids is None
         else selected_change_ids
     )
     for change_id in change_ids:
-        candidate = prepared_cleanup.state.tracked_review(change_id)
+        candidate = prepared_cleanup.state.tracked_pr(change_id)
         if candidate is None:
             continue
         local_observation = local_observations.get(
@@ -388,7 +383,7 @@ def _run_local_cleanup_pass(
     return tuple(prepared_changes)
 
 
-async def _run_tracked_review_cleanup_pass(
+async def _run_tracked_pr_cleanup_pass(
     *,
     github_client: GithubClient,
     prepared_changes: tuple[PreparedCleanupChange, ...],
@@ -396,15 +391,15 @@ async def _run_tracked_review_cleanup_pass(
     preview_detached_dependents: frozenset[int] = frozenset(),
     record_action: Callable[[CleanupAction], None],
 ) -> None:
-    """Clean closed exact review records while preserving open or ambiguous ones."""
+    """Clean exact closed-PR records while preserving open or ambiguous ones."""
 
     if not prepared_changes:
         return
     remote = prepared_cleanup.remote
     if remote is None:
-        raise AssertionError("Tracked review cleanup requires a configured remote.")
+        raise AssertionError("Tracked PR cleanup requires a configured remote.")
     remote_name = remote.name
-    observations = await _observe_cleanup_reviews(
+    observations = await _observe_cleanup_prs(
         change_ids=tuple(change.candidate.change_id for change in prepared_changes),
         context=prepared_cleanup.context,
         github_client=github_client,
@@ -419,13 +414,13 @@ async def _run_tracked_review_cleanup_pass(
                     kind="tracking",
                     status="blocked",
                     body=t"cannot inspect saved PR "
-                    t"#{candidate.review_identity.pr_number} for "
+                    t"#{candidate.pr_identity.pr_number} for "
                     t"{ui.change_id(candidate.change_id)}; fix GitHub access, then rerun "
                     t"{ui.cmd('cleanup')}",
                 )
             )
             continue
-        stop_after_failure = await _cleanup_tracked_review(
+        stop_after_failure = await _cleanup_tracked_pr(
             github_client=github_client,
             initial_observation=observation,
             prepared_change=prepared_change,
@@ -438,18 +433,18 @@ async def _run_tracked_review_cleanup_pass(
             break
 
 
-async def _observe_cleanup_reviews(
+async def _observe_cleanup_prs(
     *,
     change_ids: tuple[str, ...],
     context: CommandContext,
     github_client: GithubClient,
     remote_name: str,
-) -> dict[str, RepositoryObservation | GithubClientError]:
+) -> dict[str, RepoFacts | GithubClientError]:
     """Batch first, then isolate only records that GitHub cannot decode."""
 
-    async def observe_one(change_id: str) -> RepositoryObservation | GithubClientError:
+    async def observe_one(change_id: str) -> RepoFacts | GithubClientError:
         try:
-            return await observe_reviews(
+            return await observe_prs(
                 change_ids=(change_id,),
                 context=context,
                 github_client=github_client,
@@ -460,7 +455,7 @@ async def _observe_cleanup_reviews(
             return error
 
     try:
-        observation = await observe_reviews(
+        observation = await observe_prs(
             change_ids=change_ids,
             context=context,
             github_client=github_client,
@@ -478,10 +473,10 @@ async def _observe_cleanup_reviews(
     return dict(zip(change_ids, values, strict=True))
 
 
-async def _cleanup_tracked_review(
+async def _cleanup_tracked_pr(
     *,
     github_client: GithubClient,
-    initial_observation: RepositoryObservation,
+    initial_observation: RepoFacts,
     prepared_change: PreparedCleanupChange,
     prepared_cleanup: PreparedCleanup,
     preview_detached_dependents: frozenset[int],
@@ -491,9 +486,9 @@ async def _cleanup_tracked_review(
     """Plan and apply one cleanup, returning whether a partial failure must stop the pass."""
 
     candidate = prepared_change.candidate
-    identity = candidate.review_identity
-    review_state, update, blocker_action = _review_cleanup_update(
-        close_open_pull_requests=prepared_cleanup.close_open_pull_requests,
+    identity = candidate.pr_identity
+    pr_state, update, blocker_action = _pr_cleanup_update(
+        close_open_prs=prepared_cleanup.close_open_prs,
         observation=initial_observation,
         prepared_change=prepared_change,
         preview_detached_dependents=preview_detached_dependents,
@@ -501,7 +496,7 @@ async def _cleanup_tracked_review(
     if blocker_action is not None:
         record_action(blocker_action)
         return False
-    if review_state == "open" and not prepared_cleanup.close_open_pull_requests:
+    if pr_state == "open" and not prepared_cleanup.close_open_prs:
         if prepared_change.stale_reason is not None:
             record_action(
                 CleanupAction(
@@ -511,7 +506,7 @@ async def _cleanup_tracked_review(
                 )
             )
         return False
-    if review_state == "merged" and prepared_change.has_mutable_copy:
+    if pr_state == "merged" and prepared_change.has_mutable_copy:
         record_action(
             CleanupAction(
                 kind="tracking",
@@ -524,10 +519,10 @@ async def _cleanup_tracked_review(
         return False
     stack_blocker = await github_stack_cleanup_blocker(
         github_client=github_client,
-        pull_number=identity.pr_number,
+        pr_number=identity.pr_number,
     )
     if stack_blocker is not None:
-        record_action(_cleanup_action(stack_blocker))
+        record_action(stack_blocker)
         return False
     overview_lookup = await _preflight_cleanup_overview_comment(
         github_client=github_client,
@@ -536,7 +531,7 @@ async def _cleanup_tracked_review(
     )
     if overview_lookup is None:
         return False
-    if review_state == "open":
+    if pr_state == "open":
         close_action = CleanupAction(
             kind="pull request",
             status="planned" if prepared_cleanup.dry_run else "applied",
@@ -544,7 +539,7 @@ async def _cleanup_tracked_review(
         )
         if not prepared_cleanup.dry_run:
             try:
-                await github_client.close_pull_request(pull_number=identity.pr_number)
+                await github_client.close_pr(pr_number=identity.pr_number)
             except GithubClientError as error:
                 record_action(
                     CleanupAction(
@@ -555,7 +550,7 @@ async def _cleanup_tracked_review(
                 )
                 return True
         record_action(close_action)
-    return await _apply_tracked_review_cleanup(
+    return await _apply_tracked_pr_cleanup(
         branch_update=update,
         overview_lookup=overview_lookup,
         github_client=github_client,
@@ -566,51 +561,51 @@ async def _cleanup_tracked_review(
     )
 
 
-def _review_cleanup_update(
+def _pr_cleanup_update(
     *,
-    close_open_pull_requests: bool,
-    observation: RepositoryObservation,
+    close_open_prs: bool,
+    observation: RepoFacts,
     prepared_change: PreparedCleanupChange,
     preview_detached_dependents: frozenset[int] = frozenset(),
-) -> tuple[str, ReviewRefUpdate | None, CleanupAction | None]:
-    """Check the exact review and derive its remote branch deletion."""
+) -> tuple[str, PRRefUpdate | None, CleanupAction | None]:
+    """Check the exact PR and derive its remote branch deletion."""
 
     candidate = prepared_change.candidate
-    pull_request, blocker = check_tracked_review(
+    pr, blocker = check_tracked_pr(
         allowed_states=frozenset({"open", "closed", "merged"}),
         candidate=candidate,
         observation=observation,
     )
     if blocker is not None:
-        return "blocked", None, _cleanup_action(blocker)
-    if pull_request is None:
+        return "blocked", None, blocker
+    if pr is None:
         raise AssertionError("Exact cleanup lookup must return a pull request.")
-    if pull_request.state == "open" and not close_open_pull_requests:
+    if pr.state == "open" and not close_open_prs:
         return "open", None, None
-    _pull_request, update, blocker = plan_review_cleanup(
+    _pr, update, blocker = plan_pr_cleanup(
         allowed_states=(
             frozenset({"open", "closed", "merged"})
-            if close_open_pull_requests
+            if close_open_prs
             else frozenset({"closed", "merged"})
         ),
         candidate=candidate,
         observation=observation,
         preview_detached_dependents=preview_detached_dependents,
     )
-    return pull_request.state, update, None if blocker is None else _cleanup_action(blocker)
+    return pr.state, update, blocker
 
 
 async def _preflight_cleanup_overview_comment(
     *,
     github_client: GithubClient,
-    identity: ReviewIdentity,
+    identity: PRIdentity,
     record_action: Callable[[CleanupAction], None],
 ) -> OverviewCommentLookup | None:
     """Resolve the overview comment, recording and stopping on an ambiguous lookup."""
 
     lookup = await find_overview_comment(
         github_client=github_client,
-        pull_request_number=identity.pr_number,
+        pr_number=identity.pr_number,
     )
     if lookup.blocked_reason is not None:
         record_action(
@@ -624,9 +619,9 @@ async def _preflight_cleanup_overview_comment(
     return lookup
 
 
-async def _apply_tracked_review_cleanup(
+async def _apply_tracked_pr_cleanup(
     *,
-    branch_update: ReviewRefUpdate | None,
+    branch_update: PRRefUpdate | None,
     overview_lookup: OverviewCommentLookup,
     github_client: GithubClient,
     prepared_change: PreparedCleanupChange,
@@ -643,7 +638,7 @@ async def _apply_tracked_review_cleanup(
     apply_remote_branch_cleanup(
         dry_run=prepared_cleanup.dry_run,
         jj_client=prepared_cleanup.context.jj_client,
-        record_action=lambda action: record_action(_cleanup_action(action)),
+        record_action=record_action,
         remote_name=remote_name,
         update=branch_update,
     )
@@ -651,10 +646,10 @@ async def _apply_tracked_review_cleanup(
         dry_run=prepared_cleanup.dry_run,
         github_client=github_client,
         lookup=overview_lookup,
-        pull_request_number=candidate.review_identity.pr_number,
+        pr_number=candidate.pr_identity.pr_number,
     )
     for action in comment_actions:
-        record_action(_cleanup_action(action))
+        record_action(action)
     if not comments_current:
         return mutation_started
     reason = (
@@ -663,21 +658,17 @@ async def _apply_tracked_review_cleanup(
     action = CleanupAction(
         kind="tracking",
         status="planned" if prepared_cleanup.dry_run else "applied",
-        body=t"forget PR #{candidate.review_identity.pr_number} for "
+        body=t"forget PR #{candidate.pr_identity.pr_number} for "
         t"{ui.change_id(candidate.change_id)}{reason}",
     )
     if prepared_cleanup.dry_run:
         record_action(action)
     else:
-        prepared_cleanup.context.state_store.retire_review(
+        prepared_cleanup.context.state_store.retire_pr(
             candidate.change_id,
         )
         record_action(action)
     return False
-
-
-def _cleanup_action(action: ReviewMutationAction) -> CleanupAction:
-    return CleanupAction(kind=action.kind, status=action.status, body=action.body)
 
 
 def _load_cleanup_remote_context(*, prepared_cleanup: PreparedCleanup) -> PreparedCleanup:
@@ -702,7 +693,7 @@ def _cleanup_needs_remote_context(
     return any(
         change_id in prepared_cleanup.state.submitted_baselines
         for change_id in (
-            tuple(prepared_cleanup.state.review_identities)
+            tuple(prepared_cleanup.state.pr_identities)
             if prepared_cleanup.selected_change_ids is None
             else prepared_cleanup.selected_change_ids
         )

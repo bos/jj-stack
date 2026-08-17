@@ -8,17 +8,17 @@ from jj_stack.commands.merge.preconditions import merge_precondition_error
 from jj_stack.errors import EXIT_USAGE, CliError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubRepository
-from jj_stack.review.observation import RepositoryObservation
+from jj_stack.models.github import GithubRepo
+from jj_stack.stack.pr_facts import RepoFacts
 
 
-def _repository(
+def _repo(
     *,
     allow_merge_commit: bool | None,
     allow_rebase_merge: bool | None,
     allow_squash_merge: bool | None,
-) -> GithubRepository:
-    return GithubRepository(
+) -> GithubRepo:
+    return GithubRepo(
         allow_merge_commit=allow_merge_commit,
         allow_rebase_merge=allow_rebase_merge,
         allow_squash_merge=allow_squash_merge,
@@ -47,24 +47,21 @@ def test_command_surface_has_merge_without_land_or_transport_flags(capsys) -> No
 
 @pytest.mark.merge_recovery
 def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
-    repository = _repository(
+    repo = _repo(
         allow_merge_commit=False,
         allow_rebase_merge=False,
         allow_squash_merge=True,
     )
 
-    assert (
-        _resolve_merge_method(configured=None, merge_method=None, repository_state=repository)
-        == "squash"
-    )
+    assert _resolve_merge_method(configured=None, merge_method=None, repo_state=repo) == "squash"
 
 
 @pytest.mark.merge_recovery
 @pytest.mark.parametrize(
-    ("repository", "message"),
+    ("repo", "message"),
     (
         (
-            _repository(
+            _repo(
                 allow_merge_commit=True,
                 allow_rebase_merge=True,
                 allow_squash_merge=False,
@@ -72,7 +69,7 @@ def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
             "more than one merge method",
         ),
         (
-            _repository(
+            _repo(
                 allow_merge_commit=None,
                 allow_rebase_merge=None,
                 allow_squash_merge=None,
@@ -80,7 +77,7 @@ def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
             "did not report which merge methods",
         ),
         (
-            _repository(
+            _repo(
                 allow_merge_commit=False,
                 allow_rebase_merge=False,
                 allow_squash_merge=False,
@@ -90,84 +87,81 @@ def test_resolve_merge_method_uses_the_only_allowed_method() -> None:
     ),
 )
 def test_resolve_merge_method_rejects_ambiguous_or_absent_settings(
-    repository: GithubRepository,
+    repo: GithubRepo,
     message: str,
 ) -> None:
     with pytest.raises(CliError, match=message):
-        _resolve_merge_method(configured=None, merge_method=None, repository_state=repository)
+        _resolve_merge_method(configured=None, merge_method=None, repo_state=repo)
 
 
 @pytest.mark.merge_recovery
 def test_resolve_merge_method_prefers_the_flag_over_configuration() -> None:
-    """A repository allowing several methods is the normal case, so config has to settle it.
+    """A repo allowing several methods is the normal case, so config has to settle it.
 
     GitHub reports which methods it allows but never which to prefer, so without a configured
-    default every merge in such a repository needs the flag typed out.
+    default every merge in such a repo needs the flag typed out.
     """
 
-    repository = _repository(
+    repo = _repo(
         allow_merge_commit=True,
         allow_rebase_merge=True,
         allow_squash_merge=True,
     )
 
     assert (
-        _resolve_merge_method(configured="squash", merge_method=None, repository_state=repository)
-        == "squash"
+        _resolve_merge_method(configured="squash", merge_method=None, repo_state=repo) == "squash"
     )
     assert (
-        _resolve_merge_method(
-            configured="squash", merge_method="merge", repository_state=repository
-        )
+        _resolve_merge_method(configured="squash", merge_method="merge", repo_state=repo)
         == "merge"
     )
 
 
 @pytest.mark.merge_recovery
-def test_resolve_merge_method_rejects_a_method_the_repository_disallows() -> None:
-    repository = _repository(
+def test_resolve_merge_method_rejects_a_method_the_repo_disallows() -> None:
+    repo = _repo(
         allow_merge_commit=False,
         allow_rebase_merge=False,
         allow_squash_merge=True,
     )
 
     with pytest.raises(CliError, match="does not allow"):
-        _resolve_merge_method(configured="rebase", merge_method=None, repository_state=repository)
+        _resolve_merge_method(configured="rebase", merge_method=None, repo_state=repo)
 
 
 @pytest.mark.merge_recovery
-def test_merge_preconditions_reject_repository_drift() -> None:
-    expected_repository = GithubRepoAddress(
+def test_merge_preconditions_reject_repo_drift() -> None:
+    expected_repo = GithubRepoAddress(
         owner="acme",
         repo="widgets",
     )
-    observation = RepositoryObservation(
-        configured_repository=GithubRepoAddress(
+    observation = RepoFacts(
+        configured_repo=GithubRepoAddress(
             owner="other",
             repo="widgets",
         ),
-        github_repository=_repository(
+        github_repo=_repo(
             allow_merge_commit=False,
             allow_rebase_merge=False,
             allow_squash_merge=True,
         ),
-        open_pull_requests_by_base=None,
+        open_prs_by_base=None,
         remote=GitRemote(
             name="origin",
             fetch_url="https://github.test/acme/widgets.git",
             push_url="https://github.test/acme/widgets.git",
         ),
-        repository=expected_repository,
-        reviews={},
+        repo=expected_repo,
+        prs={},
     )
 
     assert (
         merge_precondition_error(
-            expected_repository=expected_repository,
+            expected_repo=expected_repo,
             expected_trunk_branch="main",
             observation=observation,
             remote_name="origin",
-            revisions=(),
+            changes=(),
         )
-        == "the configured Git remote no longer names the planned GitHub repository"
+        == "the configured Git remote no longer names the planned GitHub repo"
     )

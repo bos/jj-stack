@@ -5,14 +5,14 @@ from __future__ import annotations
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.formatting import (
-    format_pull_request_label,
-    render_revision_blocks,
-    render_revision_lines,
+    format_pr_label,
+    render_commit_blocks,
+    render_commit_lines,
 )
 from jj_stack.jj.client import JjClient
-from jj_stack.models.stack import LocalRevision
+from jj_stack.models.stack import LocalCommit
 
-from .models import SubmitResult, SubmittedRevision
+from .models import SubmitResult, SubmittedChange
 
 
 def print_submit_result(result: SubmitResult) -> None:
@@ -22,12 +22,11 @@ def print_submit_result(result: SubmitResult) -> None:
     # Overlap the `jj log` subprocess startup cost before we print the final summary for large
     # stacks.
     with console.spinner(description="Rendering jj log"):
-        prerendered_blocks = render_revision_blocks(
+        prerendered_blocks = render_commit_blocks(
             client=client,
-            revisions=tuple(revision.prepared.revision for revision in result.revisions)
-            + (result.trunk,),
+            changes=tuple(change.prepared.change for change in result.changes) + (result.trunk,),
         )
-    if not result.revisions:
+    if not result.changes:
         for line in _render_submit_trunk_lines(
             client=client,
             prerendered_lines=prerendered_blocks.get(result.trunk.commit_id),
@@ -35,7 +34,7 @@ def print_submit_result(result: SubmitResult) -> None:
         ):
             console.output(line, soft_wrap=True)
         console.note(
-            "The selected stack has no changes to review.",
+            "The selected stack has no changes to submit.",
             soft_wrap=True,
         )
         return
@@ -45,11 +44,11 @@ def print_submit_result(result: SubmitResult) -> None:
         console.output("Planned changes:")
     else:
         console.output("Submitted changes:")
-    for revision in reversed(result.revisions):
-        for line in _render_submit_revision_lines(
+    for change in reversed(result.changes):
+        for line in _render_submit_change_lines(
             client=client,
-            prerendered_lines=prerendered_blocks.get(revision.prepared.revision.commit_id),
-            revision=revision,
+            prerendered_lines=prerendered_blocks.get(change.prepared.change.commit_id),
+            change=change,
         ):
             console.output(line, soft_wrap=True)
     for line in _render_submit_trunk_lines(
@@ -59,9 +58,9 @@ def print_submit_result(result: SubmitResult) -> None:
     ):
         console.output(line, soft_wrap=True)
     if not result.dry_run:
-        top_pull_request_url = result.revisions[-1].pull_request_url
-        if top_pull_request_url is not None:
-            console.output(ui.prefixed_line("Top of stack: ", top_pull_request_url))
+        top_pr_url = result.changes[-1].pr_url
+        if top_pr_url is not None:
+            console.output(ui.prefixed_line("Top of stack: ", top_pr_url))
 
 
 def print_selected_line(
@@ -78,41 +77,41 @@ def print_selected_line(
     )
 
 
-def _render_submit_revision_lines(
+def _render_submit_change_lines(
     *,
     client: JjClient,
     prerendered_lines: tuple[str, ...] | None = None,
-    revision: SubmittedRevision,
+    change: SubmittedChange,
 ) -> tuple[ui.Renderable, ...]:
     parts: list[str] = []
-    if revision.pull_request_action != "created":
-        if revision.prepared.remote_action == "up to date":
+    if change.pr_action != "created":
+        if change.prepared.remote_action == "up to date":
             parts.append("already pushed")
         else:
             parts.append("pushed")
 
-    if revision.pull_request_number is None:
-        if revision.pull_request_action == "created":
+    if change.pr_number is None:
+        if change.pr_action == "created":
             parts.append("new PR")
-        elif revision.pull_request_action == "updated":
+        elif change.pr_action == "updated":
             parts.append("PR updated")
         else:
             parts.append("PR unchanged")
     else:
-        label = format_pull_request_label(
-            revision.pull_request_number,
-            is_draft=bool(revision.pull_request_is_draft),
+        label = format_pr_label(
+            change.pr_number,
+            is_draft=bool(change.pr_is_draft),
         )
-        if revision.pull_request_action == "created":
+        if change.pr_action == "created":
             parts.append(label)
         else:
-            parts.append(f"{label} {revision.pull_request_action}")
+            parts.append(f"{label} {change.pr_action}")
 
     summary = ", ".join(parts)
-    return render_revision_lines(
+    return render_commit_lines(
         client=client,
         prerendered_lines=prerendered_lines,
-        revision=revision.prepared.revision,
+        change=change.prepared.change,
         suffix=summary,
     )
 
@@ -121,10 +120,10 @@ def _render_submit_trunk_lines(
     *,
     client: JjClient,
     prerendered_lines: tuple[str, ...] | None = None,
-    trunk: LocalRevision,
+    trunk: LocalCommit,
 ) -> tuple[ui.Renderable, ...]:
-    return render_revision_lines(
+    return render_commit_lines(
         client=client,
         prerendered_lines=prerendered_lines,
-        revision=trunk,
+        change=trunk,
     )

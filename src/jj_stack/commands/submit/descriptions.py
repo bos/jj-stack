@@ -17,7 +17,7 @@ from typing import Literal
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, UsageError
 from jj_stack.jj.client import JjClient, JjCommandError
-from jj_stack.models.stack import LocalRevision
+from jj_stack.models.stack import LocalCommit
 
 from .models import GeneratedDescription
 
@@ -29,7 +29,7 @@ def resolve_generated_descriptions(
     descriptions: Sequence[str],
     describe_with: str | None,
     jj_client: JjClient,
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
     selected_revset: str,
 ) -> tuple[dict[str, GeneratedDescription], GeneratedDescription | None]:
     """Resolve pull request descriptions and an optional stack description."""
@@ -38,16 +38,16 @@ def resolve_generated_descriptions(
         raise UsageError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
 
     if describe_with is None:
-        default_descriptions = _default_pull_request_descriptions(
-            revisions,
-            template=_read_pull_request_template(jj_client.repo_root),
+        default_descriptions = _default_pr_descriptions(
+            changes,
+            template=_read_pr_template(jj_client.repo_root),
         )
         stack_description: GeneratedDescription | None = None
         if descriptions:
             file_descriptions, stack_description = _resolve_description_files(
                 descriptions=descriptions,
                 jj_client=jj_client,
-                revisions=revisions,
+                changes=changes,
             )
             default_descriptions = {
                 **default_descriptions,
@@ -56,20 +56,20 @@ def resolve_generated_descriptions(
         return default_descriptions, stack_description
 
     generated_descriptions = {
-        revision.change_id: _run_description_command(
+        change.change_id: _run_description_command(
             command=describe_with,
             kind="pr",
             repo_root=jj_client.repo_root,
-            revset=revision.change_id,
+            revset=change.change_id,
         )
-        for revision in revisions
+        for change in changes
     }
     generated_stack_description = None
-    if len(revisions) > 1:
+    if len(changes) > 1:
         stack_input = _build_stack_description_input(
             generated_descriptions=generated_descriptions,
             jj_client=jj_client,
-            revisions=revisions,
+            changes=changes,
         )
         with tempfile.TemporaryDirectory(prefix="jj-stack-describe-with-") as tempdir:
             stack_input_path = Path(tempdir) / "stack-input.json"
@@ -86,27 +86,27 @@ def resolve_generated_descriptions(
     return generated_descriptions, generated_stack_description
 
 
-def _default_pull_request_descriptions(
-    revisions: tuple[LocalRevision, ...],
+def _default_pr_descriptions(
+    changes: tuple[LocalCommit, ...],
     *,
     template: str,
 ) -> dict[str, GeneratedDescription]:
     return {
-        revision.change_id: GeneratedDescription(
-            body=_pull_request_body(revision.description, template=template),
-            title=revision.subject,
+        change.change_id: GeneratedDescription(
+            body=_pr_body(change.description, template=template),
+            title=change.subject,
         )
-        for revision in revisions
+        for change in changes
     }
 
 
-_PULL_REQUEST_TEMPLATE_DIRECTORIES = (".github", "", "docs")
-_PULL_REQUEST_TEMPLATE_NAMES = ("PULL_REQUEST_TEMPLATE.md", "pull_request_template.md")
+_PR_TEMPLATE_DIRECTORIES = (".github", "", "docs")
+_PR_TEMPLATE_NAMES = ("PULL_REQUEST_TEMPLATE.md", "pull_request_template.md")
 
 
-def _read_pull_request_template(repo_root: Path) -> str:
-    for directory in _PULL_REQUEST_TEMPLATE_DIRECTORIES:
-        for name in _PULL_REQUEST_TEMPLATE_NAMES:
+def _read_pr_template(repo_root: Path) -> str:
+    for directory in _PR_TEMPLATE_DIRECTORIES:
+        for name in _PR_TEMPLATE_NAMES:
             path = repo_root / directory / name
             if not path.is_file():
                 continue
@@ -128,7 +128,7 @@ def render_description_edit_document(
     *,
     descriptions: dict[str, GeneratedDescription],
     drafts: dict[str, bool],
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
 ) -> str:
     """Render the `--edit` document, head change first like `view`."""
 
@@ -138,11 +138,11 @@ def render_description_edit_document(
         "JJ: In each change section the first line is the title; the rest is the body.",
         'JJ: Other lines starting with "JJ:" are ignored. Do not edit the separators.',
     ]
-    for revision in reversed(revisions):
-        description = descriptions[revision.change_id]
+    for change in reversed(changes):
+        description = descriptions[change.change_id]
         lines.append("")
-        lines.append(f"{_EDIT_SEPARATOR_PREFIX}{revision.change_id}")
-        lines.append(f"{_EDIT_DRAFT_PREFIX} {'yes' if drafts[revision.change_id] else 'no'}")
+        lines.append(f"{_EDIT_SEPARATOR_PREFIX}{change.change_id}")
+        lines.append(f"{_EDIT_DRAFT_PREFIX} {'yes' if drafts[change.change_id] else 'no'}")
         lines.append(description.title)
         if description.body:
             lines.append("")
@@ -153,11 +153,11 @@ def render_description_edit_document(
 def parse_description_edit_document(
     document: str,
     *,
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
 ) -> tuple[dict[str, GeneratedDescription], dict[str, bool]]:
     """Parse an edited `--edit` document, failing closed on anything malformed."""
 
-    known_change_ids = {revision.change_id for revision in revisions}
+    known_change_ids = {change.change_id for change in changes}
     sections: dict[str, list[str]] = {}
     drafts: dict[str, bool] = {}
     current_change_id: str | None = None
@@ -207,17 +207,17 @@ def parse_description_edit_document(
         current_section.append(line)
 
     parsed: dict[str, GeneratedDescription] = {}
-    for revision in revisions:
-        section = sections.get(revision.change_id)
+    for change in changes:
+        section = sections.get(change.change_id)
         if section is None:
             raise CliError(
                 t"Edited pull request descriptions are missing change "
-                t"{ui.change_id(revision.change_id)}."
+                t"{ui.change_id(change.change_id)}."
             )
-        if revision.change_id not in drafts:
+        if change.change_id not in drafts:
             raise CliError(
                 t"Edited pull request is missing draft state for "
-                t"{ui.change_id(revision.change_id)}."
+                t"{ui.change_id(change.change_id)}."
             )
         title_index = 0
         while title_index < len(section) and not section[title_index].strip():
@@ -225,9 +225,9 @@ def parse_description_edit_document(
         if title_index == len(section):
             raise CliError(
                 t"Edited pull request description for "
-                t"{ui.change_id(revision.change_id)} has no title line."
+                t"{ui.change_id(change.change_id)} has no title line."
             )
-        parsed[revision.change_id] = GeneratedDescription(
+        parsed[change.change_id] = GeneratedDescription(
             body="\n".join(section[title_index + 1 :]).strip(),
             title=section[title_index].strip(),
         )
@@ -289,18 +289,18 @@ def _strip_surrounding_quotes(text: str) -> str:
     return text
 
 
-def edit_pull_requests_in_editor(
+def edit_prs_in_editor(
     *,
     descriptions: dict[str, GeneratedDescription],
     drafts: dict[str, bool],
     jj_client: JjClient,
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
 ) -> tuple[dict[str, GeneratedDescription], dict[str, bool]]:
     editor_command = _resolve_editor_command(jj_client)
     document = render_description_edit_document(
         descriptions=descriptions,
         drafts=drafts,
-        revisions=revisions,
+        changes=changes,
     )
     with tempfile.TemporaryDirectory(prefix="jj-stack-edit-") as tempdir:
         document_path = Path(tempdir) / "pull-request-descriptions.md"
@@ -323,21 +323,21 @@ def edit_pull_requests_in_editor(
                 t"{completed.returncode}; submit aborted."
             )
         edited_document = document_path.read_text(encoding="utf-8")
-    return parse_description_edit_document(edited_document, revisions=revisions)
+    return parse_description_edit_document(edited_document, changes=changes)
 
 
 def _resolve_description_files(
     *,
     descriptions: Sequence[str],
     jj_client: JjClient,
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
 ) -> tuple[dict[str, GeneratedDescription], GeneratedDescription | None]:
     generated_descriptions: dict[str, GeneratedDescription] = {}
     generated_stack_description: GeneratedDescription | None = None
     for description in descriptions:
         target, path_text = _parse_description_file_spec(description)
         if target == "stack":
-            if len(revisions) <= 1:
+            if len(changes) <= 1:
                 raise UsageError(
                     t"{ui.cmd('--describe stack=FILE')} is only used when the selected "
                     t"stack has more than one change.",
@@ -351,19 +351,19 @@ def _resolve_description_files(
             )
             continue
 
-        revision = _resolve_description_target(
+        change = _resolve_description_target(
             jj_client=jj_client,
-            revisions=revisions,
+            changes=changes,
             target=target,
         )
-        if revision.change_id in generated_descriptions:
+        if change.change_id in generated_descriptions:
             raise UsageError(
-                t"{ui.cmd('--describe')} specified {ui.change_id(revision.change_id)} "
+                t"{ui.cmd('--describe')} specified {ui.change_id(change.change_id)} "
                 t"more than once."
             )
-        generated_descriptions[revision.change_id] = GeneratedDescription(
+        generated_descriptions[change.change_id] = GeneratedDescription(
             body=_read_description_file(path_text),
-            title=revision.subject,
+            title=change.subject,
         )
     return generated_descriptions, generated_stack_description
 
@@ -383,25 +383,25 @@ def _parse_description_file_spec(description: str) -> tuple[str, str]:
 def _resolve_description_target(
     *,
     jj_client: JjClient,
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
     target: str,
-) -> LocalRevision:
+) -> LocalCommit:
     try:
-        target_revision = jj_client.resolve_revision(target)
+        target_change = jj_client.resolve_commit(target)
     except CliError as error:
         raise CliError(
             t"Could not resolve {ui.cmd('--describe')} target {ui.revset(target)}: {error}"
         ) from error
 
-    matching_revision = next(
-        (revision for revision in revisions if revision.change_id == target_revision.change_id),
+    matching_change = next(
+        (change for change in changes if change.change_id == target_change.change_id),
         None,
     )
-    if matching_revision is None:
+    if matching_change is None:
         raise UsageError(
             t"{ui.cmd('--describe')} target {ui.revset(target)} is not in the selected stack."
         )
-    return matching_revision
+    return matching_change
 
 
 def _read_description_file(path_text: str) -> str:
@@ -416,18 +416,18 @@ def _build_stack_description_input(
     *,
     generated_descriptions: dict[str, GeneratedDescription],
     jj_client: JjClient,
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
 ) -> dict[str, object]:
-    diffstats = _describe_with_diffstats(jj_client=jj_client, revisions=revisions)
+    diffstats = _describe_with_diffstats(jj_client=jj_client, changes=changes)
     return {
-        "revisions": [
+        "changes": [
             {
-                "body": generated_descriptions[revision.change_id].body,
-                "change_id": revision.change_id,
-                "diffstat": diffstats[revision.change_id],
-                "title": generated_descriptions[revision.change_id].title,
+                "body": generated_descriptions[change.change_id].body,
+                "change_id": change.change_id,
+                "diffstat": diffstats[change.change_id],
+                "title": generated_descriptions[change.change_id].title,
             }
-            for revision in revisions
+            for change in changes
         ]
     }
 
@@ -435,30 +435,30 @@ def _build_stack_description_input(
 def _describe_with_diffstats(
     *,
     jj_client: JjClient,
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
 ) -> dict[str, str]:
-    if not revisions:
+    if not changes:
         return {}
-    if len(revisions) == 1:
-        revision = revisions[0]
+    if len(changes) == 1:
+        change = changes[0]
         return {
-            revision.change_id: _describe_with_diffstat(
+            change.change_id: _describe_with_diffstat(
                 jj_client=jj_client,
-                revset=revision.change_id,
+                revset=change.change_id,
             )
         }
 
-    def describe_revision(revision: LocalRevision) -> tuple[str, str]:
+    def describe_change(change: LocalCommit) -> tuple[str, str]:
         return (
-            revision.change_id,
+            change.change_id,
             _describe_with_diffstat(
                 jj_client=jj_client,
-                revset=revision.change_id,
+                revset=change.change_id,
             ),
         )
 
-    with ThreadPoolExecutor(max_workers=min(len(revisions), 10)) as pool:
-        return dict(pool.map(describe_revision, revisions))
+    with ThreadPoolExecutor(max_workers=min(len(changes), 10)) as pool:
+        return dict(pool.map(describe_change, changes))
 
 
 def _describe_with_diffstat(*, jj_client: JjClient, revset: str) -> str:
@@ -558,7 +558,7 @@ def _run_description_command(
     return GeneratedDescription(body=body, title=title)
 
 
-def _pull_request_body(description: str, *, template: str) -> str:
+def _pr_body(description: str, *, template: str) -> str:
     lines = description.splitlines()
     if not lines:
         return template

@@ -36,8 +36,8 @@
         "current": {
           "const": true
         },
-        "pull_request": {
-          "$ref": "#/$defs/pullRequest"
+        "pr": {
+          "$ref": "#/$defs/pr"
         }
       }
     },
@@ -111,12 +111,12 @@
         "status": {
           "const": "orphan"
         },
-        "pull_request": {
-          "$ref": "#/$defs/pullRequest"
+        "pr": {
+          "$ref": "#/$defs/pr"
         }
       }
     },
-    "pullRequest": {
+    "pr": {
       "type": "object",
       "additionalProperties": false,
       "anyOf": [

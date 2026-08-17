@@ -25,6 +25,10 @@ def test_completion_suggests_canonical_commands_but_accepts_typed_aliases() -> N
     spec = _build_completion_spec(build_parser())
 
     assert {"submit", "view", "list"} <= set(spec.visible_command_names)
+    repo_option = next(
+        option for option in spec.top_level_options if "--repository" in option.flags
+    )
+    assert repo_option.value_kind == "directory"
     for alias in ("sub", "status", "st", "v", "ls"):
         assert alias not in spec.visible_command_names
         assert alias in spec.all_command_names

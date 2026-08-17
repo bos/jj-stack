@@ -7,7 +7,7 @@ import pytest
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.state.store import TrackingStore
 
 from ..support.fake_github import FakeGithubState, _complete_stack_merge, create_app
 from ..support.integration_helpers import (
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.merge_recovery
 
 
 @pytest.mark.parametrize("stack_size", (1, 2))
-def test_merge_queue_accepts_single_and_stacked_reviews_without_a_merge_method(
+def test_merge_queue_accepts_single_and_stacked_prs_without_a_merge_method(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -55,10 +55,8 @@ def test_merge_queue_accepts_single_and_stacked_reviews_without_a_merge_method(
     assert fake_repo.stack_merge_requests == [
         (stack_size, None, "merge_queue", stack.head.commit_id)
     ]
-    assert all(fake_repo.pull_requests[number].is_queued for number in range(1, stack_size + 1))
-    assert all(
-        fake_repo.pull_requests[number].state == "open" for number in range(1, stack_size + 1)
-    )
+    assert all(fake_repo.prs[number].is_queued for number in range(1, stack_size + 1))
+    assert all(fake_repo.prs[number].state == "open" for number in range(1, stack_size + 1))
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert "ignoring --method" in captured.err
     assert "In merge queue" in captured.out
@@ -86,7 +84,7 @@ def test_merge_queue_lookup_failure_falls_back_to_direct_merge(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class QueueLookupFailureClient(GithubClient):
         async def base_branch_uses_merge_queue(self, *, branch):
@@ -105,7 +103,7 @@ def test_merge_queue_lookup_failure_falls_back_to_direct_merge(
 
     assert exit_code == 0, (captured.out, captured.err)
     assert fake_repo.stack_merge_requests[0][2] == "direct_merge"
-    assert fake_repo.pull_requests[1].merged_at is not None
+    assert fake_repo.prs[1].merged_at is not None
 
 
 def test_merge_accepts_a_stack_based_on_an_older_trunk(
@@ -113,9 +111,9 @@ def test_merge_accepts_a_stack_based_on_an_older_trunk(
     monkeypatch,
     capsys,
 ) -> None:
-    """Trunk moving under a reviewed stack is GitHub's call, not a reason for jj-stack to refuse.
+    """Trunk moving under a PRed stack is GitHub's call, not a reason for jj-stack to refuse.
 
-    Unrelated work reaching trunk is routine in a busy repository. GitHub merges a reviewed
+    Unrelated work reaching trunk is routine in a busy repo. GitHub merges a PRed
     pull request whose base is behind as long as it does not conflict, so refusing locally only
     forced a rebase and a force-push of an already-reviewed branch.
     """
@@ -129,8 +127,8 @@ def test_merge_accepts_a_stack_based_on_an_older_trunk(
 
     assert exit_code == 0
     assert "not based on the current" not in captured.out + captured.err
-    assert fake_repo.pull_requests[1].merged_at is not None
-    assert fake_repo.pull_requests[2].merged_at is not None
+    assert fake_repo.prs[1].merged_at is not None
+    assert fake_repo.prs[2].merged_at is not None
 
 
 def test_merge_draft_blocks_the_candidate_prefix(
@@ -140,7 +138,7 @@ def test_merge_draft_blocks_the_candidate_prefix(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.pull_requests[1].is_draft = True
+    fake_repo.prs[1].is_draft = True
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
 
     exit_code = run_main(repo, config_path, "merge")
@@ -149,8 +147,8 @@ def test_merge_draft_blocks_the_candidate_prefix(
     assert exit_code == 1
     assert "Merge blocked:" in captured.out
     assert "is now a draft" in captured.out
-    assert fake_repo.pull_requests[1].state == "open"
-    assert fake_repo.pull_requests[2].state == "open"
+    assert fake_repo.prs[1].state == "open"
+    assert fake_repo.prs[2].state == "open"
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
 
 
@@ -161,22 +159,22 @@ def test_stack_merge_reports_github_failure_during_automatic_sync(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     stack_before = selected_stack(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
-    class SyncRepositoryFailureClient(GithubClient):
-        async def get_repository(self):
-            raise GithubClientError("sync repository lookup failed")
+    class SyncRepoFailureClient(GithubClient):
+        async def get_repo(self):
+            raise GithubClientError("sync repo lookup failed")
 
     patch_github_client_builders(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
         modules=("jj_stack.commands.sync",),
-        client_type=SyncRepositoryFailureClient,
+        client_type=SyncRepoFailureClient,
     )
 
     exit_code = run_main(repo, config_path, "merge")
@@ -186,7 +184,7 @@ def test_stack_merge_reports_github_failure_during_automatic_sync(
     assert fake_repo.stack_merge_requests == [
         (1, "squash", "direct_merge", stack_before.head.commit_id)
     ]
-    assert fake_repo.pull_requests[1].state == "closed"
+    assert fake_repo.prs[1].state == "closed"
     assert read_remote_ref(fake_repo.git_dir, "main") != trunk_before
     assert "final trunk commit" in captured.out
     assert "Updating the local stack after the completed merge" in captured.out
@@ -195,10 +193,10 @@ def test_stack_merge_reports_github_failure_during_automatic_sync(
     assert "Do not run jj-stack merge again" in error
     assert f"jj-stack sync {stack_before.head.change_id}" in error
     assert "Could not update the local stack after the completed merge" in error
-    assert "request failed (sync repository lookup failed)" in error
+    assert "request failed (sync repo lookup failed)" in error
     assert state_store.load() == state_before
-    assert tuple(revision.commit_id for revision in selected_stack(repo).revisions) == tuple(
-        revision.commit_id for revision in stack_before.revisions
+    assert tuple(change.commit_id for change in selected_stack(repo).changes) == tuple(
+        change.commit_id for change in stack_before.changes
     )
 
 
@@ -211,7 +209,7 @@ def test_stack_merge_commit_uses_resolved_head_for_automatic_sync(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.allow_merge_commit = True
     fake_repo.github_stacks = {7: (1, 2)}
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     stack = selected_stack(repo)
 
     merge_exit_code = run_main(
@@ -223,20 +221,18 @@ def test_stack_merge_commit_uses_resolved_head_for_automatic_sync(
         "heads(trunk()..@-)",
     )
     merged = capsys.readouterr()
-    merge_commit = fake_repo.pull_requests[1].merge_commit_sha
+    merge_commit = fake_repo.prs[1].merge_commit_sha
 
     assert merge_exit_code == 0, (merged.out, merged.err)
     assert merge_commit is not None
-    assert fake_repo.pull_requests[2].merge_commit_sha == merge_commit
+    assert fake_repo.prs[2].merge_commit_sha == merge_commit
     assert merge_commit == read_remote_ref(fake_repo.git_dir, "main")
-    assert all(
-        fake_repo.is_ancestor(revision.commit_id, merge_commit) for revision in stack.revisions
-    )
+    assert all(fake_repo.is_ancestor(change.commit_id, merge_commit) for change in stack.changes)
 
     assert "Updating the local stack after the completed merge" in merged.out
     assert "submit" not in merged.out
-    assert state_store.load().review_identities == {}
-    assert JjClient(repo).resolve_revision("@").parents == (merge_commit,)
+    assert state_store.load().pr_identities == {}
+    assert JjClient(repo).resolve_commit("@").parents == (merge_commit,)
 
 
 @pytest.mark.parametrize("merge_method", ("rebase", "squash"))
@@ -250,7 +246,7 @@ def test_stack_rewriting_merge_automatically_retires_pre_merge_copies(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.allow_rebase_merge = True
     fake_repo.github_stacks = {7: (1, 2)}
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     stack = selected_stack(repo)
     fake_repo.create_issue_comment(
         body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstack overview",
@@ -262,30 +258,30 @@ def test_stack_rewriting_merge_automatically_retires_pre_merge_copies(
 
     merge_exit_code = run_main(repo, config_path, "merge", "--method", merge_method)
     merged = capsys.readouterr()
-    final_trunk = fake_repo.pull_requests[2].merge_commit_sha
+    final_trunk = fake_repo.prs[2].merge_commit_sha
 
     assert merge_exit_code == 0, (merged.out, merged.err)
     assert final_trunk == read_remote_ref(fake_repo.git_dir, "main")
 
     assert "Updating the local stack after the completed merge" in merged.out
-    assert state_store.load().review_identities == {}
+    assert state_store.load().pr_identities == {}
     assert not any(
         ref.startswith("refs/heads/jj-stack/") for ref in remote_refs(fake_repo.git_dir)
     )
     assert not any(
         STACK_OVERVIEW_COMMENT_MARKER in comment.body for comment in issue_comments(fake_repo, 2)
     )
-    assert JjClient(repo).resolve_revision("@").parents == (final_trunk,)
-    copies = JjClient(repo).query_revisions_by_change_ids(
-        tuple(revision.change_id for revision in stack.revisions)
+    assert JjClient(repo).resolve_commit("@").parents == (final_trunk,)
+    copies = JjClient(repo).query_commits_by_change_ids(
+        tuple(change.change_id for change in stack.changes)
     )
     if merge_method == "rebase":
         assert all(
-            len(revisions) == 1 and revisions[0].immutable and not revisions[0].divergent
-            for revisions in copies.values()
+            len(changes) == 1 and changes[0].immutable and not changes[0].divergent
+            for changes in copies.values()
         )
     else:
-        assert all(not revisions for revisions in copies.values())
+        assert all(not changes for changes in copies.values())
 
 
 def test_stack_merge_terminal_failure_is_atomic(
@@ -296,13 +292,11 @@ def test_stack_merge_terminal_failure_is_atomic(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.github_stacks = {7: (1, 2)}
-    fake_repo.unmergeable_pull_numbers.add(2)
-    state_store = ReviewStateStore.for_repo(repo)
+    fake_repo.unmergeable_pr_numbers.add(2)
+    state_store = TrackingStore.for_repo(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-    heads_before = tuple(
-        fake_repo.ref_target(pr.head_ref) for pr in fake_repo.pull_requests.values()
-    )
+    heads_before = tuple(fake_repo.ref_target(pr.head_ref) for pr in fake_repo.prs.values())
 
     exit_code = run_main(repo, config_path, "merge")
     captured = capsys.readouterr()
@@ -316,10 +310,10 @@ def test_stack_merge_terminal_failure_is_atomic(
     assert "resolve the conflict" in normalized
     assert "jj-stack submit" in normalized
     assert fake_repo.stack_merge_requests
-    assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
-    assert tuple(
-        fake_repo.ref_target(pr.head_ref) for pr in fake_repo.pull_requests.values()
-    ) == (heads_before)
+    assert tuple(pr.state for pr in fake_repo.prs.values()) == ("open", "open")
+    assert tuple(fake_repo.ref_target(pr.head_ref) for pr in fake_repo.prs.values()) == (
+        heads_before
+    )
     assert fake_repo.github_stacks == {7: (1, 2)}
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert state_store.load() == state_before
@@ -333,8 +327,8 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.github_stacks = {7: (1, 2)}
-    state_store = ReviewStateStore.for_repo(repo)
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    state_store = TrackingStore.for_repo(repo)
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class LostResponseClient(GithubClient):
         async def submit_stack_merge(
@@ -343,13 +337,13 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
             expected_head_sha,
             merge_action,
             merge_method,
-            pull_number,
+            pr_number,
         ):
             await super().submit_stack_merge(
                 expected_head_sha=expected_head_sha,
                 merge_action=merge_action,
                 merge_method=merge_method,
-                pull_number=pull_number,
+                pr_number=pr_number,
             )
             raise GithubClientError("lost submit response")
 
@@ -362,7 +356,7 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     )
     assert run_main(repo, config_path, "merge") != 0
     capsys.readouterr()
-    assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
+    assert tuple(pr.state for pr in fake_repo.prs.values()) == ("open", "open")
 
     patch_github_client_builders(
         monkeypatch,
@@ -373,17 +367,17 @@ def test_stack_merge_recovers_only_from_a_terminal_retry(
     assert run_main(repo, config_path, "merge") == 1
     pending = capsys.readouterr()
     assert "matching request is already pending" in pending.out
-    assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
+    assert tuple(pr.state for pr in fake_repo.prs.values()) == ("open", "open")
 
     _complete_stack_merge(fake_repo, fake_repo.stack_merge_operations[2])
-    assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("closed", "closed")
+    assert tuple(pr.state for pr in fake_repo.prs.values()) == ("closed", "closed")
     assert run_main(repo, config_path, "merge") == 0
     completed = capsys.readouterr()
     assert "final trunk commit" in completed.out
     assert len(fake_repo.stack_merge_requests) == 1
-    assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("closed", "closed")
-    assert state_store.load().review_identities == {}
-    assert JjClient(repo).resolve_revision("@").parents == (
+    assert tuple(pr.state for pr in fake_repo.prs.values()) == ("closed", "closed")
+    assert state_store.load().pr_identities == {}
+    assert JjClient(repo).resolve_commit("@").parents == (
         read_remote_ref(fake_repo.git_dir, "main"),
     )
 
@@ -396,7 +390,7 @@ def test_stack_merge_requires_a_resource_only_when_a_multi_pr_merge_can_proceed(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.github_stacks = {}
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
 
@@ -406,12 +400,12 @@ def test_stack_merge_requires_a_resource_only_when_a_multi_pr_merge_can_proceed(
     assert exit_code == 1
     assert "did not report a stack" in captured.err
     assert fake_repo.stack_merge_requests == []
-    assert tuple(pr.state for pr in fake_repo.pull_requests.values()) == ("open", "open")
+    assert tuple(pr.state for pr in fake_repo.prs.values()) == ("open", "open")
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert state_store.load() == state_before
 
     head_change_id = selected_stack(repo).head.change_id
-    fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
+    fake_repo.apply_squash_merge(fake_repo.prs[1])
 
     retry_exit_code = run_main(repo, config_path, "merge")
     retry = capsys.readouterr()
@@ -431,7 +425,7 @@ def test_merge_dry_run_validates_without_mutation(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
-    state_before = ReviewStateStore.for_repo(repo).load()
+    state_before = TrackingStore.for_repo(repo).load()
 
     exit_code = run_main(repo, config_path, "merge", "--dry-run")
     captured = capsys.readouterr()
@@ -439,9 +433,9 @@ def test_merge_dry_run_validates_without_mutation(
     assert exit_code == 0
     assert "Planned merge actions:" in captured.out
     assert "merge PR #1" in captured.out
-    assert fake_repo.pull_requests[1].state == "open"
+    assert fake_repo.prs[1].state == "open"
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
-    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert TrackingStore.for_repo(repo).load() == state_before
 
 
 def test_merge_requires_submit_after_a_diff_equivalent_rebase(
@@ -451,28 +445,28 @@ def test_merge_requires_submit_after_a_diff_equivalent_rebase(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    revision = selected_stack(repo).revisions[0]
-    state_store = ReviewStateStore.for_repo(repo)
-    bookmark = state_store.load().review_identities[revision.change_id].head_ref
+    change = selected_stack(repo).changes[0]
+    state_store = TrackingStore.for_repo(repo)
+    bookmark = state_store.load().pr_identities[change.change_id].head_ref
 
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "trunk 1", "trunk-1.txt")
     run_command(["jj", "bookmark", "move", "main", "--to", "@-"], repo)
     run_command(["jj", "git", "push", "--remote", "origin", "--bookmark", "main"], repo)
-    run_command(["jj", "rebase", "-s", revision.change_id, "-d", "main"], repo)
+    run_command(["jj", "rebase", "-s", change.change_id, "-d", "main"], repo)
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     state_before = state_store.load()
 
-    exit_code = run_main(repo, config_path, "merge", revision.change_id)
+    exit_code = run_main(repo, config_path, "merge", change.change_id)
     captured = capsys.readouterr()
     rendered = " ".join(captured.out.split())
 
     assert exit_code == 1
     assert "do not all name the same commit" in rendered
-    assert f"jj-stack submit {revision.change_id[:8]}" in rendered
+    assert f"jj-stack submit {change.change_id[:8]}" in rendered
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
-    assert read_remote_ref(fake_repo.git_dir, bookmark) == revision.commit_id
-    assert fake_repo.pull_requests[1].state == "open"
+    assert read_remote_ref(fake_repo.git_dir, bookmark) == change.commit_id
+    assert fake_repo.prs[1].state == "open"
     assert state_store.load() == state_before
 
 
@@ -490,7 +484,7 @@ def test_merge_tells_a_conflicted_change_to_resolve_before_submitting(
 
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = selected_stack(repo).revisions[0].change_id
+    change_id = selected_stack(repo).changes[0].change_id
 
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "trunk conflict", "feature-1.txt")
@@ -505,7 +499,7 @@ def test_merge_tells_a_conflicted_change_to_resolve_before_submitting(
     assert "unresolved conflicts" in rendered
     assert "resolve them" in rendered
     assert "do not all name the same commit" not in rendered
-    assert fake_repo.pull_requests[1].state == "open"
+    assert fake_repo.prs[1].state == "open"
 
 
 def test_merge_expected_head_guard_rejects_a_race(
@@ -515,12 +509,12 @@ def test_merge_expected_head_guard_rejects_a_race(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    revision = selected_stack(repo).revisions[0]
-    state_before = ReviewStateStore.for_repo(repo).load()
-    bookmark = state_before.review_identities[revision.change_id].head_ref
+    change = selected_stack(repo).changes[0]
+    state_before = TrackingStore.for_repo(repo).load()
+    bookmark = state_before.pr_identities[change.change_id].head_ref
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     fake_repo.auto_merge_reachable_heads = False
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class HeadRaceClient(GithubClient):
         async def submit_stack_merge(
@@ -528,14 +522,14 @@ def test_merge_expected_head_guard_rejects_a_race(
             *,
             expected_head_sha,
             merge_action,
-            pull_number,
+            pr_number,
             merge_method,
         ):
             update_remote_ref(fake_repo, branch=bookmark, target=trunk_before)
             return await super().submit_stack_merge(
                 expected_head_sha=expected_head_sha,
                 merge_action=merge_action,
-                pull_number=pull_number,
+                pr_number=pr_number,
                 merge_method=merge_method,
             )
 
@@ -553,6 +547,6 @@ def test_merge_expected_head_guard_rejects_a_race(
     assert exit_code == 1
     assert "PR head changed" in " ".join(captured.out.split())
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
-    assert fake_repo.pull_requests[1].state == "open"
-    assert fake_repo.pull_requests[1].merged_at is None
-    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert fake_repo.prs[1].state == "open"
+    assert fake_repo.prs[1].merged_at is None
+    assert TrackingStore.for_repo(repo).load() == state_before

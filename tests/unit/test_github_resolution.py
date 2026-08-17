@@ -12,7 +12,7 @@ from jj_stack.github.resolution import (
 )
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubRepository
+from jj_stack.models.github import GithubRepo
 
 
 def _remote(name: str) -> GitRemote:
@@ -47,31 +47,31 @@ def test_select_submit_remote_rejects_remote_sets_without_a_determinable_remote(
 
 
 def test_parse_github_repo_accepts_matching_fetch_and_push_urls() -> None:
-    repository = parse_github_repo(
+    repo = parse_github_repo(
         GitRemote(
             name="origin",
-            fetch_url="https://github.com/octo-org/stacked-review.git",
-            push_url="ssh://git@ssh.github.com:443/octo-org/stacked-review.git",
+            fetch_url="https://github.com/octo-org/stacked-prs.git",
+            push_url="ssh://git@ssh.github.com:443/octo-org/stacked-prs.git",
         ),
     )
 
-    assert repository is not None
-    assert repository.owner == "octo-org"
-    assert repository.repo == "stacked-review"
+    assert repo is not None
+    assert repo.owner == "octo-org"
+    assert repo.repo == "stacked-prs"
 
 
 def test_parse_github_repo_parses_scp_style_remote_without_user() -> None:
-    repository = parse_github_repo(
+    repo = parse_github_repo(
         GitRemote(
             name="origin",
-            fetch_url="github.com:octo-org/stacked-review.git",
-            push_url="github.com:octo-org/stacked-review.git",
+            fetch_url="github.com:octo-org/stacked-prs.git",
+            push_url="github.com:octo-org/stacked-prs.git",
         ),
     )
 
-    assert repository is not None
-    assert repository.owner == "octo-org"
-    assert repository.repo == "stacked-review"
+    assert repo is not None
+    assert repo.owner == "octo-org"
+    assert repo.repo == "stacked-prs"
 
 
 def test_parse_github_repo_returns_none_for_unparseable_remote() -> None:
@@ -85,23 +85,23 @@ def test_parse_github_repo_returns_none_for_unparseable_remote() -> None:
 
 
 def test_parse_github_repo_accepts_distinct_ssh_host_aliases() -> None:
-    repository = parse_github_repo(
+    repo = parse_github_repo(
         GitRemote(
             name="origin",
-            fetch_url="git@gh-bos:octo-org/stacked-review.git",
-            push_url="git@gh-voxel:octo-org/stacked-review.git",
+            fetch_url="git@gh-bos:octo-org/stacked-prs.git",
+            push_url="git@gh-voxel:octo-org/stacked-prs.git",
         )
     )
 
-    assert repository is not None
-    assert repository.owner == "octo-org"
-    assert repository.repo == "stacked-review"
+    assert repo is not None
+    assert repo.owner == "octo-org"
+    assert repo.repo == "stacked-prs"
 
 
-def test_parse_github_repo_rejects_fetch_and_push_repository_mismatch() -> None:
+def test_parse_github_repo_rejects_fetch_and_push_repo_mismatch() -> None:
     remote = GitRemote(
         name="origin",
-        fetch_url="https://github.com/octo-org/stacked-review.git",
+        fetch_url="https://github.com/octo-org/stacked-prs.git",
         push_url="git@github.com:octo-org/fork.git",
     )
 
@@ -113,7 +113,7 @@ def test_resolve_trunk_branch_prefers_the_default_branch_when_it_is_one_of_the_m
 
     branch, targets = resolve_trunk_branch(
         client=cast(JjClient, client),
-        github_repository_state=_github_repository(default_branch="main"),
+        github_repo_state=_github_repo(default_branch="main"),
         remote=_remote("origin"),
         trunk_commit_id="trunk123",
     )
@@ -128,7 +128,7 @@ def test_resolve_trunk_branch_accepts_a_default_branch_ahead_of_local_trunk() ->
 
     branch, _targets = resolve_trunk_branch(
         client=cast(JjClient, client),
-        github_repository_state=_github_repository(default_branch="main"),
+        github_repo_state=_github_repo(default_branch="main"),
         remote=_remote("origin"),
         trunk_commit_id="stale-local-trunk",
     )
@@ -142,13 +142,13 @@ def test_resolve_trunk_branch_rejects_a_default_branch_that_is_not_trunk() -> No
     with pytest.raises(CliError, match="default branch"):
         resolve_trunk_branch(
             client=cast(JjClient, client),
-            github_repository_state=_github_repository(default_branch="develop"),
+            github_repo_state=_github_repo(default_branch="develop"),
             remote=_remote("origin"),
             trunk_commit_id="trunk123",
         )
 
 
-def test_resolve_trunk_branch_falls_back_to_unique_non_review_remote_branch() -> None:
+def test_resolve_trunk_branch_falls_back_to_unique_non_pr_remote_branch() -> None:
     client = _RemoteBranchClient(
         {
             "main": "trunk123",
@@ -158,7 +158,7 @@ def test_resolve_trunk_branch_falls_back_to_unique_non_review_remote_branch() ->
 
     branch, targets = resolve_trunk_branch(
         client=cast(JjClient, client),
-        github_repository_state=_github_repository(default_branch=""),
+        github_repo_state=_github_repo(default_branch=""),
         remote=_remote("origin"),
         trunk_commit_id="trunk123",
     )
@@ -177,7 +177,7 @@ def test_resolve_trunk_branch_rejects_ambiguous_remote_branches() -> None:
                 JjClient,
                 _RemoteBranchClient({"main": "trunk123", "stable": "trunk123"}),
             ),
-            github_repository_state=_github_repository(default_branch=""),
+            github_repo_state=_github_repo(default_branch=""),
             remote=_remote("origin"),
             trunk_commit_id="trunk123",
         )
@@ -202,8 +202,8 @@ class _RemoteBranchClient:
         return {branch: target for branch, target in self.targets.items() if branch in requested}
 
 
-def _github_repository(default_branch: str) -> GithubRepository:
-    return GithubRepository(
+def _github_repo(default_branch: str) -> GithubRepo:
+    return GithubRepo(
         default_branch=default_branch,
         full_name="octo-org/repo",
     )

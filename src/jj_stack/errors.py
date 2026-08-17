@@ -125,21 +125,21 @@ class ConflictedStackError(CliError):
     exit_code = EXIT_CONFLICTS
 
 
-# Which pre-mutation verification check failed when cross-system drift made review identity
+# Which pre-mutation verification check failed when cross-system drift made PR identity
 # unprovable. The property harness uses this to distinguish stops that share an exit code.
 type DriftCondition = Literal[
-    "pull_request_ambiguous",
-    "pull_request_not_open",
+    "pr_ambiguous",
+    "pr_not_open",
     "remote_branch_missing",
     "remote_branch_moved",
     "remote_trunk_moved",
-    "saved_pull_request_mismatch",
-    "saved_pull_request_missing",
+    "saved_pr_mismatch",
+    "saved_pr_missing",
 ]
 
 
 class DriftError(CliError):
-    """Cross-system drift left review identity unprovable, so the command fails closed."""
+    """Cross-system drift left PR identity unprovable, so the command fails closed."""
 
     def __init__(
         self,

@@ -26,9 +26,7 @@ class GithubStackPlan:
     def membership_key(
         self,
     ) -> tuple[str, tuple[tuple[int, tuple[int, ...]], ...] | None]:
-        stacks = tuple(
-            (stack.number, stack.pull_request_numbers) for stack in self.affected_stacks
-        )
+        stacks = tuple((stack.number, stack.pr_numbers) for stack in self.affected_stacks)
         return self.action, stacks or None
 
 
@@ -37,7 +35,7 @@ def plan_github_stack(
     desired: tuple[int | None, ...],
     is_maximal_path: bool,
     observed_stacks: Sequence[GithubStack],
-    pull_numbers_requiring_base_update: Set[int],
+    pr_numbers_requiring_base_update: Set[int],
 ) -> GithubStackPlan:
     known_desired = tuple(number for number in desired if number is not None)
     if len(set(known_desired)) != len(known_desired):
@@ -49,24 +47,22 @@ def plan_github_stack(
             (
                 stack
                 for stack in observed_stacks
-                if not selected.isdisjoint(stack.active_pull_request_numbers)
+                if not selected.isdisjoint(stack.active_pr_numbers)
             ),
             key=lambda stack: stack.number,
         )
     )
     partial = tuple(
-        stack
-        for stack in affected
-        if not set(stack.active_pull_request_numbers).issubset(selected)
+        stack for stack in affected if not set(stack.active_pr_numbers).issubset(selected)
     )
     if partial:
         stack = partial[0]
-        selected_outside_stack = selected.difference(stack.pull_request_numbers)
+        selected_outside_stack = selected.difference(stack.pr_numbers)
         if len(affected) > 1 or selected_outside_stack:
             raise CliError(
                 t"The selected path includes only part of GitHub stack #{stack.number} while "
-                t"also including reviews outside that GitHub stack.",
-                hint=t"Submit the other local path containing the remaining reviews in "
+                t"also including pull requests outside that GitHub stack.",
+                hint=t"Submit the other local path containing the remaining pull requests in "
                 t"GitHub stack #{stack.number}, then retry.",
             )
         if not is_maximal_path:
@@ -80,16 +76,16 @@ def plan_github_stack(
     if len(affected) > 1:
         return GithubStackPlan("replace", affected)
     stack = affected[0]
-    active_pull_numbers = stack.active_pull_request_numbers
+    active_pr_numbers = stack.active_pr_numbers
 
-    if set(active_pull_numbers).intersection(pull_numbers_requiring_base_update):
+    if set(active_pr_numbers).intersection(pr_numbers_requiring_base_update):
         return GithubStackPlan("replace", affected)
 
-    if active_pull_numbers == desired:
+    if active_pr_numbers == desired:
         return GithubStackPlan("none")
     if (
-        len(active_pull_numbers) < len(desired)
-        and active_pull_numbers == desired[: len(active_pull_numbers)]
+        len(active_pr_numbers) < len(desired)
+        and active_pr_numbers == desired[: len(active_pr_numbers)]
     ):
         return GithubStackPlan("append", affected)
     return GithubStackPlan("replace", affected)
@@ -103,35 +99,35 @@ async def apply_github_stack_plan(
     *,
     github_client: GithubClient,
     plan: GithubStackPlan,
-    pull_numbers: tuple[int, ...],
+    pr_numbers: tuple[int, ...],
 ) -> None:
     if plan.action == "none":
         return
     assert plan.action != "replace"
     try:
         current_plan = plan_github_stack(
-            desired=pull_numbers,
+            desired=pr_numbers,
             is_maximal_path=True,
             observed_stacks=await github_client.list_stacks(),
-            pull_numbers_requiring_base_update=frozenset(),
+            pr_numbers_requiring_base_update=frozenset(),
         )
         if current_plan.membership_key != plan.membership_key:
             raise _membership_error("GitHub stack membership changed during submit.")
         if current_plan.action == "create":
-            updated = await github_client.create_stack(pull_numbers=pull_numbers)
+            updated = await github_client.create_stack(pr_numbers=pr_numbers)
             expected_number = updated.number
-            expected_members = pull_numbers
+            expected_members = pr_numbers
         elif current_plan.action == "append":
             stack = current_plan.affected_stacks[0]
             updated = await github_client.append_to_stack(
                 stack_number=stack.number,
-                pull_numbers=pull_numbers[len(stack.active_pull_request_numbers) :],
+                pr_numbers=pr_numbers[len(stack.active_pr_numbers) :],
             )
             expected_number = stack.number
-            expected_members = (*stack.historical_pull_request_numbers, *pull_numbers)
+            expected_members = (*stack.historical_pr_numbers, *pr_numbers)
         else:
             raise AssertionError(f"Cannot apply GitHub stack plan {current_plan.action!r}.")
-        if (updated.number, updated.pull_request_numbers) != (
+        if (updated.number, updated.pr_numbers) != (
             expected_number,
             expected_members,
         ):

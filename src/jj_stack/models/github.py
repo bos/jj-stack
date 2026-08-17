@@ -6,8 +6,8 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
-class GithubRepository(BaseModel):
-    """Subset of repository fields used by the client."""
+class GithubRepo(BaseModel):
+    """Subset of repo fields used by the client."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -28,8 +28,8 @@ class GithubBranchRef(BaseModel):
     sha: str | None = None
 
 
-class GithubStackPullRequestHead(BaseModel):
-    """Exact reviewed branch head embedded in a GitHub stack response."""
+class GithubStackPRHead(BaseModel):
+    """Exact PR branch head embedded in a GitHub stack response."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -37,12 +37,12 @@ class GithubStackPullRequestHead(BaseModel):
     sha: str
 
 
-class GithubStackPullRequest(BaseModel):
+class GithubStackPR(BaseModel):
     """Pull request state embedded in a GitHub stack response."""
 
     model_config = ConfigDict(extra="ignore")
 
-    head: GithubStackPullRequestHead
+    head: GithubStackPRHead
     number: int
     merged_at: str | None = None
 
@@ -54,38 +54,32 @@ class GithubStackPullRequest(BaseModel):
 class GithubStack(BaseModel):
     """Ordered pull requests in one GitHub stack."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     number: int
-    pull_requests: tuple[GithubStackPullRequest, ...] = Field(min_length=1)
+    prs: tuple[GithubStackPR, ...] = Field(alias="pull_requests", min_length=1)
 
     @property
-    def pull_request_numbers(self) -> tuple[int, ...]:
-        return tuple(pull_request.number for pull_request in self.pull_requests)
+    def pr_numbers(self) -> tuple[int, ...]:
+        return tuple(pr.number for pr in self.prs)
 
     @property
-    def historical_pull_requests(self) -> tuple[GithubStackPullRequest, ...]:
-        return tuple(
-            pull_request for pull_request in self.pull_requests if pull_request.is_historical
-        )
+    def historical_prs(self) -> tuple[GithubStackPR, ...]:
+        return tuple(pr for pr in self.prs if pr.is_historical)
 
     @property
-    def historical_pull_request_numbers(self) -> tuple[int, ...]:
-        return tuple(pull_request.number for pull_request in self.historical_pull_requests)
+    def historical_pr_numbers(self) -> tuple[int, ...]:
+        return tuple(pr.number for pr in self.historical_prs)
 
     @property
-    def active_pull_request_numbers(self) -> tuple[int, ...]:
-        return tuple(
-            pull_request.number
-            for pull_request in self.pull_requests
-            if not pull_request.is_historical
-        )
+    def active_pr_numbers(self) -> tuple[int, ...]:
+        return tuple(pr.number for pr in self.prs if not pr.is_historical)
 
     @model_validator(mode="after")
     def _validate_historical_prefix(self) -> Self:
         active_seen = False
-        for pull_request in self.pull_requests:
-            if not pull_request.is_historical:
+        for pr in self.prs:
+            if not pr.is_historical:
                 active_seen = True
             elif active_seen:
                 raise ValueError("Merged GitHub stack members must form a bottom prefix.")
@@ -126,7 +120,7 @@ class GithubStackMergeSubmission(BaseModel):
     result: GithubStackMerge
 
 
-class GithubPullRequest(BaseModel):
+class GithubPR(BaseModel):
     """Subset of pull request fields used by the client."""
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
@@ -185,7 +179,7 @@ def _graphql_merge_commit_oid(value: object) -> str | None:
     return oid if isinstance(oid, str) else None
 
 
-class GithubPullRequestReviewUser(BaseModel):
+class GithubPRReviewUser(BaseModel):
     """Subset of review-author fields used to summarize PR reviews."""
 
     model_config = ConfigDict(extra="ignore")
@@ -193,14 +187,14 @@ class GithubPullRequestReviewUser(BaseModel):
     login: str
 
 
-class GithubPullRequestReview(BaseModel):
+class GithubPRReview(BaseModel):
     """Subset of PR review fields used by the client."""
 
     model_config = ConfigDict(extra="ignore")
 
     id: int
     state: str
-    user: GithubPullRequestReviewUser | None = None
+    user: GithubPRReviewUser | None = None
 
 
 class GithubIssueComment(BaseModel):
@@ -212,19 +206,19 @@ class GithubIssueComment(BaseModel):
     id: int = Field(alias="databaseId")
 
 
-def _graphql_head_label(raw_pull_request: Mapping[str, object]) -> str | None:
+def _graphql_head_label(raw_pr: Mapping[str, object]) -> str | None:
     try:
-        parts = _GraphqlHeadLabelParts.model_validate(raw_pull_request)
+        parts = _GraphqlHeadLabelParts.model_validate(raw_pr)
     except ValidationError as error:
         raise ValueError("GitHub pull request GraphQL response had invalid head data.") from error
-    if parts.head_repository_owner is None or parts.head_repository_owner.login is None:
+    if parts.head_repo_owner is None or parts.head_repo_owner.login is None:
         return None
     if parts.head_ref_name is None:
         return None
-    return f"{parts.head_repository_owner.login}:{parts.head_ref_name}"
+    return f"{parts.head_repo_owner.login}:{parts.head_ref_name}"
 
 
-class _GraphqlHeadRepositoryOwner(BaseModel):
+class _GraphqlHeadRepoOwner(BaseModel):
     login: str | None = None
 
 
@@ -232,7 +226,7 @@ class _GraphqlHeadLabelParts(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     head_ref_name: str | None = Field(default=None, alias="headRefName")
-    head_repository_owner: _GraphqlHeadRepositoryOwner | None = Field(
+    head_repo_owner: _GraphqlHeadRepoOwner | None = Field(
         default=None,
         alias="headRepositoryOwner",
     )

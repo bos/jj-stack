@@ -13,26 +13,26 @@ The examples below use `<head-change-id>` to identify your stack. If you do not 
 
 ## Setup or GitHub access fails
 
-**How this can happen:** you just cloned your repository, its Git remote changed, or your GitHub
+**How this can happen:** you just cloned your repo, its Git remote changed, or your GitHub
 login expired.
 
-Prepare your repository again and look for any failed checks:
+Prepare your repo again and look for any failed checks:
 
 ```console
 jj-stack doctor --fix
 ```
 
-`doctor` checks your repository, trunk, Git remote, GitHub access, and Stacks API availability.
+`doctor` checks your repo, trunk, Git remote, GitHub access, and Stacks API availability.
 It does not change anything on GitHub.
 
-### The repository works, but GitHub stacks are unavailable
+### The repo works, but GitHub stacks are unavailable
 
-If `doctor` can reach the repository but says stacked pull requests are unavailable, follow its
+If `doctor` can reach the repo but says stacked pull requests are unavailable, follow its
 availability link and rerun `doctor`. For another `GitHub stacks` failure, follow the specific
-access or request error it prints. `submit` stops before pushing any review branch while this
+access or request error it prints. `submit` stops before pushing any PR branch while this
 check fails.
 
-## A review branch moved outside jj-stack
+## A PR branch moved outside jj-stack
 
 **How this can happen:** someone force-pushed, renamed, or deleted a `jj-stack/` branch, or
 another tool updated it.
@@ -44,7 +44,7 @@ branch, either restore it or close the PR on GitHub, run `jj-stack cleanup`, and
 
 If remote contents are intentional, preserve or reproduce them in the local `jj` change before
 submitting. Use `jj-stack relink <pull-request> <change-id>` only when the PR is open and unique,
-its branch belongs to the same repository and remains a managed `jj-stack/` name for that change,
+its branch belongs to the same repo and remains a managed `jj-stack/` name for that change,
 and its head still carries that jj change ID. `relink` verifies those conditions and updates
 tracking; it does not copy the remote contents into your local change.
 
@@ -66,7 +66,7 @@ with `jj-stack unstack --stack <number>`, then submit the intended local stack a
 
 GitHub enqueues stack members in dependency order. If one pull request is removed or ejected,
 GitHub also removes every pull request above it. Fix the failing check, approval, conflict, or
-repository rule, then rerun the same `jj-stack merge` command. If GitHub merged any lower pull
+repo rule, then rerun the same `jj-stack merge` command. If GitHub merged any lower pull
 requests before the ejection, run `jj-stack sync <head-change-id>` first.
 
 ## You merged pull requests on GitHub
@@ -74,7 +74,7 @@ requests before the ejection, run `jj-stack sync <head-change-id>` first.
 **How this can happen:** you clicked Merge on GitHub, someone else merged your pull requests, or
 a merge queue finished while you were away.
 
-Run `sync` to apply the merge locally, update your remaining pull requests, and remove review
+Run `sync` to apply the merge locally, update your remaining pull requests, and remove PR
 branches that are no longer needed:
 
 ```console
@@ -104,7 +104,7 @@ jj-stack sync <head-change-id>
 
 GitHub's rewritten commits do not contain jj change-ID headers. This is expected; do not relink
 the pull requests by hand. `sync` verifies the rewritten contents, rebases the original local
-changes, and updates the review branches with equivalent commits that retain their change IDs. If
+changes, and updates the PR branches with equivalent commits that retain their change IDs. If
 you changed the stack locally after submitting it, `sync` stops rather than choosing between your
 local work and GitHub's result.
 
@@ -118,7 +118,7 @@ The output identifies which of your pull requests it left open and explains why:
 
 - If your local changes no longer match what you submitted, run
   `jj-stack submit <head-change-id>`, then retry `merge`.
-- If GitHub reports a pending check, missing approval, draft pull request, repository rule, or
+- If GitHub reports a pending check, missing approval, draft pull request, repo rule, or
   permissions problem, fix that on GitHub, then retry the same `merge` command.
 - If GitHub reports a conflict, rebase and resolve it with `jj`, submit the updated stack, then
   retry `merge`.
@@ -130,7 +130,7 @@ stack while its base is behind trunk when it has no conflicts.
 ## GitHub merged your stack, but `merge` ended with an error
 
 **How this can happen:** GitHub completed the merge, then your network connection failed or
-`jj-stack` could not finish updating your local repository.
+`jj-stack` could not finish updating your local repo.
 
 Your pull requests are already merged, but your local update and GitHub cleanup may still need to
 finish:
@@ -153,7 +153,7 @@ jj-stack view <head-change-id>
 If GitHub completed a merge, finish off that work with `sync`. Otherwise, rerun the interrupted
 command with the same head change ID.
 
-## Your old review branches remain
+## Your old PR branches remain
 
 **How this can happen:** your pull requests were merged or closed outside `jj-stack`, or cleanup
 was interrupted.
@@ -165,9 +165,9 @@ cleanup:
 jj-stack cleanup <head-change-id>
 ```
 
-Cleanup leaves a review branch in place while an open pull request still needs it.
+Cleanup leaves a PR branch in place while an open pull request still needs it.
 
-## “The selector resolved to more than one revision”
+## “The selector resolved to more than one commit”
 
 **How this can happen:** you passed a broad revset that identifies more than one of your changes
 as a possible stack head.

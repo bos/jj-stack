@@ -4,46 +4,46 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import TrackedReview
-from jj_stack.models.stack import LocalRevision
-from jj_stack.review.trunk_evidence import TrunkEvidenceKind
+from jj_stack.models.github import GithubPR
+from jj_stack.models.stack import LocalCommit
+from jj_stack.models.tracking import TrackedPR
+from jj_stack.stack.trunk_evidence import TrunkEvidenceKind
 
 
 @dataclass(frozen=True, slots=True)
-class FinishReview:
-    candidate: TrackedReview
-    pull_request: GithubPullRequest
+class FinishPR:
+    candidate: TrackedPR
+    pr: GithubPR
 
 
 @dataclass(frozen=True, slots=True)
-class SkipReviewFinish:
-    candidate: TrackedReview
+class SkipPRFinish:
+    candidate: TrackedPR
 
 
-type ReviewFinishPlan = FinishReview | SkipReviewFinish
+type PRFinishPlan = FinishPR | SkipPRFinish
 
 
 @dataclass(frozen=True, slots=True)
 class OnTrunkChange:
-    candidate: TrackedReview
+    candidate: TrackedPR
     evidence_kind: TrunkEvidenceKind
-    finish: ReviewFinishPlan
-    revision: LocalRevision | None
+    finish: PRFinishPlan
+    change: LocalCommit | None
 
 
 @dataclass(frozen=True, slots=True)
 class ConvergenceActions:
     on_trunk: tuple[OnTrunkChange, ...]
-    reviewed_survivors: tuple[LocalRevision, ...]
-    survivors: tuple[LocalRevision, ...]
+    submitted_survivors: tuple[LocalCommit, ...]
+    survivors: tuple[LocalCommit, ...]
     working_copy_children: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class AdoptedSurvivor:
-    candidate: TrackedReview
-    local_revision: LocalRevision
+    candidate: TrackedPR
+    local_change: LocalCommit
     remote_commit_id: str
 
 

@@ -11,6 +11,14 @@ a workflow step, or troubleshooting a problem. Write them accordingly.
 Readers know `jj` and `git`. Standard jj terms are fine: revset, bookmark,
 `@-`, `trunk()`, change ID, working copy. Don't over-explain those.
 
+Use the product nouns precisely:
+
+- A **pull request** or **PR** is the GitHub object.
+- A **PR branch** is a git branch intended to be a PR head.
+- A **stack** is an ordered chain of local changes or the corresponding GitHub grouping.
+- **Review** means human review activity: comments, approvals, requested changes, reviewers,
+  and review feedback. Do not use it as a synonym for a PR, PR branch, or stack.
+
 What to avoid is vocabulary that comes from `jj-stack`'s own design docs and
 implementation — terms a jj user would not know without reading the source:
 
@@ -21,8 +29,7 @@ implementation — terms a jj user would not know without reading the source:
 - When mentioning persisted records, say "tracking data" or describe the
   effect, e.g. "jj-stack doesn't know about these PRs yet"
 - Not "local-history repair path" → just say what the command does
-- Not "remote review branches" → "review branches" is fine; "remote review
-  branches" is an internal double-noun
+- Not "remote PR branches" → "PR branches" is fine
 - Not "outstanding incomplete operation" → "failed command" or "interrupted command"
 
 The distinction is between standard jj/git vocabulary (fine) and

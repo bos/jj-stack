@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from jj_stack.models.github import GithubBranchRef, GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity
-from jj_stack.review.change_status import (
-    classify_review_change,
+from jj_stack.models.github import GithubBranchRef, GithubPR
+from jj_stack.models.tracking import PRIdentity
+from jj_stack.stack.change_status import (
+    classify_change_status,
 )
-from jj_stack.review.status import PullRequestLookup
+from jj_stack.stack.status import PRLookup
 
 
-def _pull_request(*, draft: bool = False, state: str = "open") -> GithubPullRequest:
+def _pr(*, draft: bool = False, state: str = "open") -> GithubPR:
     merged_at = "2026-05-09T12:00:00Z" if state == "merged" else None
-    return GithubPullRequest(
+    return GithubPR(
         base=GithubBranchRef(ref="main"),
         draft=draft,
         head=GithubBranchRef(ref="jj-stack/change"),
@@ -22,10 +22,10 @@ def _pull_request(*, draft: bool = False, state: str = "open") -> GithubPullRequ
     ).normalize_state()
 
 
-def _identity(*, pr_number: int = 1) -> ReviewIdentity:
-    return ReviewIdentity(
-        repository_owner="octo-org",
-        repository_name="stacked-review",
+def _identity(*, pr_number: int = 1) -> PRIdentity:
+    return PRIdentity(
+        repo_owner="octo-org",
+        repo_name="stacked-prs",
         pr_number=pr_number,
         head_owner="octo-org",
         head_ref="jj-stack/change",
@@ -33,16 +33,16 @@ def _identity(*, pr_number: int = 1) -> ReviewIdentity:
 
 
 def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
-    status = classify_review_change(
+    status = classify_change_status(
         local="present",
-        pull_request_lookup=PullRequestLookup(
+        pr_lookup=PRLookup(
             message=None,
-            pull_request=_pull_request(draft=True),
+            pr=_pr(draft=True),
             review_decision="approved",
             review_decision_error=None,
             state="open",
         ),
-        review_identity=_identity(),
+        pr_identity=_identity(),
     )
 
     assert status.pr_lifecycle == "open"
@@ -51,46 +51,46 @@ def test_classifier_keeps_draft_and_review_decision_as_separate_axes() -> None:
 
 
 def test_classifier_marks_missing_lookup_with_saved_pr_identity_as_stale_link() -> None:
-    status = classify_review_change(
+    status = classify_change_status(
         local="present",
-        pull_request_lookup=PullRequestLookup(
+        pr_lookup=PRLookup(
             message=None,
-            pull_request=None,
+            pr=None,
             review_decision=None,
             review_decision_error=None,
             state="missing",
         ),
-        review_identity=_identity(),
+        pr_identity=_identity(),
     )
 
     assert status.pr_lifecycle == "missing"
-    assert status.has_stale_pull_request_link is True
+    assert status.has_stale_pr_link is True
 
 
-def test_classifier_reports_saved_review_identity() -> None:
-    status = classify_review_change(
+def test_classifier_reports_saved_pr_identity() -> None:
+    status = classify_change_status(
         local="present",
-        pull_request_lookup=None,
-        review_identity=_identity(),
+        pr_lookup=None,
+        pr_identity=_identity(),
     )
 
-    assert status.saved_review_identity is True
+    assert status.saved_pr_identity is True
 
 
 def test_classifier_reports_unknown_review_decision_when_lookup_errors() -> None:
-    status = classify_review_change(
+    status = classify_change_status(
         local="present",
-        pull_request_lookup=PullRequestLookup(
+        pr_lookup=PRLookup(
             message=None,
-            pull_request=_pull_request(),
+            pr=_pr(),
             review_decision=None,
             review_decision_error="GitHub returned 502",
             state="open",
         ),
-        review_identity=_identity(),
+        pr_identity=_identity(),
     )
 
     assert status.pr_lifecycle == "open"
     assert status.pr_review_decision == "unknown"
     assert status.pr_review_decision_error == "GitHub returned 502"
-    assert status.has_pull_request_lookup_failure is True
+    assert status.has_pr_lookup_failure is True

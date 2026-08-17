@@ -2,9 +2,9 @@
 name: jj-stack
 license: Apache-2.0
 description: >
-  Manage stacked GitHub review in jj repositories with jj-stack. Use for GitHub
-  pull request or review-branch tasks involving a local jj stack, including
-  inspection, submission or refresh, revision, merging, cleanup, and recovery.
+  Manage stacked GitHub pull requests in jj repos with jj-stack. Use for GitHub
+  pull request or PR-branch tasks involving a local jj stack, including
+  inspection, submission or refresh, updating, merging, cleanup, and recovery.
   When local adoption is unknown, load this skill first, then run jj-stack
   in-use.
 ---
@@ -13,7 +13,7 @@ description: >
 
 `jj-stack` sends a linear chain of local `jj` changes to GitHub as dependent
 pull requests. Division of labor: `jj` edits the local stack; `jj-stack` owns
-its GitHub review state (review branches, PRs, merging, cleanup).
+its GitHub tracking state (PR branches, PRs, merging, cleanup).
 
 ## Resolving the command
 
@@ -34,16 +34,16 @@ command they use before any direct GitHub mutation.
 
 1. **Edit the stack with `jj`; talk to GitHub with `jj-stack`.** Never use
    `git branch`/`checkout`/`rebase` or manual branch pushes on a jj-stack
-   stack, and never create, delete, or force-push its review branches by
+   stack, and never create, delete, or force-push its PR branches by
    hand. Closing a known pull request with GitHub or `gh pr close` is supported;
    use `jj-stack unstack` for GitHub stack grouping.
-2. **Honor local adoption.** `jj-stack in-use` exits 0 without output when this local repository
+2. **Honor local adoption.** `jj-stack in-use` exits 0 without output when this local repo
    has valid jj-stack tracking, 1 without output when it does not, and 11 with an error when the
    result cannot be determined. A successful probe makes jj-stack the owner of stack-level PR
-   work in that repository: status, submit, refresh, base/head changes caused by stack rewrites,
+   work in that repo: status, submit, refresh, base/head changes caused by stack rewrites,
    merging, cleanup, importing, relinking, and recovery. Exit 1 does not prevent an explicit
-   request to start using jj-stack. Do not substitute `view` or `list`; they report review state,
-   not local adoption.
+   request to start using jj-stack. Do not substitute `view` or `list`; they report tracking
+   state, not local adoption.
 3. **Inspect before mutating.** Run `view` or `list` before `submit`, `merge`, `sync`,
    `cleanup`, `unstack`, `checkout`, or `relink`, and preview with `--dry-run` whenever
    supported. Run `doctor` before `doctor --fix`.
@@ -62,12 +62,12 @@ command they use before any direct GitHub mutation.
 ## Load references when needed
 
 - Read [multi-stack workflows](references/multi-stack.md) before acting on a forked local DAG,
-  a child review based on another review, a move between stacks, a split or join, or a command
+  a child stack based on another PR, a move between stacks, a split or join, or a command
   that would change more than one GitHub stack.
 - Read [recovery workflows](references/recovery.md) after an interrupted or externally completed
-  operation, a direct structural GitHub mutation, lost or ambiguous tracking, an orphaned review,
+  operation, a direct structural GitHub mutation, lost or ambiguous tracking, an orphaned PR,
   a GitHub grouping mismatch, or any task involving `sync --all`, `unstack --stack`, `checkout`,
-  `relink`, or starting reviews over.
+  `relink`, or starting over.
 
 ## Using `gh` on a managed stack
 
@@ -83,18 +83,18 @@ jj-stack manages those.
 **Closing and reopening known pull requests is supported when the user asks.**
 Inspect the stack first, use explicit PR numbers, and leave jj-stack's saved
 links in place so `cleanup` can verify what it removes. Remove GitHub stack
-grouping with `jj-stack unstack` before closing a whole stack.
+grouping with `jj-stack unstack` before closing all of a stack's PRs.
 
 **Other structural and lifecycle writes are not**: merging a PR; retargeting
-base or head; deleting or force-pushing a review branch; creating a replacement
+base or head; deleting or force-pushing a PR branch; creating a replacement
 PR; changing GitHub stack membership outside `jj-stack`; or equivalent `gh api`
-mutations. These desync local changes, review branches, and tracking data. Map
+mutations. These desync local changes, PR branches, and tracking data. Map
 the intent to a jj-stack command instead; use `gh` only if the user explicitly
 confirms after you explain that risk.
 
 ## Everyday flow
 
-1. Build or revise the stack with `jj`. Each change is one reviewable PR:
+1. Build or revise the stack with `jj`. Each change is one PR:
    put a dependency in the same change or a lower one, and unrelated work in
    a separate stack.
 2. Confirm the shape with `view` (`--json` for machine-readable output; it reads GitHub but
@@ -105,13 +105,13 @@ confirms after you explain that risk.
    subcommand. Add
    `--re-request` only when the user wants previous reviewers asked again.
 4. Apply review feedback in the change it belongs to: edit the lower `jj`
-   change, let descendants rebase, then `view` and submit the reviewed descendant stack head
+   change, let descendants rebase, then `view` and submit the descendant stack head
    shown by that inspection (often `@-` from an empty working-copy child). Selecting the edited
    lower change itself does not select the descendants that also need refresh. Do not patch a
    higher change to avoid touching a lower one.
 5. When bottom changes are ready, run `merge --dry-run`, then `merge`. It selects
    consecutive open, non-draft PRs from the bottom and requires their exact submitted commits.
-   GitHub decides approvals, checks, conflicts, and repository policy. A completed direct merge
+   GitHub decides approvals, checks, conflicts, and repo policy. A completed direct merge
    updates the local stack automatically; it never pushes trunk. After a queued merge, run
    `sync <head-change-id>` once GitHub finishes.
 6. If `trunk()` merely advanced, use plain `jj rebase`. `sync` is for
@@ -119,13 +119,14 @@ confirms after you explain that risk.
 
 ## Closing and cleanup
 
-To close a stack without merging, inspect it, run `unstack --dry-run <head-change-id>` and
+To close the PRs in a stack without merging, inspect it, run
+`unstack --dry-run <head-change-id>` and
 `unstack <head-change-id>`, then close each explicit PR with `gh pr close <pr>`. Preserve saved
 links until `cleanup --dry-run <head-change-id>` and `cleanup <head-change-id>` verify and remove
-the closed stack's branches, managed comments, and tracking.
+the closed PRs' branches, managed comments, and tracking.
 
 Run `cleanup --dry-run`, then `cleanup`, to collect eligible closed or already-synced merged
-leftovers across the repository. Open reviews, open orphans, mismatched identities, unavailable
+leftovers across the repo. Open PRs, open orphans, mismatched identities, unavailable
 GitHub state, and branches still needed as PR bases remain untouched.
 
 ## Exit codes

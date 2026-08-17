@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from jj_stack.bootstrap import CommandContext
-from jj_stack.models.review_state import ReviewIdentity
-from jj_stack.review.status import PreparedStatus
+from jj_stack.models.tracking import PRIdentity
+from jj_stack.stack.status import PreparedStatus
 from jj_stack.ui import Message
 
 
@@ -78,13 +78,13 @@ class MergeExecutionInputs:
 
 
 @dataclass(frozen=True, slots=True)
-class MergeRevision:
+class MergeChange:
     """One selected change plus its GitHub link."""
 
     base_ref: str
     change_id: str
     commit_id: str
-    identity: ReviewIdentity
+    identity: PRIdentity
     subject: str
 
 
@@ -93,5 +93,5 @@ class MergePlan:
     """Resolved merge plan for the selected stack."""
 
     boundary_action: MergeAction | None
-    planned_revisions: tuple[MergeRevision, ...]
-    reviewed_revisions: tuple[MergeRevision, ...]
+    planned_changes: tuple[MergeChange, ...]
+    linked_changes: tuple[MergeChange, ...]

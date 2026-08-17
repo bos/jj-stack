@@ -9,11 +9,11 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.models.github import GithubStack, GithubStackMerge
-from jj_stack.review.github_stack_safety import selected_github_stack
-from jj_stack.review.observation import RepositoryObservation
+from jj_stack.stack.github_stack_safety import selected_github_stack
+from jj_stack.stack.pr_facts import RepoFacts
 from jj_stack.ui import Message
 
-from .models import MergeAction, MergeExecutionInputs, MergePlan, MergeResult, MergeRevision
+from .models import MergeAction, MergeChange, MergeExecutionInputs, MergePlan, MergeResult
 from .preconditions import merge_precondition_error
 
 
@@ -21,16 +21,16 @@ from .preconditions import merge_precondition_error
 class AsyncMergePlan:
     resource: GithubStack | None
     boundary_action: MergeAction | None
-    planned: tuple[MergeRevision, ...]
+    planned: tuple[MergeChange, ...]
 
     @property
     def terminal_retry(self) -> bool:
         return self.resource is not None and (
-            self.target.identity.pr_number in self.resource.historical_pull_request_numbers
+            self.target.identity.pr_number in self.resource.historical_pr_numbers
         )
 
     @property
-    def target(self) -> MergeRevision:
+    def target(self) -> MergeChange:
         return self.planned[-1]
 
     def action(
@@ -41,17 +41,15 @@ class AsyncMergePlan:
         method: str | None,
         trunk_branch: str,
     ) -> MergeAction:
-        number_list = ", ".join(f"#{revision.identity.pr_number}" for revision in self.planned)
-        pull_requests = f"PR {number_list}" if len(self.planned) == 1 else f"PRs {number_list}"
+        number_list = ", ".join(f"#{change.identity.pr_number}" for change in self.planned)
+        prs = f"PR {number_list}" if len(self.planned) == 1 else f"PRs {number_list}"
         if merge_action == "merge_queue" and enqueued:
-            body = t"{pull_requests} are queued for {ui.bookmark(trunk_branch)} through "
+            body = t"{prs} are queued for {ui.bookmark(trunk_branch)} through "
         elif merge_action == "merge_queue":
-            body = (
-                t"add {pull_requests} to the merge queue for {ui.bookmark(trunk_branch)} through "
-            )
+            body = t"add {prs} to the merge queue for {ui.bookmark(trunk_branch)} through "
         else:
             body = (
-                t"merge {pull_requests} into {ui.bookmark(trunk_branch)} via "
+                t"merge {prs} into {ui.bookmark(trunk_branch)} via "
                 t"{ui.cmd(method or '')} through "
             )
         return MergeAction(
@@ -66,26 +64,24 @@ def build_async_merge_plan(
     stacks: tuple[GithubStack, ...],
     target_change_id: str | None,
 ) -> AsyncMergePlan:
-    by_pull = {
-        revision.identity.pr_number: revision for revision in merge_plan.reviewed_revisions
-    }
-    resource = selected_github_stack(selected_pull_numbers=tuple(by_pull), stacks=stacks)
+    by_pr = {change.identity.pr_number: change for change in merge_plan.linked_changes}
+    resource = selected_github_stack(selected_pr_numbers=tuple(by_pr), stacks=stacks)
     if resource is None:
-        if len(by_pull) > 1 and merge_plan.planned_revisions:
+        if len(by_pr) > 1 and merge_plan.planned_changes:
             raise CliError(
-                "GitHub did not report a stack for this multi-PR review.",
+                "GitHub did not report a stack for these pull requests.",
                 hint=t"Run {ui.cmd('submit')} before merging.",
             )
         return AsyncMergePlan(
             resource=None,
             boundary_action=merge_plan.boundary_action,
-            planned=merge_plan.planned_revisions,
+            planned=merge_plan.planned_changes,
         )
-    if merge_plan.planned_revisions:
+    if merge_plan.planned_changes:
         planned_numbers = tuple(
-            revision.identity.pr_number for revision in merge_plan.planned_revisions
+            change.identity.pr_number for change in merge_plan.planned_changes
         )
-        if resource.active_pull_request_numbers[: len(planned_numbers)] != planned_numbers:
+        if resource.active_pr_numbers[: len(planned_numbers)] != planned_numbers:
             raise CliError(
                 t"GitHub stack #{resource.number} does not match the candidate prefix.",
                 hint=t"Run {ui.cmd('jj-stack submit')} so the stack matches this path, "
@@ -94,18 +90,16 @@ def build_async_merge_plan(
         return AsyncMergePlan(
             resource,
             merge_plan.boundary_action,
-            merge_plan.planned_revisions,
+            merge_plan.planned_changes,
         )
     historical = tuple(
-        by_pull[number]
-        for number in resource.historical_pull_request_numbers
-        if number in by_pull
+        by_pr[number] for number in resource.historical_pr_numbers if number in by_pr
     )
-    change_ids = tuple(revision.change_id for revision in historical)
+    change_ids = tuple(change.change_id for change in historical)
     stop = len(historical) if target_change_id is None else 0
     if target_change_id in change_ids:
         stop = change_ids.index(target_change_id) + 1
-    if not stop or merge_plan.reviewed_revisions[: len(historical)] != historical:
+    if not stop or merge_plan.linked_changes[: len(historical)] != historical:
         return AsyncMergePlan(resource, merge_plan.boundary_action, ())
     return AsyncMergePlan(resource, None, historical[:stop])
 
@@ -124,8 +118,8 @@ async def execute_async_merge(
         )
     if merge.resource is None and merge.target.base_ref != execution.trunk_branch:
         try:
-            await github.update_pull_request(
-                pull_number=merge.target.identity.pr_number,
+            await github.update_pr(
+                pr_number=merge.target.identity.pr_number,
                 base=execution.trunk_branch,
             )
         except GithubClientError as error:
@@ -139,7 +133,7 @@ async def execute_async_merge(
             expected_head_sha=merge.target.commit_id,
             merge_action=merge_action,
             merge_method=merge_method,
-            pull_number=merge.target.identity.pr_number,
+            pr_number=merge.target.identity.pr_number,
         )
     except GithubClientError as error:
         if error.status_code in {400, 409} and "head" in error.detail().casefold():
@@ -182,7 +176,7 @@ async def execute_async_merge(
             merge,
             reason=t"GitHub reports nothing merged: {reason}; if the stack conflicts with "
             t"{ui.bookmark(execution.trunk_branch)}, rebase onto {ui.revset('trunk()')}, resolve "
-            t"the conflict, and run {submit} before merging again; if a check or repository rule "
+            t"the conflict, and run {submit} before merging again; if a check or repo rule "
             t"is failing, fix that on GitHub first",
         )
     if terminal.status == "enqueued":
@@ -210,18 +204,18 @@ def validate_terminal_retry(
     execution: MergeExecutionInputs,
     github: GithubClient,
     merge: AsyncMergePlan,
-    observation: RepositoryObservation,
+    observation: RepoFacts,
 ) -> None:
     """Validate a completed server operation from the observation that found it."""
 
-    revisions = merge.planned
+    changes = merge.planned
     error = merge_precondition_error(
-        inactive_allowed=frozenset(revision.change_id for revision in revisions),
-        expected_repository=github.repository,
+        inactive_allowed=frozenset(change.change_id for change in changes),
+        expected_repo=github.repo,
         expected_trunk_branch=execution.trunk_branch,
         observation=observation,
         remote_name=execution.remote_name,
-        revisions=revisions,
+        changes=changes,
     )
     if error:
         raise CliError(
@@ -233,7 +227,7 @@ def validate_terminal_retry(
 async def _terminal(
     github: GithubClient,
     result: GithubStackMerge,
-    pull_number: int,
+    pr_number: int,
 ) -> GithubStackMerge:
     operation_uuid = result.details.uuid
     if result.status == "pending" and operation_uuid is None:
@@ -244,7 +238,7 @@ async def _terminal(
     while result.status == "pending":
         result = await github.poll_stack_merge(
             operation_uuid=operation_uuid or "",
-            pull_number=pull_number,
+            pr_number=pr_number,
         )
         if result.status == "pending":
             await asyncio.sleep(1)

@@ -27,11 +27,12 @@ Their order determines the order of your pull requests on GitHub.
 ### Each of your changes becomes one pull request
 
 When you first submit your work, `jj-stack` creates one pull request for each of your changes,
-then adds your pull requests to a GitHub stack.
+then groups two or more pull requests into a GitHub stack. A single change produces an ordinary
+pull request.
 
 ### Review on GitHub, merge with jj-stack
 
-Use GitHub as usual for comments, approvals, checks, repository rules, and merge queues. When
+Use GitHub as usual for comments, approvals, checks, repo rules, and merge queues. When
 your stack is ready, `jj-stack merge` asks GitHub to merge it and updates your local `jj`
 changes.
 
@@ -52,10 +53,10 @@ flowchart LR
 In this example, the existing comments and review history stay on PR 42 even though the Git
 commit ID has changed.
 
-## You do not manage review branches
+## You do not manage PR branches
 
 GitHub requires a branch for every pull request. `jj-stack` creates and updates these branches
-for you. Review branches are normally hidden from local `jj` output, and you do not need to
+for you. PR branches are normally hidden from local `jj` output, and you do not need to
 think about Git branches to arrange your stacks.
 
 ## When jj-stack is unsure, it stops

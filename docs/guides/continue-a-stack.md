@@ -42,9 +42,9 @@ jj new
 
 ## If your change is already here with local edits
 
-`checkout` stops if this repository already contains a different commit for the same change. This
+`checkout` stops if this repo already contains a different commit for the same change. This
 usually means that you edited it locally after it was last submitted. It will not choose between
-the reviewed snapshot and the local rewrite.
+the submitted snapshot and the local rewrite.
 
 Connect your pull request to the local change you want to keep, then update your stack on GitHub:
 

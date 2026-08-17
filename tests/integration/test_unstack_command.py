@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jj_stack.github.client import GithubClient
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.state.store import TrackingStore
 
 from ..support.fake_github import FakeGithubState, create_app
 from ..support.integration_helpers import (
@@ -23,7 +23,7 @@ def _combined_output(captured) -> str:
     return " ".join((captured.out + " " + captured.err).split())
 
 
-def test_unstack_removes_grouping_without_closing_pull_requests_or_forgetting_links(
+def test_unstack_removes_grouping_without_closing_prs_or_forgetting_links(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -31,7 +31,7 @@ def test_unstack_removes_grouping_without_closing_pull_requests_or_forgetting_li
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change_id = selected_stack(repo).head.change_id
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     state_before = state_store.load()
     fake_repo.github_stacks = {7: (1, 2)}
 
@@ -48,7 +48,7 @@ def test_unstack_removes_grouping_without_closing_pull_requests_or_forgetting_li
     assert exit_code == 0
     assert "Removed GitHub stack grouping #7" in captured.out
     assert fake_repo.github_stacks == {}
-    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
+    assert all(pr.state == "open" for pr in fake_repo.prs.values())
     assert state_store.load() == state_before
 
 
@@ -59,7 +59,7 @@ def test_unstack_by_number_does_not_require_local_tracking(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     change_id = selected_stack(repo).head.change_id
     fake_repo.github_stacks = {7: (1, 2)}
 
@@ -72,8 +72,8 @@ def test_unstack_by_number_does_not_require_local_tracking(
     assert exit_code == 0
     assert "Removed GitHub stack grouping #7" in captured.out
     assert fake_repo.github_stacks == {}
-    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
-    assert state_store.load().review_identities == {}
+    assert all(pr.state == "open" for pr in fake_repo.prs.values())
+    assert state_store.load().pr_identities == {}
 
     retry_exit_code = run_main(repo, config_path, "unstack", "--stack", "7")
     retry = capsys.readouterr()
@@ -89,14 +89,14 @@ def test_unstack_locked_grouping_stops_without_closing_or_forgetting(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     state_before = state_store.load()
     fake_repo.github_stacks = {7: (1, 2)}
-    app = create_app(FakeGithubState.single_repository(fake_repo))
+    app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class LockedStackClient(GithubClient):
         async def unstack(self, *, stack_number):
-            fake_repo.pull_requests[1].is_queued = True
+            fake_repo.prs[1].is_queued = True
             return await super().unstack(stack_number=stack_number)
 
     patch_github_client_builders(
@@ -117,23 +117,23 @@ def test_unstack_locked_grouping_stops_without_closing_or_forgetting(
     assert retry_exit_code == 1, retry
     assert "could not remove any pull requests" in _combined_output(retry).lower()
     assert fake_repo.github_stacks == {7: (1,)}
-    assert all(pull_request.state == "open" for pull_request in fake_repo.pull_requests.values())
+    assert all(pr.state == "open" for pr in fake_repo.prs.values())
     assert state_store.load() == state_before
 
 
-def test_unstack_rechecks_saved_pull_request_before_removing_grouping(
+def test_unstack_rechecks_saved_pr_before_removing_grouping(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = ReviewStateStore.for_repo(repo)
+    state_store = TrackingStore.for_repo(repo)
     initial_state = state_store.load()
     change_id = selected_stack(repo).head.change_id
     fake_repo.github_stacks = {7: (1, 2)}
-    fake_repo.pull_requests[1].head_ref = "jj-stack/moved-aaaaaaaa"
-    fake_repo.pull_requests[1].head_label = "octo-org:jj-stack/moved-aaaaaaaa"
+    fake_repo.prs[1].head_ref = "jj-stack/moved-aaaaaaaa"
+    fake_repo.prs[1].head_label = "octo-org:jj-stack/moved-aaaaaaaa"
 
     exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
@@ -152,8 +152,8 @@ def test_unstack_local_forgets_links_without_changing_github(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change_id = selected_stack(repo).head.change_id
-    state_store = ReviewStateStore.for_repo(repo)
-    branch = state_store.load().review_identities[change_id].head_ref
+    state_store = TrackingStore.for_repo(repo)
+    branch = state_store.load().pr_identities[change_id].head_ref
 
     preview_exit_code = run_main(
         repo,
@@ -167,15 +167,15 @@ def test_unstack_local_forgets_links_without_changing_github(
 
     assert preview_exit_code == 0
     assert "Would forget saved pull request links" in preview.out
-    assert change_id in state_store.load().review_identities
+    assert change_id in state_store.load().pr_identities
 
     exit_code = run_main(repo, config_path, "unstack", "--local", change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "Forgot saved pull request links" in captured.out
-    assert fake_repo.pull_requests[1].state == "open"
-    assert change_id not in state_store.load().review_identities
+    assert fake_repo.prs[1].state == "open"
+    assert change_id not in state_store.load().pr_identities
     assert read_remote_ref(fake_repo.git_dir, branch)
 
 
@@ -187,12 +187,12 @@ def test_unstack_without_github_grouping_is_a_safe_noop(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change_id = selected_stack(repo).head.change_id
-    state_before = ReviewStateStore.for_repo(repo).load()
+    state_before = TrackingStore.for_repo(repo).load()
 
     exit_code = run_main(repo, config_path, "unstack", change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "No GitHub stack grouping was found" in captured.out
-    assert fake_repo.pull_requests[1].state == "open"
-    assert ReviewStateStore.for_repo(repo).load() == state_before
+    assert fake_repo.prs[1].state == "open"
+    assert TrackingStore.for_repo(repo).load() == state_before

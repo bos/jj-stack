@@ -15,8 +15,8 @@ from jj_stack.config import AppConfig, load_config
 from jj_stack.errors import CliError
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
-from jj_stack.review_namespace import install_review_namespace
-from jj_stack.state.store import ReviewStateStore
+from jj_stack.pr_branch_namespace import install_pr_branch_namespace
+from jj_stack.state.store import TrackingStore
 
 _MINIMUM_JJ_VERSION = (0, 44, 0)
 _MINIMUM_JJ_VERSION_STRING = "0.44.0"
@@ -42,7 +42,7 @@ class RuntimeOptions:
 
     cli_args: JjCliArgs
     debug: bool
-    repository: Path | None
+    repo: Path | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -53,24 +53,24 @@ class CommandContext:
     jj_client: JjClient
     options: RuntimeOptions
     repo_root: Path
-    state_store: ReviewStateStore
+    state_store: TrackingStore
 
 
 def bootstrap_context(
     *,
-    repository: Path | None,
+    repo: Path | None,
     cli_args: JjCliArgs,
     debug: bool,
 ) -> CommandContext:
-    """Resolve the repository, load config, and initialize logging."""
+    """Resolve the repo, load config, and initialize logging."""
 
-    repository = _resolve_optional_path(repository)
-    _validate_repository_path(repository)
+    repo = _resolve_optional_path(repo)
+    _validate_repo_path(repo)
     check_jj_version()
-    repo_root = resolve_repo_root(repository or Path.cwd())
+    repo_root = resolve_repo_root(repo or Path.cwd())
     jj_client = JjClient(repo_root, cli_args=cli_args)
     config = load_config(jj_client=jj_client)
-    install_review_namespace(config.branch_prefix)
+    install_pr_branch_namespace(config.branch_prefix)
     jj_client.enable_initial_working_copy_snapshot()
     configure_logging(debug=debug, configured_level=config.logging.level)
     return CommandContext(
@@ -79,10 +79,10 @@ def bootstrap_context(
         options=RuntimeOptions(
             cli_args=cli_args,
             debug=debug,
-            repository=repository,
+            repo=repo,
         ),
         repo_root=repo_root,
-        state_store=ReviewStateStore.for_repo(repo_root),
+        state_store=TrackingStore.for_repo(repo_root),
     )
 
 
@@ -204,10 +204,10 @@ def _resolve_optional_path(raw_path: Path | str | None) -> Path | None:
     return Path(str(raw_path)).resolve()
 
 
-def _validate_repository_path(repository: Path | None) -> None:
-    if repository is None:
+def _validate_repo_path(repo: Path | None) -> None:
+    if repo is None:
         return
-    if not repository.exists():
-        raise CliError(f"Repository path does not exist: {repository}")
-    if not repository.is_dir():
-        raise CliError(f"Repository path is not a directory: {repository}")
+    if not repo.exists():
+        raise CliError(f"Repo path does not exist: {repo}")
+    if not repo.is_dir():
+        raise CliError(f"Repo path is not a directory: {repo}")

@@ -6,7 +6,7 @@ navGroup: Everyday work
 weight: 47
 ---
 
-This page is for reviewers and repository administrators. Authors can keep using ordinary `jj`
+This page is for reviewers and repo administrators. Authors can keep using ordinary `jj`
 locally; reviewers work with native stacked pull requests on GitHub.
 
 ## Read the stack map
@@ -45,9 +45,9 @@ GitHub enqueues a stack's pull requests in dependency order. If a pull request i
 ejected, GitHub also removes every pull request above it. Resolve the failing rule or check, then
 enqueue the stack again. Queue acceptance is not the same as a completed merge. After GitHub
 reports completion, the author runs `jj-stack sync <head-change-id>` to update local history and
-the remaining reviews.
+the remaining PRs.
 
-Repository behavior and preview limitations can change independently of jj-stack. Use GitHub's
+Repo behavior and preview limitations can change independently of jj-stack. Use GitHub's
 [stacked pull request guides][github-stacks] for the current platform rules instead of copying
 those details into local team instructions.
 

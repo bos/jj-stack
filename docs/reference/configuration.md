@@ -1,16 +1,16 @@
 ---
 title: Configuration
-description: Set repository defaults, authentication, review branch names, and shell completion.
+description: Set repo defaults, authentication, PR branch names, and shell completion.
 navGroup: Look things up
 weight: 90
 ---
 
-For most repositories, `jj-stack` needs no configuration. It reads local changes through `jj` and
+For most repos, `jj-stack` needs no configuration. It reads local changes through `jj` and
 pull request status from GitHub.
 
-## Repository defaults
+## Repo defaults
 
-Edit repository configuration with `jj config edit --repo`:
+Edit repo configuration with `jj config edit --repo`:
 
 ```toml
 [jj-stack]
@@ -28,7 +28,7 @@ merge_method = "squash"
 Command-line options override these defaults without removing existing reviewers or labels that
 you omit.
 
-## Review branch names
+## PR branch names
 
 By default, the Git branches managed by jj-stack start with `jj-stack/`. Do not create your own
 branches with that prefix. `jj-stack doctor --fix` normally keeps those branches out of local
@@ -37,7 +37,7 @@ bookmark output.
 Set a different prefix before the first submit:
 
 ```console
-jj config set --repo jj-stack.branch_prefix my-reviews
+jj config set --repo jj-stack.branch_prefix my-prs
 ```
 
 ## Authentication

@@ -7,29 +7,29 @@ from typing import cast
 import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
 import jj_stack.ui as ui_module
-from jj_stack.models.github import GithubPullRequest
-from jj_stack.models.review_state import ReviewIdentity, SubmittedBaseline
-from jj_stack.review.status import (
-    PullRequestLookup,
-    PullRequestLookupSource,
-    PullRequestLookupState,
-    ReviewStatusRevision,
+from jj_stack.models.github import GithubPR
+from jj_stack.models.tracking import PRIdentity, SubmittedBaseline
+from jj_stack.stack.status import (
+    PRLookup,
+    PRLookupSource,
+    PRLookupState,
+    StackStatusChange,
     StatusResult,
 )
 
 
 def _lookup(
     *,
-    state: PullRequestLookupState,
+    state: PRLookupState,
     message: str | None = None,
-    pull_request: object | None = None,
+    pr: object | None = None,
     review_decision: str | None = None,
     review_decision_error: str | None = None,
-    source: PullRequestLookupSource = "head",
-) -> PullRequestLookup:
-    return PullRequestLookup(
+    source: PRLookupSource = "head",
+) -> PRLookup:
+    return PRLookup(
         message=message,
-        pull_request=cast(GithubPullRequest | None, pull_request),
+        pr=cast(GithubPR | None, pr),
         review_decision=review_decision,
         review_decision_error=review_decision_error,
         state=state,
@@ -37,35 +37,35 @@ def _lookup(
     )
 
 
-def _status_revision(
+def _status_change(
     *,
     branch: str | None = None,
     change_id: str,
     commit_id: str = "commit-1",
     local_divergent: bool = False,
-    pull_request_lookup: PullRequestLookup | None = None,
-    review_identity: ReviewIdentity | None = None,
+    pr_lookup: PRLookup | None = None,
+    pr_identity: PRIdentity | None = None,
     remote_target: str | None = None,
     submitted_baseline: SubmittedBaseline | None = None,
     subject: str = "feature",
-) -> ReviewStatusRevision:
-    return ReviewStatusRevision(
+) -> StackStatusChange:
+    return StackStatusChange(
         branch=branch,
         change_id=change_id,
         commit_id=commit_id,
         local_divergent=local_divergent,
-        pull_request_lookup=pull_request_lookup,
-        review_identity=review_identity,
+        pr_lookup=pr_lookup,
+        pr_identity=pr_identity,
         remote_target=remote_target,
         submitted_baseline=submitted_baseline,
         subject=subject,
     )
 
 
-def _identity(*, branch: str, pr_number: int) -> ReviewIdentity:
-    return ReviewIdentity(
-        repository_owner="octo-org",
-        repository_name="repo",
+def _identity(*, branch: str, pr_number: int) -> PRIdentity:
+    return PRIdentity(
+        repo_owner="octo-org",
+        repo_name="repo",
         pr_number=pr_number,
         head_owner="octo-org",
         head_ref=branch,
@@ -81,10 +81,10 @@ def _render_lines(*lines: ui_module.Renderable) -> tuple[str, ...]:
 
 
 def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> None:
-    merged_revision = _status_revision(
+    merged_change = _status_change(
         change_id="abcdefghijkl",
-        pull_request_lookup=_lookup(
-            pull_request=SimpleNamespace(
+        pr_lookup=_lookup(
+            pr=SimpleNamespace(
                 base=SimpleNamespace(ref="team/feature-base"),
                 number=5,
                 state="merged",
@@ -98,7 +98,7 @@ def test_view_advises_cleanup_and_rebase_when_merged_pr_remains_in_stack() -> No
             result=cast(
                 StatusResult,
                 SimpleNamespace(
-                    revisions=(merged_revision,),
+                    changes=(merged_change,),
                     selected_revset="@",
                     submitted_state_disagreements=(),
                 ),
@@ -123,7 +123,7 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
             result=cast(
                 StatusResult,
                 SimpleNamespace(
-                    revisions=(),
+                    changes=(),
                     selected_revset="ulxwxsqw",
                     submitted_state_disagreements=(
                         "abcdefghijkl",
@@ -141,11 +141,11 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
     assert "bcdefghi" in normalized_lines
 
 
-def test_view_closed_pr_advisory_guides_reopen_relink_or_end_review() -> None:
-    revision = _status_revision(
+def test_view_closed_pr_advisory_guides_reopen_relink_or_cleanup() -> None:
+    change = _status_change(
         change_id="loqvlqrqabcdefghijkl",
-        pull_request_lookup=_lookup(
-            pull_request=SimpleNamespace(number=21216, state="closed"),
+        pr_lookup=_lookup(
+            pr=SimpleNamespace(number=21216, state="closed"),
             state="closed",
         ),
     )
@@ -155,7 +155,7 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_end_review() -> None:
             result=cast(
                 StatusResult,
                 SimpleNamespace(
-                    revisions=(revision,),
+                    changes=(change,),
                     selected_revset="@",
                     submitted_state_disagreements=(),
                 ),
@@ -166,21 +166,21 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_end_review() -> None:
 
     assert "Closed GitHub PR" in normalized_lines
     assert "GitHub reports a closed PR for the change shown above" in normalized_lines
-    assert "Reopen the PR on GitHub to continue that review" in normalized_lines
+    assert "Reopen the PR on GitHub to continue using it" in normalized_lines
     assert "relink an open replacement" in normalized_lines
     assert "jj-stack cleanup @" in normalized_lines
     assert "changes below" not in normalized_lines
 
 
-def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
-    revision = _status_revision(
-        review_identity=_identity(
+def test_view_missing_pr_advisory_guides_fetch_relink_or_cleanup() -> None:
+    change = _status_change(
+        pr_identity=_identity(
             branch="jj-stack/feature-8-abcdefgh",
             pr_number=42,
         ),
         change_id="abcdefgh1234",
-        pull_request_lookup=_lookup(
-            pull_request=None,
+        pr_lookup=_lookup(
+            pr=None,
             state="missing",
         ),
     )
@@ -190,7 +190,7 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
             result=cast(
                 StatusResult,
                 SimpleNamespace(
-                    revisions=(revision,),
+                    changes=(change,),
                     selected_revset="@",
                     submitted_state_disagreements=(),
                 ),
@@ -200,7 +200,7 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
 
     assert "Missing GitHub PR" in normalized_lines
-    assert "GitHub did not report a PR for the remembered review branch" in normalized_lines
+    assert "GitHub did not report a PR for the remembered PR branch" in normalized_lines
     assert "jj git fetch" in normalized_lines
     assert "Relink an open PR if one exists" in normalized_lines
     assert "jj-stack unstack --local @" in normalized_lines
@@ -208,16 +208,16 @@ def test_view_missing_pr_advisory_guides_fetch_relink_or_end_review() -> None:
 
 
 def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
-    revision = _status_revision(
+    change = _status_change(
         branch="jj-stack/feature-8-abcdefgh",
-        review_identity=_identity(
+        pr_identity=_identity(
             branch="jj-stack/feature-8-abcdefgh",
             pr_number=8,
         ),
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
-        pull_request_lookup=_lookup(
-            pull_request=None,
+        pr_lookup=_lookup(
+            pr=None,
             state="missing",
         ),
         subject="feature 8",
@@ -226,14 +226,14 @@ def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
     lines = view_module.render_status_summary_lines(
         client=SimpleNamespace(
             resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
-            render_revision_log_lines=lambda current_revision, *, color_when: (
-                f"○  {current_revision.change_id[:8]} {current_revision.commit_id[:8]}",
-                f"│  {current_revision.subject}",
+            render_commit_log_lines=lambda current_change, *, color_when: (
+                f"○  {current_change.change_id[:8]} {current_change.commit_id[:8]}",
+                f"│  {current_change.subject}",
             ),
         ),
         github_available=True,
         leading_separator=False,
-        result=SimpleNamespace(revisions=(revision,)),
+        result=SimpleNamespace(changes=(change,)),
         verbose=False,
     )
 
@@ -246,16 +246,16 @@ def test_view_summary_does_not_call_tracked_missing_pr_not_submitted() -> None:
 
 
 def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() -> None:
-    revision = _status_revision(
+    change = _status_change(
         branch="jj-stack/feature-7-abcdefgh",
-        review_identity=_identity(
+        pr_identity=_identity(
             branch="jj-stack/feature-7-abcdefgh",
             pr_number=7,
         ),
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
-        pull_request_lookup=_lookup(
-            pull_request=SimpleNamespace(
+        pr_lookup=_lookup(
+            pr=SimpleNamespace(
                 html_url="https://github.test/octo/repo/pull/7",
                 is_draft=False,
                 is_queued=False,
@@ -271,14 +271,14 @@ def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() ->
     lines = view_module.render_status_summary_lines(
         client=SimpleNamespace(
             resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
-            render_revision_log_lines=lambda current_revision, *, color_when: (
-                f"○  {current_revision.change_id[:8]} {current_revision.commit_id[:8]}",
-                f"│  {current_revision.subject}",
+            render_commit_log_lines=lambda current_change, *, color_when: (
+                f"○  {current_change.change_id[:8]} {current_change.commit_id[:8]}",
+                f"│  {current_change.subject}",
             ),
         ),
         github_available=True,
         leading_separator=False,
-        result=SimpleNamespace(revisions=(revision,)),
+        result=SimpleNamespace(changes=(change,)),
         verbose=False,
     )
 
@@ -289,18 +289,18 @@ def test_view_summary_omits_review_decision_when_live_decision_lookup_fails() ->
     assert "approved" not in normalized_lines
 
 
-def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
-    revision = _status_revision(
+def test_view_summary_labels_row_when_pr_lookup_fails() -> None:
+    change = _status_change(
         branch="jj-stack/feature-1-abcdefgh",
-        review_identity=_identity(
+        pr_identity=_identity(
             branch="jj-stack/feature-1-abcdefgh",
             pr_number=1,
         ),
         change_id="abcdefgh1234",
         commit_id="1234567890abcdef",
-        pull_request_lookup=_lookup(
+        pr_lookup=_lookup(
             message="pull request lookup failed",
-            pull_request=None,
+            pr=None,
             state="error",
         ),
         subject="feature 1",
@@ -309,14 +309,14 @@ def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
     lines = view_module.render_status_summary_lines(
         client=SimpleNamespace(
             resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
-            render_revision_log_lines=lambda current_revision, *, color_when: (
-                f"○  {current_revision.change_id[:8]} {current_revision.commit_id[:8]}",
-                f"│  {current_revision.subject}",
+            render_commit_log_lines=lambda current_change, *, color_when: (
+                f"○  {current_change.change_id[:8]} {current_change.commit_id[:8]}",
+                f"│  {current_change.subject}",
             ),
         ),
         github_available=True,
         leading_separator=False,
-        result=SimpleNamespace(revisions=(revision,)),
+        result=SimpleNamespace(changes=(change,)),
         verbose=False,
     )
 
@@ -325,8 +325,8 @@ def test_view_summary_labels_row_when_pull_request_lookup_fails() -> None:
 
 
 def test_view_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
-    revisions = tuple(
-        _status_revision(
+    changes = tuple(
+        _status_change(
             change_id=f"{index}" * 12,
             commit_id=f"commit-{index}",
             subject=f"feature {index}",
@@ -337,14 +337,14 @@ def test_view_summary_truncates_middle_of_long_unsubmitted_sections() -> None:
     lines = view_module.render_status_summary_lines(
         client=SimpleNamespace(
             resolve_color_when=lambda *, cli_color, stdout_is_tty: "never",
-            render_revision_log_lines=lambda revision, *, color_when: (
-                f"{revision.subject} [{revision.change_id[:8]}]",
-                f"body for {revision.subject}",
+            render_commit_log_lines=lambda change, *, color_when: (
+                f"{change.subject} [{change.change_id[:8]}]",
+                f"body for {change.subject}",
             ),
         ),
         github_available=True,
         leading_separator=False,
-        result=SimpleNamespace(revisions=revisions),
+        result=SimpleNamespace(changes=changes),
         verbose=False,
     )
 

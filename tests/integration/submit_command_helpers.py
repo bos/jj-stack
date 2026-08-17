@@ -10,7 +10,7 @@ from jj_stack.cli import main
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
 
-from ..support.fake_github import FakeGithubRepository
+from ..support.fake_github import FakeGithubRepo
 from ..support.integration_helpers import (
     configure_fake_github_environment,
     run_command,
@@ -21,7 +21,7 @@ from ..support.integration_helpers import (
 def configure_submit_environment(
     monkeypatch,
     tmp_path: Path,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     *,
     extra_config_lines: list[str] | None = None,
 ) -> Path:
@@ -34,7 +34,7 @@ def configure_submit_environment(
             "jj_stack.commands.merge.command",
             "jj_stack.commands.sync",
             "jj_stack.commands.list_",
-            "jj_stack.review.status",
+            "jj_stack.stack.status",
         ),
         fake_repo=fake_repo,
         extra_config_lines=extra_config_lines,
@@ -43,16 +43,16 @@ def configure_submit_environment(
     )
 
 
-def approve_pull_requests(fake_repo: FakeGithubRepository, *pull_numbers: int) -> None:
-    for pull_number in pull_numbers:
-        fake_repo.create_pull_request_review(
-            pull_number=pull_number,
-            reviewer_login=f"reviewer-{pull_number}",
+def approve_prs(fake_repo: FakeGithubRepo, *pr_numbers: int) -> None:
+    for pr_number in pr_numbers:
+        fake_repo.create_pr_review(
+            pr_number=pr_number,
+            reviewer_login=f"reviewer-{pr_number}",
             state="APPROVED",
         )
 
 
-def issue_comments(fake_repo: FakeGithubRepository, issue_number: int):
+def issue_comments(fake_repo: FakeGithubRepo, issue_number: int):
     return fake_repo.issue_comments.get(issue_number, [])
 
 
@@ -95,17 +95,17 @@ def patch_github_client_builders(
     monkeypatch,
     *,
     app,
-    fake_repo: FakeGithubRepository,
+    fake_repo: FakeGithubRepo,
     modules: tuple[str, ...],
     client_type: type[GithubClient] = GithubClient,
 ) -> None:
-    def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
+    def build_github_client(*, repo: GithubRepoAddress) -> GithubClient:
         return client_type(
             httpxyz.AsyncClient(
                 base_url="https://api.github.test",
                 transport=httpxyz.ASGITransport(app=app),
             ),
-            repository=repository,
+            repo=repo,
         )
 
     def parse_github_repo(*_args, **_kwargs) -> GithubRepoAddress:
@@ -128,6 +128,6 @@ def patch_github_client_builders(
 
 
 def write_config(
-    tmp_path: Path, fake_repo: FakeGithubRepository, *, extra_lines: list[str] | None = None
+    tmp_path: Path, fake_repo: FakeGithubRepo, *, extra_lines: list[str] | None = None
 ) -> Path:
     return write_fake_github_config(tmp_path, fake_repo, extra_lines=extra_lines)

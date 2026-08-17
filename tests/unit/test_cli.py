@@ -15,17 +15,17 @@ def no_configured_color(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("jj_stack.cli._load_configured_jj_color", lambda **kwargs: None)
 
 
-def test_main_reports_missing_repository_without_traceback(
+def test_main_reports_missing_repo_without_traceback(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    repository = tmp_path / "missing-repo"
+    repo = tmp_path / "missing-repo"
 
-    exit_code = main(["--repository", str(repository), "submit"])
+    exit_code = main(["--repository", str(repo), "submit"])
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert str(repository) in captured.err
+    assert str(repo) in captured.err
     assert "does not exist" in captured.err
     assert "Traceback" not in captured.err
 
@@ -99,7 +99,7 @@ def test_main_renders_cli_error_hint_on_separate_line(
     assert "Hint: Run view and retry." in err_lines
 
 
-def test_cleanup_close_requires_pull_request_selection(capsys) -> None:
+def test_cleanup_close_requires_pr_selection(capsys) -> None:
     exit_code = main(["cleanup", "--close"])
     captured = capsys.readouterr()
 
@@ -219,7 +219,7 @@ def test_main_preserves_view_selector_order(
     assert exit_code == 0
     assert observed["selectors"] == (
         ViewSelector(kind="revset", value="foo"),
-        ViewSelector(kind="pull_request", value="17"),
+        ViewSelector(kind="pr", value="17"),
         ViewSelector(kind="revset", value="bar"),
     )
 
@@ -269,7 +269,7 @@ def test_main_reports_unknown_command_with_short_recovery_hint(
 
 
 @pytest.mark.merge_recovery
-def test_sync_all_rejects_a_revision_before_repository_access(
+def test_sync_all_rejects_a_change_before_repo_access(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -277,7 +277,7 @@ def test_sync_all_rejects_a_revision_before_repository_access(
     captured = capsys.readouterr()
 
     assert exit_code == EXIT_USAGE
-    assert "Use either jj-stack sync --all or a revision, not both." in captured.err
+    assert "Use either jj-stack sync --all or a revset, not both." in captured.err
 
 
 def _patch_fake_jj_workspace(

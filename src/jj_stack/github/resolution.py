@@ -9,8 +9,8 @@ from urllib.parse import urlparse
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubRepository
-from jj_stack.review_namespace import current_review_namespace
+from jj_stack.models.github import GithubRepo
+from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 
 if TYPE_CHECKING:
     from jj_stack.jj.client import JjClient
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class GithubRepoAddress:
-    """GitHub repository coordinates parsed from a Git remote URL."""
+    """GitHub repo coordinates parsed from a Git remote URL."""
 
     owner: str
     repo: str
@@ -28,18 +28,18 @@ class GithubRepoAddress:
         return f"{self.owner}/{self.repo}"
 
     @property
-    def repository_key(self) -> tuple[str, str]:
-        """Return the case-insensitive nominal repository identity."""
+    def repo_key(self) -> tuple[str, str]:
+        """Return the case-insensitive nominal repo identity."""
 
         return self.owner.casefold(), self.repo.casefold()
 
 
 @dataclass(frozen=True, slots=True)
 class GithubTarget:
-    """A fully resolved GitHub target: the selected Git remote and its repository."""
+    """A fully resolved GitHub target: the selected Git remote and its repo."""
 
     remote: GitRemote
-    repository: GithubRepoAddress
+    repo: GithubRepoAddress
 
     # A resolved target carries no diagnostics. These mirror UnresolvedGithubTarget so
     # degraded-mode consumers can read errors off either arm without narrowing.
@@ -48,7 +48,7 @@ class GithubTarget:
         return None
 
     @property
-    def github_repository_error(self) -> None:
+    def github_repo_error(self) -> None:
         return None
 
 
@@ -61,16 +61,16 @@ class UnresolvedGithubTarget:
     - no Git remotes exist at all: every field is None
     - remote selection failed: only `remote_error` is set
     - a remote resolved but is not a GitHub remote: `remote` and
-      `github_repository_error` are set
+      `github_repo_error` are set
     """
 
     remote: GitRemote | None = None
     remote_error: ErrorMessage | None = None
-    github_repository_error: ErrorMessage | None = None
+    github_repo_error: ErrorMessage | None = None
 
 
 def select_submit_remote(remotes: tuple[GitRemote, ...]) -> GitRemote:
-    """Resolve the Git remote used by review commands."""
+    """Resolve the Git remote used by stack commands."""
 
     remotes_by_name = {remote.name: remote for remote in remotes}
     if "origin" in remotes_by_name:
@@ -84,17 +84,17 @@ def select_submit_remote(remotes: tuple[GitRemote, ...]) -> GitRemote:
 
 
 def parse_github_repo(remote: GitRemote) -> GithubRepoAddress | None:
-    """Parse one GitHub repository target from a Git remote's URLs."""
+    """Parse one GitHub repo target from a Git remote's URLs."""
 
-    fetch_repository = _parse_github_url(remote.fetch_url)
-    push_repository = _parse_github_url(remote.push_url)
-    if fetch_repository != push_repository:
+    fetch_repo = _parse_github_url(remote.fetch_url)
+    push_repo = _parse_github_url(remote.push_url)
+    if fetch_repo != push_repo:
         return None
-    return fetch_repository
+    return fetch_repo
 
 
 def _parse_github_url(remote_url: str) -> GithubRepoAddress | None:
-    """Parse a GitHub repository target from one Git remote URL."""
+    """Parse a GitHub repo target from one Git remote URL."""
 
     parsed = urlparse(remote_url)
     if parsed.scheme in {"http", "https", "ssh"} and parsed.hostname:
@@ -138,41 +138,41 @@ def resolve_github_target(
     except CliError as error:
         return UnresolvedGithubTarget(remote_error=error_message(error))
 
-    github_repository = parse_github_repo(remote)
-    if github_repository is None:
+    github_repo = parse_github_repo(remote)
+    if github_repo is None:
         return UnresolvedGithubTarget(
             remote=remote,
-            github_repository_error=(
-                t"Could not determine the GitHub repository for remote "
+            github_repo_error=(
+                t"Could not determine the GitHub repo for remote "
                 t"{ui.bookmark(remote.name)}. Its fetch and push URLs must identify "
-                t"the same GitHub repository."
+                t"the same GitHub repo."
             ),
         )
-    return GithubTarget(remote=remote, repository=github_repository)
+    return GithubTarget(remote=remote, repo=github_repo)
 
 
 def require_github_repo(remote: GitRemote) -> GithubRepoAddress:
-    """Parse a GitHub repository target or raise a user-facing CLI error."""
+    """Parse a GitHub repo target or raise a user-facing CLI error."""
 
-    github_repository = parse_github_repo(remote)
-    if github_repository is not None:
-        return github_repository
+    github_repo = parse_github_repo(remote)
+    if github_repo is not None:
+        return github_repo
     raise CliError(
-        t"Could not determine the GitHub repository for remote {ui.bookmark(remote.name)}.",
-        hint="Ensure its fetch and push URLs identify the same GitHub repository.",
+        t"Could not determine the GitHub repo for remote {ui.bookmark(remote.name)}.",
+        hint="Ensure its fetch and push URLs identify the same GitHub repo.",
     )
 
 
 def resolve_trunk_branch(
     *,
     client: JjClient,
-    github_repository_state: GithubRepository,
+    github_repo_state: GithubRepo,
     remote: GitRemote,
     trunk_commit_id: str,
 ) -> tuple[str, dict[str, str]]:
     """Resolve the GitHub base branch used for bottom-of-stack pull requests."""
 
-    namespace = current_review_namespace()
+    namespace = current_pr_branch_namespace()
     remote_targets = {
         branch: target
         for branch, target in client.list_remote_branches(
@@ -184,7 +184,7 @@ def resolve_trunk_branch(
     matches = tuple(
         branch for branch, target in remote_targets.items() if target == trunk_commit_id
     )
-    default_branch = github_repository_state.default_branch
+    default_branch = github_repo_state.default_branch
     if default_branch:
         # No match at all usually just means trunk() is behind the remote, which is fine.
         # A match on some *other* branch is positive evidence that GitHub's default branch
@@ -196,8 +196,8 @@ def resolve_trunk_branch(
                 t"{ui.join(ui.bookmark, matches)}.",
                 hint=(
                     t"Point {ui.revset('trunk()')} at {ui.bookmark(default_branch)}, or change "
-                    t"the repository's default branch on GitHub, so pull requests are based on "
-                    t"the branch you review against."
+                    t"the repo's default branch on GitHub, so pull requests are based on "
+                    t"the branch the pull requests should target."
                 ),
             )
         return default_branch, remote_targets
@@ -212,7 +212,7 @@ def resolve_trunk_branch(
     raise CliError(
         t"Could not determine the trunk branch for remote {ui.bookmark(remote.name)}.",
         hint=(
-            t"Ensure the GitHub repository exposes a default branch or create one "
+            t"Ensure the GitHub repo exposes a default branch or create one "
             t"remote branch that points at {ui.revset('trunk()')}."
         ),
     )

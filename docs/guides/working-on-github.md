@@ -25,7 +25,7 @@ edits and GitHub's rewritten contents disagree, `sync` stops instead of choosing
 ## What the next submit replaces
 
 `jj-stack submit` makes GitHub match the selected local stack. It pushes each selected change to
-its review branch, sets each pull request's base from the local parent order, refreshes titles and
+its PR branch, sets each pull request's base from the local parent order, refreshes titles and
 bodies from `jj` descriptions or supplied description files, and updates native stack membership.
 `--draft` affects new pull requests. `--draft=all`, `--open`, and the choices made through
 `--edit` can change existing draft states. Labels and reviewer requests that submit applies are
@@ -37,7 +37,7 @@ back into the change description or pass them again on the next submit.
 
 ## Changes to avoid on GitHub
 
-Do not force-push, rename, or delete `jj-stack/` review branches. Do not manually retarget pull
+Do not force-push, rename, or delete `jj-stack/` PR branches. Do not manually retarget pull
 request bases, reorder members, or add pull requests to the native stack when you intend the
 local stack order to remain authoritative. A later submit may replace grouping and bases; an
 unexpected branch move instead causes jj-stack to stop so it does not overwrite someone else's
@@ -48,5 +48,5 @@ GitHub state, reproduce the change with `jj` and submit it, or remove the GitHub
 `jj-stack unstack --stack <number>`. See [troubleshooting](../troubleshooting.md) for specific
 recovery paths.
 
-For reviewer and repository configuration guidance, see
+For reviewer and repo configuration guidance, see
 [review and operate a stack](review-a-stack.md).

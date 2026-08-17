@@ -6,8 +6,8 @@ import pytest
 
 from jj_stack.cli import main
 from jj_stack.errors import EXIT_PROBE
-from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.state.store import ReviewStateStore, resolve_state_path
+from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackingState
+from jj_stack.state.store import TrackingStore, resolve_state_path
 
 CHANGE_ID = "abcdefghijklmno"
 
@@ -29,20 +29,20 @@ def test_in_use_tracks_presence_of_valid_local_state(
     assert main(["--repository", str(repo), "in-use"]) == 1
     assert not state_home.exists()
 
-    store = ReviewStateStore.for_repo(repo)
-    store.create_review(
+    store = TrackingStore.for_repo(repo)
+    store.create_pr(
         CHANGE_ID,
-        identity=ReviewIdentity(
-            repository_owner="octocat",
-            repository_name="example",
+        identity=PRIdentity(
+            repo_owner="octocat",
+            repo_name="example",
             pr_number=17,
             head_owner="octocat",
             head_ref="jj-stack/change-abcdefgh",
         ),
         baseline=SubmittedBaseline(commit_id="abc123"),
     )
-    store.retire_review(CHANGE_ID)
-    assert store.load() == ReviewState()
+    store.retire_pr(CHANGE_ID)
+    assert store.load() == TrackingState()
 
     assert main(["--repository", str(repo), "in-use"]) == 0
 

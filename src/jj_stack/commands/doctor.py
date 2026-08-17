@@ -1,9 +1,9 @@
 """Check `jj-stack`'s configuration and connectivity.
 
-Checks review-branch fetch settings, visible review bookmarks, leftovers from interrupted
+Checks PR-branch fetch settings, visible PR bookmarks, leftovers from interrupted
 checkout or sync commands, remote selection, GitHub connectivity, authentication, and trunk
 discovery. By default, it only reports problems. Pass `--fix` to also apply the local repairs it
-can make safely. Currently, the only automatic repair is reserving the review-branch namespace
+can make safely. Currently, the only automatic repair is reserving the PR-branch namespace
 in the remote's fetch configuration. The command never changes GitHub.
 
 Exit status is 0 unless a check fails; warnings and problems repaired by `--fix` do not count as
@@ -37,12 +37,12 @@ from jj_stack.github.resolution import (
 from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubRepository
-from jj_stack.review_namespace import current_review_namespace
+from jj_stack.models.github import GithubRepo
+from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
-HELP = "Check repository setup and GitHub connectivity"
+HELP = "Check repo setup and GitHub connectivity"
 
 type CheckDetail = Message
 
@@ -59,11 +59,11 @@ def doctor(
     cli_args: JjCliArgs,
     debug: bool,
     fix: bool,
-    repository: Path | None,
+    repo: Path | None,
 ) -> int:
     """CLI entrypoint for `doctor`."""
     context = bootstrap_context(
-        repository=repository,
+        repo=repo,
         cli_args=cli_args,
         debug=debug,
     )
@@ -95,7 +95,7 @@ async def _run_checks(
     if selected_remote is None:
         results.extend(
             _skipped(
-                "review branch fetch",
+                "PR branch fetch",
                 "checkout/sync leftovers",
                 "GitHub remote",
                 "GitHub auth",
@@ -107,9 +107,9 @@ async def _run_checks(
         return results
 
     results.append(
-        _check_review_fetch_isolation(context=context, fix=fix, remote=selected_remote)
+        _check_pr_branch_fetch_isolation(context=context, fix=fix, remote=selected_remote)
     )
-    results.append(_check_review_temp(context=context))
+    results.append(_check_pr_branch_temp(context=context))
 
     # Check 2: GitHub remote parsing
     github_result, parsed_repo = _check_github_remote(selected_remote)
@@ -180,26 +180,26 @@ def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, GithubRepoAddr
                 "GitHub remote",
                 "fail",
                 t"remote {ui.bookmark(remote.name)} does not have fetch and push URLs "
-                t"for the same GitHub repository; use GitHub HTTPS or SSH URLs",
+                t"for the same GitHub repo; use GitHub HTTPS or SSH URLs",
             ),
             None,
         )
     return CheckResult("GitHub remote", "ok", parsed.full_name), parsed
 
 
-def _check_review_fetch_isolation(
+def _check_pr_branch_fetch_isolation(
     *,
     context: CommandContext,
     fix: bool,
     remote: GitRemote,
 ) -> CheckResult:
-    namespace = current_review_namespace()
-    visible = tuple(context.jj_client.visible_review_bookmark_targets())
+    namespace = current_pr_branch_namespace()
+    visible = tuple(context.jj_client.visible_pr_bookmark_targets())
     visible_detail: CheckDetail = (
         t" Visible bookmarks remain: {ui.join(ui.bookmark, visible)}." if visible else ""
     )
     try:
-        isolation = context.jj_client.ensure_review_fetch_isolation(
+        isolation = context.jj_client.ensure_pr_branch_fetch_isolation(
             remote=remote.name,
             dry_run=not fix,
         )
@@ -207,7 +207,7 @@ def _check_review_fetch_isolation(
         detail: CheckDetail = error_message(error)
         if error.hint is not None:
             detail = (detail, t" {error.hint}")
-        return CheckResult("review branch fetch", "warn", detail)
+        return CheckResult("PR branch fetch", "warn", detail)
     if isolation.status == "required":
         if isolation.problem == "missing":
             problem_detail = (
@@ -222,7 +222,7 @@ def _check_review_fetch_isolation(
         else:
             raise AssertionError("required fetch isolation has no problem")
         return CheckResult(
-            "review branch fetch",
+            "PR branch fetch",
             "warn",
             (
                 problem_detail,
@@ -231,19 +231,19 @@ def _check_review_fetch_isolation(
         )
     if visible:
         return CheckResult(
-            "review branch fetch",
+            "PR branch fetch",
             "warn",
             t"exclusion is configured; visible bookmarks remain: {ui.join(ui.bookmark, visible)}",
         )
     return CheckResult(
-        "review branch fetch",
+        "PR branch fetch",
         "fixed" if isolation.status == "applied" else "ok",
         t"exactly one {ui.code(namespace.fetch_refspec)} exclusion",
     )
 
 
-def _check_review_temp(*, context: CommandContext) -> CheckResult:
-    artifacts = context.jj_client.review_temp_artifacts()
+def _check_pr_branch_temp(*, context: CommandContext) -> CheckResult:
+    artifacts = context.jj_client.pr_branch_temp_artifacts()
     if artifacts.ref_target is None and not artifacts.bookmark_targets:
         return CheckResult("checkout/sync leftovers", "ok", "none")
     return CheckResult(
@@ -279,10 +279,10 @@ def _check_github_auth() -> tuple[CheckResult, str | None]:
 async def _check_github_connectivity(
     *,
     parsed_repo: GithubRepoAddress,
-) -> tuple[CheckResult, CheckResult, GithubRepository | None]:
-    async with build_github_client(repository=parsed_repo) as client:
+) -> tuple[CheckResult, CheckResult, GithubRepo | None]:
+    async with build_github_client(repo=parsed_repo) as client:
         try:
-            github_repo = await client.get_repository()
+            github_repo = await client.get_repo()
         except GithubClientError as error:
             return (
                 CheckResult(
@@ -308,7 +308,7 @@ async def _check_github_connectivity(
         except GithubClientError as error:
             unavailable = github_stacks_unavailable_error(
                 error=error,
-                repository=parsed_repo.full_name,
+                repo=parsed_repo.full_name,
             )
             detail: CheckDetail = (
                 (unavailable.message, t" {unavailable.hint}")
@@ -329,13 +329,13 @@ async def _check_github_connectivity(
     )
 
 
-def _check_trunk_branch(github_repo: GithubRepository) -> CheckResult:
+def _check_trunk_branch(github_repo: GithubRepo) -> CheckResult:
     if github_repo.default_branch:
         return CheckResult("trunk branch", "ok", github_repo.default_branch)
     return CheckResult(
         "trunk branch",
         "warn",
-        t"GitHub repository has no default branch set; set a default branch on GitHub "
+        t"GitHub repo has no default branch set; set a default branch on GitHub "
         t"or configure {ui.revset('trunk()')} in jj",
     )
 

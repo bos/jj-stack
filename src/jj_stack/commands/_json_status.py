@@ -1,67 +1,67 @@
-"""JSON projections for user-facing review status."""
+"""JSON projections for user-facing stack status."""
 
 from __future__ import annotations
 
-from jj_stack.models.review_state import ReviewIdentity
-from jj_stack.review.change_status import (
-    ReviewChangeStatus,
-    classify_review_status_revision,
+from jj_stack.models.tracking import PRIdentity
+from jj_stack.stack.change_status import (
+    ChangeStatus,
+    classify_stack_status_change,
 )
-from jj_stack.review.status import ReviewStatusRevision
+from jj_stack.stack.status import StackStatusChange
 
 
-def review_change_json(
-    revision: ReviewStatusRevision,
+def stack_change_json(
+    change: StackStatusChange,
     *,
     current: bool = False,
 ) -> dict[str, object]:
-    """Return the public JSON shape for one review change."""
+    """Return the public JSON shape for one stack change."""
 
     payload: dict[str, object] = {
-        "change_id": revision.change_id,
-        "status": _review_change_status(classify_review_status_revision(revision)),
-        "subject": revision.subject,
+        "change_id": change.change_id,
+        "status": _change_status(classify_stack_status_change(change)),
+        "subject": change.subject,
     }
-    if revision.branch is not None:
-        payload["branch"] = revision.branch
+    if change.branch is not None:
+        payload["branch"] = change.branch
     if current:
         payload["current"] = True
-    pull_request = review_pull_request_json(revision)
-    if pull_request is not None:
-        payload["pull_request"] = pull_request
+    pr = pr_json(change)
+    if pr is not None:
+        payload["pr"] = pr
     return payload
 
 
-def review_pull_request_json(
-    revision: ReviewStatusRevision,
+def pr_json(
+    change: StackStatusChange,
 ) -> dict[str, object] | None:
-    lookup = revision.pull_request_lookup
-    if lookup is not None and lookup.pull_request is not None:
-        pull_request = lookup.pull_request
+    lookup = change.pr_lookup
+    if lookup is not None and lookup.pr is not None:
+        pr = lookup.pr
         return _json_object(
             {
-                "number": pull_request.number,
-                "url": pull_request.html_url,
+                "number": pr.number,
+                "url": pr.html_url,
             }
         )
-    return saved_pull_request_json(revision.review_identity)
+    return saved_pr_json(change.pr_identity)
 
 
-def saved_pull_request_json(
-    review_identity: ReviewIdentity | None,
+def saved_pr_json(
+    pr_identity: PRIdentity | None,
 ) -> dict[str, object] | None:
-    if review_identity is None:
+    if pr_identity is None:
         return None
-    payload = _json_object({"number": review_identity.pr_number})
+    payload = _json_object({"number": pr_identity.pr_number})
     return payload or None
 
 
-def _review_change_status(status: ReviewChangeStatus) -> str:
+def _change_status(status: ChangeStatus) -> str:
     if status.local == "divergent":
         return "divergent"
     if status.pr_lifecycle in {"ambiguous", "closed", "merged", "missing"}:
         return status.pr_lifecycle
-    if status.has_pull_request_lookup_failure:
+    if status.has_pr_lookup_failure:
         return "unknown"
     if status.pr_lifecycle == "open":
         if status.pr_queued is True:
@@ -75,7 +75,7 @@ def _review_change_status(status: ReviewChangeStatus) -> str:
         if status.pr_review_decision == "commented":
             return "commented"
         return "open"
-    if status.saved_review_identity:
+    if status.saved_pr_identity:
         return "submitted"
     return "unsubmitted"
 

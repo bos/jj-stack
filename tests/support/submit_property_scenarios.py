@@ -27,9 +27,9 @@ DriftKind = Literal[
 DriftOutcome = Literal["fail_closed", "success"]
 SubmitRetryFailurePoint = Literal[
     "after_remote_push",
-    "create_pull_request",
-    "update_pull_request",
-    "pull_request_metadata",
+    "create_pr",
+    "update_pr",
+    "pr_metadata",
 ]
 DEFAULT_STACK_EDIT_SCENARIO_SEED = 8675309
 MAX_STACK_EDIT_ATTEMPTS_MULTIPLIER = 80
@@ -183,7 +183,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
     "closed_pr": DriftKindSpec(
         boundary="github_prs",
         expected_outcome="fail_closed",
-        failures=((1, "pull_request_not_open"),),
+        failures=((1, "pr_not_open"),),
         needs_label=True,
     ),
     # The fetched foreign ref pins the submitted commit: immutable when the
@@ -213,7 +213,7 @@ DRIFT_KIND_SPECS: dict[DriftKind, DriftKindSpec] = {
     "pr_replaced": DriftKindSpec(
         boundary="github_prs",
         expected_outcome="fail_closed",
-        failures=((1, "pull_request_ambiguous"),),
+        failures=((1, "pr_ambiguous"),),
         needs_label=True,
     ),
     "remote_branch_deleted": DriftKindSpec(
@@ -333,7 +333,7 @@ class SubmitRetryScenario:
     def needs_initial_submit(self) -> bool:
         """Whether the fault fires on a resubmit instead of the first submit."""
 
-        return self.failure_point == "update_pull_request"
+        return self.failure_point == "update_pr"
 
     @property
     def invariants(self) -> SubmitInvariants:
@@ -651,9 +651,9 @@ def generate_submit_retry_scenarios(
     attempts = 0
     failure_points: tuple[SubmitRetryFailurePoint, ...] = (
         "after_remote_push",
-        "create_pull_request",
-        "update_pull_request",
-        "pull_request_metadata",
+        "create_pr",
+        "update_pr",
+        "pr_metadata",
     )
     while len(scenarios) < count and attempts < max_attempts:
         attempts += 1

@@ -1,1 +1,1 @@
-"""Typed access to local `jj` repository state."""
+"""Typed access to local `jj` repo state."""

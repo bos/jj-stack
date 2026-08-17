@@ -25,28 +25,28 @@ This page explains which command owns a task without duplicating that generated 
 | Command | Use it to |
 |---|---|
 | `view` | Show local stacks and the status of their pull requests. |
-| `list` | Show every stack jj-stack knows about in this repository. |
-| `submit` | Create or update review branches and pull requests. |
+| `list` | Show every stack jj-stack knows about in this repo. |
+| `submit` | Create or update PR branches and pull requests. |
 | `merge` | Ask GitHub to merge ready pull requests from the bottom of a stack. |
-| `sync` | Apply a completed GitHub merge or stack rebase locally, update remaining pull requests, and remove review branches that are no longer needed. |
+| `sync` | Apply a merge or stack rebase; update remaining PRs and remove unused PR branches. |
 
 Running `jj-stack` without a subcommand is equivalent to `jj-stack view` without arguments.
 
-## Connect or repair reviews
+## Connect or repair pull requests
 
 | Command | Use it to |
 |---|---|
 | `checkout` | Connect existing pull requests to local changes and edit the selected change. |
 | `relink` | Tell jj-stack which change an existing pull request belongs to. |
-| `doctor` | Check repository setup, GitHub access, and leftovers from interrupted commands. |
-| `in-use` | Silently check whether jj-stack is set up in this repository. |
+| `doctor` | Check repo setup, GitHub access, and leftovers from interrupted commands. |
+| `in-use` | Silently check whether jj-stack is set up in this repo. |
 
-## Ending reviews
+## Separating stacks or closing pull requests
 
 | Command | Use it to |
 |---|---|
 | `unstack` | Tell GitHub that a set of open pull requests is no longer one stack. |
-| `cleanup` | Remove unused review branches, comments, and local pull-request links. |
+| `cleanup` | Remove unused PR branches, comments, and local pull-request links. |
 
 ## Supporting tools
 

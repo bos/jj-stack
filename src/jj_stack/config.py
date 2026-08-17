@@ -22,7 +22,7 @@ MergeMethod = Literal["merge", "rebase", "squash"]
 
 
 class RepoConfig(BaseModel):
-    """Repository defaults resolved before command planning."""
+    """Repo defaults resolved before command planning."""
 
     model_config = ConfigDict(extra="ignore")
 

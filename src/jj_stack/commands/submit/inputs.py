@@ -7,10 +7,10 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ConflictedStackError, UsageError
 from jj_stack.github.resolution import select_submit_remote
 from jj_stack.jj.client import JjClient
-from jj_stack.models.review_state import ReviewState
-from jj_stack.models.stack import LocalRevision, LocalStack
-from jj_stack.review.branches import resolve_review_branches
-from jj_stack.review.selected import require_reviewable_revisions, select_review_path
+from jj_stack.models.stack import LocalCommit, LocalStack
+from jj_stack.models.tracking import TrackingState
+from jj_stack.stack.pr_branches import resolve_pr_branches
+from jj_stack.stack.selected import require_submittable_changes, select_stack_path
 
 from .descriptions import resolve_generated_descriptions
 from .models import (
@@ -24,13 +24,13 @@ def prepare_submit_inputs(
     *,
     context: CommandContext,
     options: SubmitOptions,
-    state: ReviewState,
+    state: TrackingState,
 ) -> PreparedSubmitInputs:
     """Load local submit state before any GitHub mutation begins."""
 
     client = context.jj_client
     remote = select_submit_remote(client.list_git_remotes())
-    path = select_review_path(
+    path = select_stack_path(
         jj_client=client,
         revset=options.revset,
         state=state,
@@ -44,10 +44,10 @@ def prepare_submit_inputs(
     if options.base_revset is not None:
         base = stack.base_parent
         retry = ui.cmd(f"jj-stack submit --base {base.change_id} {stack.head.change_id}")
-        tracked_base = state.tracked_review(base.change_id)
+        tracked_base = state.tracked_pr(base.change_id)
         if tracked_base is None:
             raise CliError(
-                t"Base {ui.change_id(base.change_id)} has no submitted review.",
+                t"Base {ui.change_id(base.change_id)} has no submitted PR.",
                 hint=t"Inspect the parent with {ui.cmd(f'jj-stack view {base.change_id}')}, "
                 t"submit it using its usual submit command, then run {retry}.",
             )
@@ -58,29 +58,29 @@ def prepare_submit_inputs(
                 t"refresh it using its usual submit command, "
                 t"then run {retry}.",
             )
-    require_reviewable_revisions(stack.revisions)
-    branch_resolutions = resolve_review_branches(
-        revisions=stack.revisions,
-        review_identities=state.review_identities,
+    require_submittable_changes(stack.changes)
+    branch_resolutions = resolve_pr_branches(
+        changes=stack.changes,
+        pr_identities=state.pr_identities,
     )
-    preflight_conflicted_revisions(stack.revisions)
-    preflight_private_commits(client, stack.revisions)
+    preflight_conflicted_changes(stack.changes)
+    preflight_private_commits(client, stack.changes)
     if options.edit and options.describe_with is not None:
         raise UsageError(t"Use either {ui.cmd('--edit')} or {ui.cmd('--describe-with')}.")
     (
-        generated_pull_request_descriptions,
+        generated_pr_descriptions,
         generated_stack_description,
     ) = resolve_generated_descriptions(
         descriptions=options.descriptions,
         describe_with=options.describe_with,
         jj_client=client,
         selected_revset=stack.selected_revset,
-        revisions=stack.revisions,
+        changes=stack.changes,
     )
     return PreparedSubmitInputs(
         branch_resolutions=branch_resolutions,
         client=client,
-        generated_pull_request_descriptions=generated_pull_request_descriptions,
+        generated_pr_descriptions=generated_pr_descriptions,
         generated_stack_description=generated_stack_description,
         is_maximal_path=path.is_maximal,
         remote=remote,
@@ -94,13 +94,13 @@ def _select_submit_stack(
     base_revset: str | None,
     jj_client: JjClient,
     stack: LocalStack,
-    state: ReviewState,
+    state: TrackingState,
 ) -> LocalStack:
-    """Select the ordinary path, optionally excluding one explicit reviewed ancestor."""
+    """Select the ordinary path, optionally excluding one explicit submitted ancestor."""
 
     if base_revset is None:
         return stack
-    base = select_review_path(
+    base = select_stack_path(
         jj_client=jj_client,
         revset=base_revset,
         state=state,
@@ -111,8 +111,8 @@ def _select_submit_stack(
         base_index = next(
             (
                 index
-                for index, revision in enumerate(stack.revisions)
-                if revision.commit_id == base.commit_id
+                for index, change in enumerate(stack.changes)
+                if change.commit_id == base.commit_id
             ),
             None,
         )
@@ -120,10 +120,10 @@ def _select_submit_stack(
         raise CliError(
             t"Base {ui.revset(base_revset)} is not an ancestor of the selected head on its "
             t"single-parent path.",
-            hint=t"Choose the reviewed parent immediately below the changes to submit.",
+            hint=t"Choose the submitted parent immediately below the changes to submit.",
         )
-    revisions = stack.revisions[base_index + 1 :]
-    if not revisions:
+    changes = stack.changes[base_index + 1 :]
+    if not changes:
         raise CliError(
             t"Base {ui.revset(base_revset)} is the selected head, so there are no child "
             t"changes to submit."
@@ -131,7 +131,7 @@ def _select_submit_stack(
     return stack.model_copy(
         update={
             "base_parent": base,
-            "revisions": revisions,
+            "changes": changes,
             "selected_revset": f"{base.commit_id}..{stack.head.commit_id}",
         }
     )
@@ -139,27 +139,27 @@ def _select_submit_stack(
 
 def preflight_private_commits(
     client: PrivateCommitFinder,
-    revisions: tuple[LocalRevision, ...],
+    changes: tuple[LocalCommit, ...],
 ) -> None:
-    private = client.find_private_commits(revisions)
+    private = client.find_private_commits(changes)
     if not private:
         return
     subjects = ui.join(
-        lambda revision: t"{ui.change_id(revision.change_id)} ({revision.subject})",
+        lambda change: t"{ui.change_id(change.change_id)} ({change.subject})",
         private,
     )
     raise CliError(
-        t"Stack contains commits blocked by {ui.code('git.private-commits')}: {subjects}.",
+        t"Stack contains changes blocked by {ui.code('git.private-commits')}: {subjects}.",
         hint="Remove these changes from the stack before submitting.",
     )
 
 
-def preflight_conflicted_revisions(revisions: tuple[LocalRevision, ...]) -> None:
-    conflicted = tuple(revision for revision in revisions if revision.conflict)
+def preflight_conflicted_changes(changes: tuple[LocalCommit, ...]) -> None:
+    conflicted = tuple(change for change in changes if change.conflict)
     if not conflicted:
         return
     subjects = ui.join(
-        lambda revision: t"{ui.change_id(revision.change_id)} ({revision.subject})",
+        lambda change: t"{ui.change_id(change.change_id)} ({change.subject})",
         conflicted,
     )
     raise ConflictedStackError(

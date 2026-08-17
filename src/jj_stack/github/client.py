@@ -18,9 +18,9 @@ from jj_stack.github.auth import github_token, github_token_from_env
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import (
     GithubIssueComment,
-    GithubPullRequest,
-    GithubPullRequestReview,
-    GithubRepository,
+    GithubPR,
+    GithubPRReview,
+    GithubRepo,
     GithubStack,
     GithubStackMerge,
     GithubStackMergeSubmission,
@@ -28,7 +28,7 @@ from jj_stack.models.github import (
 
 logger = logging.getLogger(__name__)
 GITHUB_API_BASE_URL = "https://api.github.com"
-_GRAPHQL_PULL_REQUEST_BATCH_SIZE = 25
+_GRAPHQL_PR_BATCH_SIZE = 25
 
 _DEFAULT_RATE_LIMIT_RETRIES = 3
 _DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 1.0
@@ -67,8 +67,8 @@ class GithubClientError(SummarizedError):
                 return message.removeprefix(prefix).strip()
         return message
 
-    def is_repository_not_found(self) -> bool:
-        """Whether the error indicates the repository is missing or inaccessible."""
+    def is_repo_not_found(self) -> bool:
+        """Whether the error indicates the repo is missing or inaccessible."""
 
         if "Could not resolve to a Repository with the name" in self.detail():
             return True
@@ -88,7 +88,7 @@ class GithubClientError(SummarizedError):
             return "auth failed - check GITHUB_TOKEN"
         if self.status_code == 403:
             return "access denied - check GITHUB_TOKEN and repo access"
-        if self.is_repository_not_found():
+        if self.is_repo_not_found():
             message = "repo not found or inaccessible"
             if github_token_from_env() is None:
                 return f"{message} - check GITHUB_TOKEN or gh auth"
@@ -96,8 +96,8 @@ class GithubClientError(SummarizedError):
         return f"request failed ({self.request_failure_detail()})"
 
 
-class _GraphqlPullRequestConnection(BaseModel):
-    nodes: tuple[GithubPullRequest, ...]
+class _GraphqlPRConnection(BaseModel):
+    nodes: tuple[GithubPR, ...]
 
 
 class _GraphqlPageInfo(BaseModel):
@@ -111,27 +111,27 @@ class _GraphqlIssueCommentConnection(BaseModel):
     page_info: _GraphqlPageInfo | None = Field(default=None, alias="pageInfo")
 
 
-class _GraphqlIssueCommentsPullRequest(BaseModel):
+class _GraphqlIssueCommentsPR(BaseModel):
     comments: _GraphqlIssueCommentConnection | None = None
 
 
 class GithubClient:
-    """Thin async wrapper around the GitHub API, bound to one repository."""
+    """Thin async wrapper around the GitHub API, bound to one repo."""
 
-    def __init__(self, client: httpxyz.AsyncClient, *, repository: GithubRepoAddress) -> None:
+    def __init__(self, client: httpxyz.AsyncClient, *, repo: GithubRepoAddress) -> None:
         self._client = client
-        self._repository = repository
-        self._repo_path = f"/repos/{repository.owner}/{repository.repo}"
-        self._repository_variables: dict[str, object] = {
-            "owner": repository.owner,
-            "repo": repository.repo,
+        self._repo = repo
+        self._repo_path = f"/repos/{repo.owner}/{repo.repo}"
+        self._repo_variables: dict[str, object] = {
+            "owner": repo.owner,
+            "repo": repo.repo,
         }
 
     @property
-    def repository(self) -> GithubRepoAddress:
-        """The GitHub repository every request targets."""
+    def repo(self) -> GithubRepoAddress:
+        """The GitHub repo every request targets."""
 
-        return self._repository
+        return self._repo
 
     async def __aenter__(self) -> GithubClient:
         return self
@@ -142,9 +142,9 @@ class GithubClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def get_repository(self) -> GithubRepository:
+    async def get_repo(self) -> GithubRepo:
         response = await self._request("GET", self._repo_path)
-        return GithubRepository.model_validate(self._expect_success(response))
+        return GithubRepo.model_validate(self._expect_success(response))
 
     async def list_stacks(self) -> tuple[GithubStack, ...]:
         payload = await self._get_paginated_json_array(
@@ -162,11 +162,11 @@ class GithubClient:
             response_name="stack lookup",
         )
 
-    async def create_stack(self, *, pull_numbers: Sequence[int]) -> GithubStack:
+    async def create_stack(self, *, pr_numbers: Sequence[int]) -> GithubStack:
         response = await self._request(
             "POST",
             f"{self._repo_path}/stacks",
-            json={"pull_requests": list(pull_numbers)},
+            json={"pull_requests": list(pr_numbers)},
         )
         return _validate_stack_payload(
             self._expect_json_payload(response, response_name="stack creation"),
@@ -177,12 +177,12 @@ class GithubClient:
         self,
         *,
         stack_number: int,
-        pull_numbers: Sequence[int],
+        pr_numbers: Sequence[int],
     ) -> GithubStack:
         response = await self._request(
             "POST",
             f"{self._repo_path}/stacks/{stack_number}/add",
-            json={"pull_requests": list(pull_numbers)},
+            json={"pull_requests": list(pr_numbers)},
         )
         return _validate_stack_payload(
             self._expect_json_payload(response, response_name="stack append"),
@@ -202,47 +202,47 @@ class GithubClient:
             response_name="unstack",
         )
 
-    async def get_pull_request(
+    async def get_pr(
         self,
         *,
-        pull_number: int,
-    ) -> GithubPullRequest:
+        pr_number: int,
+    ) -> GithubPR:
         response = await self._request(
             "GET",
-            f"{self._repo_path}/pulls/{pull_number}",
+            f"{self._repo_path}/pulls/{pr_number}",
         )
-        return GithubPullRequest.model_validate(self._expect_success(response))
+        return GithubPR.model_validate(self._expect_success(response))
 
-    async def get_pull_requests_by_numbers(
+    async def get_prs_by_numbers(
         self,
         *,
-        pull_numbers: Sequence[int],
-    ) -> dict[int, GithubPullRequest | None]:
-        numbers = sorted(set(pull_numbers))
+        pr_numbers: Sequence[int],
+    ) -> dict[int, GithubPR | None]:
+        numbers = sorted(set(pr_numbers))
         if not numbers:
             return {}
 
-        results: dict[int, GithubPullRequest | None] = {}
-        for chunk in _chunked(numbers, size=_GRAPHQL_PULL_REQUEST_BATCH_SIZE):
-            query = _pull_requests_by_number_query(chunk)
+        results: dict[int, GithubPR | None] = {}
+        for chunk in _chunked(numbers, size=_GRAPHQL_PR_BATCH_SIZE):
+            query = _prs_by_number_query(chunk)
             payload = await self._graphql_query(
                 query,
-                variables=self._repository_variables,
+                variables=self._repo_variables,
                 response_name="pull request batch lookup",
             )
-            repository = _graphql_repository_payload(
+            repo = _graphql_repo_payload(
                 payload,
                 response_name="pull request batch lookup",
             )
             for number in chunk:
                 alias = f"pr_{number}"
-                raw_pull_request = repository.get(alias)
-                if raw_pull_request is None:
+                raw_pr = repo.get(alias)
+                if raw_pr is None:
                     results[number] = None
                     continue
                 results[number] = _validate_graphql_model(
-                    raw_pull_request,
-                    model=GithubPullRequest,
+                    raw_pr,
+                    model=GithubPR,
                     error_message=(
                         "GitHub pull request batch lookup response had invalid pull request "
                         f"payload for #{number}."
@@ -250,55 +250,55 @@ class GithubClient:
                 )
         return results
 
-    async def get_pull_requests_by_head_refs(
+    async def get_prs_by_head_refs(
         self,
         *,
         head_refs: Sequence[str],
-    ) -> dict[str, tuple[GithubPullRequest, ...]]:
-        return await self._get_pull_requests_by_refs(refs=head_refs, base=False)
+    ) -> dict[str, tuple[GithubPR, ...]]:
+        return await self._get_prs_by_refs(refs=head_refs, base=False)
 
-    async def get_open_pull_requests_by_base_refs(
+    async def get_open_prs_by_base_refs(
         self,
         *,
         base_refs: Sequence[str],
-    ) -> dict[str, tuple[GithubPullRequest, ...]]:
-        return await self._get_pull_requests_by_refs(refs=base_refs, base=True)
+    ) -> dict[str, tuple[GithubPR, ...]]:
+        return await self._get_prs_by_refs(refs=base_refs, base=True)
 
-    async def _get_pull_requests_by_refs(
+    async def _get_prs_by_refs(
         self,
         *,
         base: bool,
         refs: Sequence[str],
-    ) -> dict[str, tuple[GithubPullRequest, ...]]:
+    ) -> dict[str, tuple[GithubPR, ...]]:
         refs = sorted(set(refs))
         if not refs:
             return {}
 
         kind = "base" if base else "head"
         response_name = f"pull request {kind} lookup"
-        results: dict[str, tuple[GithubPullRequest, ...]] = {}
-        for chunk in _chunked(refs, size=_GRAPHQL_PULL_REQUEST_BATCH_SIZE):
+        results: dict[str, tuple[GithubPR, ...]] = {}
+        for chunk in _chunked(refs, size=_GRAPHQL_PR_BATCH_SIZE):
             aliases = {f"{kind}_{index}": ref for index, ref in enumerate(chunk)}
-            query = _pull_requests_by_ref_query(aliases, base=base)
+            query = _prs_by_ref_query(aliases, base=base)
             payload = await self._graphql_query(
                 query,
-                variables=self._repository_variables,
+                variables=self._repo_variables,
                 response_name=response_name,
             )
-            repository = _graphql_repository_payload(
+            repo = _graphql_repo_payload(
                 payload,
                 response_name=response_name,
             )
             for alias, ref in aliases.items():
-                results[ref] = _pull_request_connection_from_graphql(
+                results[ref] = _pr_connection_from_graphql(
                     alias=alias,
-                    connection=repository.get(alias),
-                    expected_head_label=(None if base else f"{self._repository.owner}:{ref}"),
+                    connection=repo.get(alias),
+                    expected_head_label=(None if base else f"{self._repo.owner}:{ref}"),
                     response_name=response_name,
                 )
         return results
 
-    async def create_pull_request(
+    async def create_pr(
         self,
         *,
         base: str,
@@ -306,7 +306,7 @@ class GithubClient:
         draft: bool = False,
         head: str,
         title: str,
-    ) -> GithubPullRequest:
+    ) -> GithubPR:
         response = await self._request(
             "POST",
             f"{self._repo_path}/pulls",
@@ -318,18 +318,18 @@ class GithubClient:
                 "title": title,
             },
         )
-        return GithubPullRequest.model_validate(self._expect_success(response))
+        return GithubPR.model_validate(self._expect_success(response))
 
-    async def list_pull_request_reviews(
+    async def list_pr_reviews(
         self,
         *,
-        pull_number: int,
-    ) -> tuple[GithubPullRequestReview, ...]:
+        pr_number: int,
+    ) -> tuple[GithubPRReview, ...]:
         payload = await self._get_paginated_json_array(
-            f"{self._repo_path}/pulls/{pull_number}/reviews",
+            f"{self._repo_path}/pulls/{pr_number}/reviews",
             response_name="pull request reviews",
         )
-        return tuple(GithubPullRequestReview.model_validate(item) for item in payload)
+        return tuple(GithubPRReview.model_validate(item) for item in payload)
 
     async def list_issue_comments(
         self,
@@ -342,25 +342,25 @@ class GithubClient:
         )
         return tuple(GithubIssueComment.model_validate(item) for item in payload)
 
-    async def get_issue_comments_by_pull_request_numbers(
+    async def get_issue_comments_by_pr_numbers(
         self,
         *,
-        pull_numbers: Sequence[int],
+        pr_numbers: Sequence[int],
     ) -> dict[int, tuple[GithubIssueComment, ...]]:
-        numbers = sorted(set(pull_numbers))
+        numbers = sorted(set(pr_numbers))
         if not numbers:
             return {}
 
         results: dict[int, tuple[GithubIssueComment, ...]] = {}
         fallback_numbers: list[int] = []
-        for chunk in _chunked(numbers, size=_GRAPHQL_PULL_REQUEST_BATCH_SIZE):
-            query = _pull_request_issue_comments_query(chunk)
+        for chunk in _chunked(numbers, size=_GRAPHQL_PR_BATCH_SIZE):
+            query = _pr_issue_comments_query(chunk)
             payload = await self._graphql_query(
                 query,
-                variables=self._repository_variables,
+                variables=self._repo_variables,
                 response_name="pull request issue comment lookup",
             )
-            repository = _graphql_repository_payload(
+            repo = _graphql_repo_payload(
                 payload,
                 response_name="pull request issue comment lookup",
             )
@@ -368,7 +368,7 @@ class GithubClient:
                 alias = f"pr_{number}"
                 comments, has_next_page = _issue_comments_from_graphql(
                     alias=alias,
-                    raw_pull_request=repository.get(alias),
+                    raw_pr=repo.get(alias),
                     response_name="pull request issue comment lookup",
                 )
                 if has_next_page:
@@ -420,13 +420,13 @@ class GithubClient:
     async def request_reviewers(
         self,
         *,
-        pull_number: int,
+        pr_number: int,
         reviewers: list[str],
         team_reviewers: list[str],
     ) -> None:
         response = await self._request(
             "POST",
-            f"{self._repo_path}/pulls/{pull_number}/requested_reviewers",
+            f"{self._repo_path}/pulls/{pr_number}/requested_reviewers",
             json={"reviewers": reviewers, "team_reviewers": team_reviewers},
         )
         self._expect_success(response)
@@ -444,49 +444,49 @@ class GithubClient:
         )
         self._expect_success(response)
 
-    async def update_pull_request(
+    async def update_pr(
         self,
         *,
-        pull_number: int,
+        pr_number: int,
         base: str | None = None,
         body: str | None = None,
         title: str | None = None,
-    ) -> GithubPullRequest:
+    ) -> GithubPR:
         fields = {"base": base, "body": body, "title": title}
         response = await self._request(
             "PATCH",
-            f"{self._repo_path}/pulls/{pull_number}",
+            f"{self._repo_path}/pulls/{pr_number}",
             json={name: value for name, value in fields.items() if value is not None},
         )
-        return GithubPullRequest.model_validate(self._expect_success(response))
+        return GithubPR.model_validate(self._expect_success(response))
 
-    async def mark_pull_request_ready_for_review(
+    async def mark_pr_ready_for_review(
         self,
         *,
-        pull_request_id: str,
-    ) -> GithubPullRequest:
+        pr_id: str,
+    ) -> GithubPR:
         payload = await self._graphql_query(
-            _mark_pull_request_ready_for_review_mutation(),
+            _mark_pr_ready_for_review_mutation(),
             response_name="mark pull request ready for review",
-            variables={"pullRequestId": pull_request_id},
+            variables={"pullRequestId": pr_id},
         )
-        return _graphql_mutation_pull_request_payload(
+        return _graphql_mutation_pr_payload(
             payload,
             mutation_name="markPullRequestReadyForReview",
             response_name="mark pull request ready for review",
         )
 
-    async def convert_pull_request_to_draft(
+    async def convert_pr_to_draft(
         self,
         *,
-        pull_request_id: str,
-    ) -> GithubPullRequest:
+        pr_id: str,
+    ) -> GithubPR:
         payload = await self._graphql_query(
-            _convert_pull_request_to_draft_mutation(),
+            _convert_pr_to_draft_mutation(),
             response_name="convert pull request to draft",
-            variables={"pullRequestId": pull_request_id},
+            variables={"pullRequestId": pr_id},
         )
-        return _graphql_mutation_pull_request_payload(
+        return _graphql_mutation_pr_payload(
             payload,
             mutation_name="convertPullRequestToDraft",
             response_name="convert pull request to draft",
@@ -497,18 +497,18 @@ class GithubClient:
             _base_branch_merge_queue_query(),
             response_name="base branch merge queue lookup",
             variables={
-                **self._repository_variables,
+                **self._repo_variables,
                 "branch": branch,
                 "qualified": f"refs/heads/{branch}",
             },
         )
-        repository = _graphql_repository_payload(
+        repo = _graphql_repo_payload(
             payload,
             response_name="base branch merge queue lookup",
         )
-        if repository.get("mergeQueue") is not None:
+        if repo.get("mergeQueue") is not None:
             return True
-        ref = repository.get("ref")
+        ref = repo.get("ref")
         rules = ref.get("rules") if isinstance(ref, dict) else None
         nodes = rules.get("nodes") if isinstance(rules, dict) else None
         return isinstance(nodes, list) and any(
@@ -521,7 +521,7 @@ class GithubClient:
         expected_head_sha: str,
         merge_action: str,
         merge_method: str | None,
-        pull_number: int,
+        pr_number: int,
     ) -> GithubStackMergeSubmission:
         body: dict[str, object] = {
             "merge_action": merge_action,
@@ -531,7 +531,7 @@ class GithubClient:
             body["merge_method"] = merge_method
         response = await self._request(
             "PUT",
-            f"{self._repo_path}/pulls/{pull_number}/merge-async",
+            f"{self._repo_path}/pulls/{pr_number}/merge-async",
             json=body,
         )
         # 409 means GitHub already has an operation in flight for this pull request, not that
@@ -556,22 +556,22 @@ class GithubClient:
         self,
         *,
         operation_uuid: str,
-        pull_number: int,
+        pr_number: int,
     ) -> GithubStackMerge:
         response = await self._request(
             "GET",
-            f"{self._repo_path}/pulls/{pull_number}/merge-async/{operation_uuid}",
+            f"{self._repo_path}/pulls/{pr_number}/merge-async/{operation_uuid}",
         )
         return _validate_stack_merge_payload(self._expect_success(response))
 
-    async def close_pull_request(
+    async def close_pr(
         self,
         *,
-        pull_number: int,
+        pr_number: int,
     ) -> None:
         response = await self._request(
             "PATCH",
-            f"{self._repo_path}/issues/{pull_number}",
+            f"{self._repo_path}/issues/{pr_number}",
             json={"state": "closed"},
         )
         self._expect_success(response)
@@ -758,36 +758,36 @@ def _seconds_until_rate_limit_reset(value: str | None) -> float | None:
         return None
 
 
-def _graphql_repository_payload(
+def _graphql_repo_payload(
     payload: dict[str, object],
     *,
     response_name: str,
 ) -> dict[str, object]:
-    repository = payload.get("repository")
-    if repository is None:
-        raise GithubClientError(f"GitHub {response_name} response was missing repository data.")
-    if not isinstance(repository, dict):
-        raise GithubClientError(f"GitHub {response_name} response had invalid repository data.")
-    return repository
+    repo = payload.get("repository")
+    if repo is None:
+        raise GithubClientError(f"GitHub {response_name} response was missing repo data.")
+    if not isinstance(repo, dict):
+        raise GithubClientError(f"GitHub {response_name} response had invalid repo data.")
+    return repo
 
 
-def _graphql_mutation_pull_request_payload(
+def _graphql_mutation_pr_payload(
     payload: dict[str, object],
     *,
     mutation_name: str,
     response_name: str,
-) -> GithubPullRequest:
+) -> GithubPR:
     result = payload.get(mutation_name)
     if not isinstance(result, dict):
         raise GithubClientError(f"GitHub {response_name} response was missing mutation data.")
-    raw_pull_request = result.get("pullRequest")
-    if raw_pull_request is None:
+    raw_pr = result.get("pullRequest")
+    if raw_pr is None:
         raise GithubClientError(
             f"GitHub {response_name} response was missing a pull request payload."
         )
     return _validate_graphql_model(
-        raw_pull_request,
-        model=GithubPullRequest,
+        raw_pr,
+        model=GithubPR,
         error_message=f"GitHub {response_name} response had invalid mutation data.",
     )
 
@@ -800,7 +800,7 @@ def _chunked[ChunkValue](
     return [tuple(values[index : index + size]) for index in range(0, len(values), size)]
 
 
-def _pull_requests_by_number_query(numbers: Sequence[int]) -> str:
+def _prs_by_number_query(numbers: Sequence[int]) -> str:
     selections = "\n\n".join(
         _graphql_document(
             f"""
@@ -811,15 +811,15 @@ def _pull_requests_by_number_query(numbers: Sequence[int]) -> str:
         ).strip()
         for number in numbers
     )
-    return _with_pull_request_fields_fragment(
-        _repository_graphql_query(
+    return _with_pr_fields_fragment(
+        _repo_graphql_query(
             operation_name="PullRequestsByNumber",
             selections=selections,
         )
     )
 
 
-def _pull_requests_by_ref_query(aliases: dict[str, str], *, base: bool) -> str:
+def _prs_by_ref_query(aliases: dict[str, str], *, base: bool) -> str:
     first = 100 if base else 2
     operation_name = "OpenPullRequestsByBaseRef" if base else "PullRequestsByHeadRef"
     ref_argument = "baseRefName" if base else "headRefName"
@@ -840,15 +840,15 @@ def _pull_requests_by_ref_query(aliases: dict[str, str], *, base: bool) -> str:
         ).strip()
         for alias, ref in aliases.items()
     )
-    return _with_pull_request_fields_fragment(
-        _repository_graphql_query(
+    return _with_pr_fields_fragment(
+        _repo_graphql_query(
             operation_name=operation_name,
             selections=selections,
         )
     )
 
 
-def _pull_request_issue_comments_query(numbers: Sequence[int]) -> str:
+def _pr_issue_comments_query(numbers: Sequence[int]) -> str:
     selections = "\n\n".join(
         _graphql_document(
             f"""
@@ -867,14 +867,14 @@ def _pull_request_issue_comments_query(numbers: Sequence[int]) -> str:
         ).strip()
         for number in numbers
     )
-    return _repository_graphql_query(
+    return _repo_graphql_query(
         operation_name="PullRequestIssueComments",
         selections=selections,
     )
 
 
-def _mark_pull_request_ready_for_review_mutation() -> str:
-    return _with_pull_request_fields_fragment(
+def _mark_pr_ready_for_review_mutation() -> str:
+    return _with_pr_fields_fragment(
         _graphql_document(
             """
             mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
@@ -889,8 +889,8 @@ def _mark_pull_request_ready_for_review_mutation() -> str:
     )
 
 
-def _convert_pull_request_to_draft_mutation() -> str:
-    return _with_pull_request_fields_fragment(
+def _convert_pr_to_draft_mutation() -> str:
+    return _with_pr_fields_fragment(
         _graphql_document(
             """
             mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
@@ -905,7 +905,7 @@ def _convert_pull_request_to_draft_mutation() -> str:
     )
 
 
-def _pull_request_fields_fragment() -> str:
+def _pr_fields_fragment() -> str:
     return _graphql_document(
         """
         fragment PullRequestFields on PullRequest {
@@ -961,7 +961,7 @@ def _base_branch_merge_queue_query() -> str:
     )
 
 
-def _repository_graphql_query(*, operation_name: str, selections: str) -> str:
+def _repo_graphql_query(*, operation_name: str, selections: str) -> str:
     return "\n".join(
         [
             f"query {operation_name}($owner: String!, $repo: String!) {{",
@@ -974,37 +974,37 @@ def _repository_graphql_query(*, operation_name: str, selections: str) -> str:
     )
 
 
-def _with_pull_request_fields_fragment(document: str) -> str:
-    return f"{document.rstrip()}\n\n{_pull_request_fields_fragment()}"
+def _with_pr_fields_fragment(document: str) -> str:
+    return f"{document.rstrip()}\n\n{_pr_fields_fragment()}"
 
 
 def _graphql_document(document: str) -> str:
     return dedent(document).strip() + "\n"
 
 
-def _pull_request_connection_from_graphql(
+def _pr_connection_from_graphql(
     *,
     alias: str,
     connection: object,
     expected_head_label: str | None = None,
     response_name: str,
-) -> tuple[GithubPullRequest, ...]:
+) -> tuple[GithubPR, ...]:
     parsed = _validate_graphql_model(
         connection,
-        model=_GraphqlPullRequestConnection,
+        model=_GraphqlPRConnection,
         error_message=(
             f"GitHub {response_name} response had invalid connection payload for {alias}."
         ),
     )
-    pull_requests: list[GithubPullRequest] = []
-    for pull_request in parsed.nodes:
-        if expected_head_label is not None and pull_request.head.label != expected_head_label:
+    prs: list[GithubPR] = []
+    for pr in parsed.nodes:
+        if expected_head_label is not None and pr.head.label != expected_head_label:
             continue
-        pull_requests.append(pull_request)
-    return tuple(pull_requests)
+        prs.append(pr)
+    return tuple(prs)
 
 
-def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
+def build_github_client(*, repo: GithubRepoAddress) -> GithubClient:
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "jj-stack/dev",
@@ -1018,21 +1018,21 @@ def build_github_client(*, repository: GithubRepoAddress) -> GithubClient:
             headers=headers,
             timeout=30.0,
         ),
-        repository=repository,
+        repo=repo,
     )
 
 
 def _issue_comments_from_graphql(
     *,
     alias: str,
-    raw_pull_request: object,
+    raw_pr: object,
     response_name: str,
 ) -> tuple[tuple[GithubIssueComment, ...], bool]:
-    if raw_pull_request is None:
+    if raw_pr is None:
         return (), False
     parsed = _validate_graphql_model(
-        raw_pull_request,
-        model=_GraphqlIssueCommentsPullRequest,
+        raw_pr,
+        model=_GraphqlIssueCommentsPR,
         error_message=(
             f"GitHub {response_name} response had invalid pull request payload for {alias}."
         ),

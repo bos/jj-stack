@@ -16,9 +16,9 @@ def _github_client(handler, *, client_type=GithubClient) -> GithubClient:
             base_url="https://api.github.test",
             transport=httpxyz.MockTransport(handler),
         ),
-        repository=GithubRepoAddress(
+        repo=GithubRepoAddress(
             owner="octo-org",
-            repo="stacked-review",
+            repo="stacked-prs",
         ),
     )
 
@@ -40,17 +40,17 @@ def test_github_client_retries_429_responses_with_retry_after() -> None:
             200,
             json={
                 "default_branch": "main",
-                "full_name": "octo-org/stacked-review",
+                "full_name": "octo-org/stacked-prs",
             },
             request=request,
         )
 
     async def run_test() -> str:
         async with _github_client(handler) as client:
-            repository = await client.get_repository()
-        return repository.full_name
+            repo = await client.get_repo()
+        return repo.full_name
 
-    assert asyncio.run(run_test()) == "octo-org/stacked-review"
+    assert asyncio.run(run_test()) == "octo-org/stacked-prs"
     assert attempts == 2
 
 
@@ -71,15 +71,15 @@ def test_github_client_retries_secondary_rate_limits_without_retry_after() -> No
             200,
             json={
                 "default_branch": "main",
-                "full_name": "octo-org/stacked-review",
+                "full_name": "octo-org/stacked-prs",
             },
             request=request,
         )
 
     async def run_test() -> str:
         async with _github_client(handler) as client:
-            repository = await client.get_repository()
-        return repository.default_branch or ""
+            repo = await client.get_repo()
+        return repo.default_branch or ""
 
     assert asyncio.run(run_test()) == "main"
     assert attempts == 2
@@ -95,7 +95,7 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
 
     async def run_test() -> None:
         async with _github_client(handler) as client:
-            await client.get_repository()
+            await client.get_repo()
 
     with pytest.raises(GithubClientError, match="GitHub request failed: 404"):
         asyncio.run(run_test())
@@ -111,7 +111,7 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
         ("main", "", "new title", {"base": "main", "body": "", "title": "new title"}),
     ),
 )
-def test_github_client_sends_only_supplied_pull_request_updates(
+def test_github_client_sends_only_supplied_pr_updates(
     base: str | None,
     body: str | None,
     title: str | None,
@@ -125,7 +125,7 @@ def test_github_client_sends_only_supplied_pull_request_updates(
                 "base": {"ref": base or "old-base"},
                 "body": body or "",
                 "head": {"ref": "jj-stack/feature"},
-                "html_url": "https://github.test/octo-org/stacked-review/pull/7",
+                "html_url": "https://github.test/octo-org/stacked-prs/pull/7",
                 "number": 7,
                 "state": "open",
                 "title": title or "old title",
@@ -135,8 +135,8 @@ def test_github_client_sends_only_supplied_pull_request_updates(
 
     async def run_test() -> None:
         async with _github_client(handler) as client:
-            await client.update_pull_request(
-                pull_number=7,
+            await client.update_pr(
+                pr_number=7,
                 base=base,
                 body=body,
                 title=title,
@@ -152,7 +152,7 @@ def test_github_client_distinguishes_dissolved_and_locked_stack() -> None:
         nonlocal attempts
         attempts += 1
         assert request.method == "POST"
-        assert request.url.path == "/repos/octo-org/stacked-review/stacks/3/unstack"
+        assert request.url.path == "/repos/octo-org/stacked-prs/stacks/3/unstack"
         if attempts == 1:
             return httpxyz.Response(204, request=request)
         return httpxyz.Response(
@@ -183,35 +183,35 @@ def test_github_client_distinguishes_dissolved_and_locked_stack() -> None:
             remaining = await client.unstack(stack_number=3)
         if remaining is None:
             raise AssertionError("The second unstack should return its locked member.")
-        return dissolved, remaining.pull_request_numbers
+        return dissolved, remaining.pr_numbers
 
     assert asyncio.run(run_test()) == (None, (8, 9))
 
 
 def test_github_client_paginates_stack_list() -> None:
-    def _stack(number: int, *pull_numbers: int) -> dict[str, object]:
+    def _stack(number: int, *pr_numbers: int) -> dict[str, object]:
         return {
             "number": number,
             "pull_requests": [
                 {
-                    "head": {"ref": f"jj-stack/{pull_number}", "sha": f"head-{pull_number}"},
+                    "head": {"ref": f"jj-stack/{pr_number}", "sha": f"head-{pr_number}"},
                     "merged_at": None,
-                    "number": pull_number,
+                    "number": pr_number,
                     "state": "open",
                 }
-                for pull_number in pull_numbers
+                for pr_number in pr_numbers
             ],
         }
 
     def handler(request: httpxyz.Request) -> httpxyz.Response:
-        assert request.url.path == "/repos/octo-org/stacked-review/stacks"
+        assert request.url.path == "/repos/octo-org/stacked-prs/stacks"
         if request.url.params.get("page") == "2":
             return httpxyz.Response(200, json=[_stack(2, 20, 21)], request=request)
         return httpxyz.Response(
             200,
             headers={
                 "Link": (
-                    "<https://api.github.test/repos/octo-org/stacked-review/stacks?page=2>; "
+                    "<https://api.github.test/repos/octo-org/stacked-prs/stacks?page=2>; "
                     'rel="next"'
                 )
             },
@@ -226,13 +226,13 @@ def test_github_client_paginates_stack_list() -> None:
     assert asyncio.run(run_test()) == (1, 2)
 
 
-def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> None:
+def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
     request_sizes: list[int] = []
 
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/graphql"
         payload = json.loads(request.content.decode("utf-8"))
-        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-review"}
+        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-prs"}
         request_sizes.append(payload["query"].count("pullRequest(number:"))
         if len(request_sizes) == 1:
             assert "pr_7: pullRequest(number: 7)" in payload["query"]
@@ -256,7 +256,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
                             "number": 7,
                             "state": "OPEN",
                             "title": "seven",
-                            "url": "https://github.test/octo-org/stacked-review/pull/7",
+                            "url": "https://github.test/octo-org/stacked-prs/pull/7",
                         },
                         "pr_9": {
                             "autoMergeRequest": None,
@@ -269,7 +269,7 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
                             "number": 9,
                             "state": "CLOSED",
                             "title": "nine",
-                            "url": "https://github.test/octo-org/stacked-review/pull/9",
+                            "url": "https://github.test/octo-org/stacked-prs/pull/9",
                         },
                         "pr_11": None,
                     }
@@ -280,19 +280,19 @@ def test_github_client_batches_pull_request_lookup_by_number_with_graphql() -> N
 
     async def run_test() -> tuple[str, str, str | None, bool, bool]:
         async with _github_client(handler) as client:
-            pull_requests = await client.get_pull_requests_by_numbers(
-                pull_numbers=(7, 9, 11, *range(100, 124)),
+            prs = await client.get_prs_by_numbers(
+                pr_numbers=(7, 9, 11, *range(100, 124)),
             )
-        pull_request_7 = pull_requests[7]
-        pull_request_9 = pull_requests[9]
-        if pull_request_7 is None or pull_request_9 is None:
+        pr_7 = prs[7]
+        pr_9 = prs[9]
+        if pr_7 is None or pr_9 is None:
             raise AssertionError("GraphQL lookup should return both pull requests.")
         return (
-            pull_request_7.head.ref,
-            pull_request_9.state,
-            pull_request_7.head.label,
-            pull_request_7.is_queued,
-            pull_requests[11] is None,
+            pr_7.head.ref,
+            pr_9.state,
+            pr_7.head.label,
+            pr_7.is_queued,
+            prs[11] is None,
         )
 
     assert asyncio.run(run_test()) == (
@@ -310,7 +310,7 @@ def test_github_client_detects_merge_queue_branch_rule() -> None:
         payload = json.loads(request.content.decode("utf-8"))
         assert payload["variables"] == {
             "owner": "octo-org",
-            "repo": "stacked-review",
+            "repo": "stacked-prs",
             "branch": "main",
             "qualified": "refs/heads/main",
         }
@@ -334,7 +334,7 @@ def test_github_client_detects_merge_queue_branch_rule() -> None:
     assert asyncio.run(run_test())
 
 
-def test_github_client_rejects_graphql_payload_missing_repository_data() -> None:
+def test_github_client_rejects_graphql_payload_missing_repo_data() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/graphql"
         return httpxyz.Response(
@@ -345,32 +345,32 @@ def test_github_client_rejects_graphql_payload_missing_repository_data() -> None
 
     async def run_test() -> None:
         async with _github_client(handler) as client:
-            await client.get_pull_requests_by_numbers(
-                pull_numbers=(7,),
+            await client.get_prs_by_numbers(
+                pr_numbers=(7,),
             )
 
-    with pytest.raises(GithubClientError, match="missing repository data"):
+    with pytest.raises(GithubClientError, match="missing repo data"):
         asyncio.run(run_test())
 
 
 @pytest.mark.parametrize(
-    "repository_payload",
+    "repo_payload",
     ({}, {"base_0": {}}),
 )
-def test_github_client_rejects_incomplete_pull_request_connection(
-    repository_payload: dict[str, object],
+def test_github_client_rejects_incomplete_pr_connection(
+    repo_payload: dict[str, object],
 ) -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/graphql"
         return httpxyz.Response(
             200,
-            json={"data": {"repository": repository_payload}},
+            json={"data": {"repository": repo_payload}},
             request=request,
         )
 
     async def run_test() -> None:
         async with _github_client(handler) as client:
-            await client.get_open_pull_requests_by_base_refs(
+            await client.get_open_prs_by_base_refs(
                 base_refs=("jj-stack/seven",),
             )
 
@@ -378,11 +378,11 @@ def test_github_client_rejects_incomplete_pull_request_connection(
         asyncio.run(run_test())
 
 
-def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() -> None:
+def test_github_client_batches_pr_lookup_by_head_ref_with_graphql() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/graphql"
         payload = json.loads(request.content.decode("utf-8"))
-        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-review"}
+        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-prs"}
         assert 'headRefName: "jj-stack/seven"' in payload["query"]
         assert 'headRefName: "jj-stack/nine"' in payload["query"]
         assert "headRepositoryOwner" in payload["query"]
@@ -404,7 +404,7 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
                                     "number": 9,
                                     "state": "MERGED",
                                     "title": "nine",
-                                    "url": "https://github.test/octo-org/stacked-review/pull/9",
+                                    "url": "https://github.test/octo-org/stacked-prs/pull/9",
                                 }
                             ]
                         },
@@ -420,7 +420,7 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
                                     "reviewDecision": "APPROVED",
                                     "state": "OPEN",
                                     "title": "seven",
-                                    "url": "https://github.test/octo-org/stacked-review/pull/7",
+                                    "url": "https://github.test/octo-org/stacked-prs/pull/7",
                                 }
                             ]
                         },
@@ -432,16 +432,16 @@ def test_github_client_batches_pull_request_lookup_by_head_ref_with_graphql() ->
 
     async def run_test() -> tuple[str, str, str | None, str | None]:
         async with _github_client(handler) as client:
-            pull_requests = await client.get_pull_requests_by_head_refs(
+            prs = await client.get_prs_by_head_refs(
                 head_refs=("jj-stack/seven", "jj-stack/nine"),
             )
-        pull_request_7 = pull_requests["jj-stack/seven"][0]
-        pull_request_9 = pull_requests["jj-stack/nine"][0]
+        pr_7 = prs["jj-stack/seven"][0]
+        pr_9 = prs["jj-stack/nine"][0]
         return (
-            pull_request_7.head.ref,
-            pull_request_9.state,
-            pull_request_7.head.label,
-            pull_request_7.review_decision,
+            pr_7.head.ref,
+            pr_9.state,
+            pr_7.head.label,
+            pr_7.review_decision,
         )
 
     assert asyncio.run(run_test()) == (
@@ -459,7 +459,7 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
         assert request.url.path == "/graphql"
         payload = json.loads(request.content.decode("utf-8"))
         queries.append(payload["query"])
-        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-review"}
+        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-prs"}
         assert "pr_7: pullRequest(number: 7)" in payload["query"]
         assert "comments(first: 100)" in payload["query"]
         return httpxyz.Response(
@@ -486,8 +486,8 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
 
     async def run_test() -> int:
         async with _github_client(handler) as client:
-            comments = await client.get_issue_comments_by_pull_request_numbers(
-                pull_numbers=(7,),
+            comments = await client.get_issue_comments_by_pr_numbers(
+                pr_numbers=(7,),
             )
         return comments[7][0].id
 
@@ -498,7 +498,7 @@ def test_github_client_loads_issue_comments_with_graphql() -> None:
 def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         payload = json.loads(request.content.decode("utf-8"))
-        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-review"}
+        assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-prs"}
         return httpxyz.Response(
             200,
             json={
@@ -515,7 +515,7 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
                                     "number": 6,
                                     "state": "OPEN",
                                     "title": "forked",
-                                    "url": "https://github.test/octo-org/stacked-review/pull/6",
+                                    "url": "https://github.test/octo-org/stacked-prs/pull/6",
                                 },
                                 {
                                     "baseRefName": "main",
@@ -526,7 +526,7 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
                                     "number": 7,
                                     "state": "OPEN",
                                     "title": "local",
-                                    "url": "https://github.test/octo-org/stacked-review/pull/7",
+                                    "url": "https://github.test/octo-org/stacked-prs/pull/7",
                                 },
                             ]
                         }
@@ -538,10 +538,10 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
 
     async def run_test() -> list[int]:
         async with _github_client(handler) as client:
-            pull_requests = await client.get_pull_requests_by_head_refs(
+            prs = await client.get_prs_by_head_refs(
                 head_refs=("jj-stack/seven",),
             )
-        return [pull_request.number for pull_request in pull_requests["jj-stack/seven"]]
+        return [pr.number for pr in prs["jj-stack/seven"]]
 
     assert asyncio.run(run_test()) == [7]
 

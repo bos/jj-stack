@@ -18,7 +18,7 @@ web navigation and presentation.
 - [Merge and sync](guides/merge-and-sync.md)
 - [Multiple stacks and dependent work](guides/multiple-stacks.md)
 - [Continue an existing stack](guides/continue-a-stack.md)
-- [Close or separate pull requests](guides/close-or-separate.md)
+- [Separate a stack or close pull requests](guides/close-or-separate.md)
 
 ## Reference and troubleshooting
 

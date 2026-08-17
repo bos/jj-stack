@@ -51,7 +51,7 @@ def test_resolve_exit_code_prefers_the_error_category_over_the_cause() -> None:
     categorized = UsageError("bad flag")
     assert resolve_exit_code(categorized) == EXIT_USAGE
 
-    stack_error = UnsupportedStackError("merge commits are not supported")
+    stack_error = UnsupportedStackError("merge changes are not supported")
     assert resolve_exit_code(stack_error) == EXIT_NO_STACK
 
     # A categorized error keeps its own code even with a GitHub cause.
@@ -73,7 +73,7 @@ def test_resolve_exit_code_inherits_github_code_from_wrapped_cause() -> None:
 def test_resolve_exit_code_inherits_cli_code_from_wrapped_cause() -> None:
     try:
         raise CliError("Local history does not form a linear stack.") from UnsupportedStackError(
-            "merge commits are not supported"
+            "merge changes are not supported"
         )
     except CliError as error:
         assert resolve_exit_code(error) == EXIT_NO_STACK

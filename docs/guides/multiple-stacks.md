@@ -32,7 +32,7 @@ the heads of stacks to make them easier to see.
 
 ```toml
 [aliases]
-# `jj streams` shows all mutable commits, plus the immutable commit at
+# `jj streams` shows all mutable changes, plus the immutable change at
 # the base of each line of work.
 streams = [
   "log",

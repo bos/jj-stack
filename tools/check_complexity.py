@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the repository's complexity budgets."""
+"""Check the repo's complexity budgets."""
 
 import ast
 import json
