@@ -41,7 +41,7 @@ from jj_stack.review.observation import duplicate_review_claim_change_ids
 from jj_stack.review.repository import observe_repository_paths
 from jj_stack.review.selected import select_review_path
 from jj_stack.review.status import status_preparation_cli_error
-from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
+from jj_stack.review_namespace import current_review_namespace, review_branch_matches_change
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 HELP = "Check out an existing stack of pull requests"
@@ -94,7 +94,6 @@ def checkout(
             if result.adopted_count:
                 prepare_visible_review_snapshots(
                     jj_client=context.jj_client,
-                    namespace=context.review_namespace,
                     state=context.state_store.load(),
                 )
             context.jj_client.edit_revision(result.stack.head.commit_id)
@@ -143,7 +142,6 @@ def _checkout_saved_stack(
     state = context.state_store.load()
     stack = select_review_path(
         jj_client=client,
-        namespace=context.review_namespace,
         revset=revset,
         state=state,
     ).stack
@@ -180,7 +178,6 @@ async def _checkout_pull_request_stack(
             pull_number=pull_number,
         )
         _validate_same_repository_managed_pull_request(
-            namespace=context.review_namespace,
             pull_request=top_pull_request,
             repository=repository,
         )
@@ -200,7 +197,6 @@ async def _checkout_pull_request_stack(
             )
         pull_requests = await _load_pull_request_chain(
             github_client=github_client,
-            namespace=context.review_namespace,
             repository=repository,
             top=top_pull_request,
         )
@@ -221,7 +217,6 @@ async def _checkout_pull_request_stack(
             with client.import_remote_review_ref(
                 remote=remote.name,
                 branch=top_pull_request.head.ref,
-                namespace=context.review_namespace,
                 expected_target=top_head_sha,
             ) as imported:
                 _require_branch_matches_revision(
@@ -230,7 +225,6 @@ async def _checkout_pull_request_stack(
                 )
                 stack = _discover_checkout_stack(
                     client=client,
-                    namespace=context.review_namespace,
                     revision=imported.commit_id,
                     state=state,
                 )
@@ -241,7 +235,6 @@ async def _checkout_pull_request_stack(
             )
             stack = _discover_checkout_stack(
                 client=client,
-                namespace=context.review_namespace,
                 revision=top_head_sha,
                 state=state,
             )
@@ -306,7 +299,6 @@ def _reject_locally_rewritten_change(
 def _discover_checkout_stack(
     *,
     client: JjClient,
-    namespace: ReviewNamespace,
     revision: str,
     state: ReviewState,
 ) -> LocalStack:
@@ -315,7 +307,6 @@ def _discover_checkout_stack(
     try:
         return select_review_path(
             jj_client=client,
-            namespace=namespace,
             revset=revision,
             state=state,
         ).stack
@@ -337,12 +328,12 @@ async def _load_pull_request(
 async def _load_pull_request_chain(
     *,
     github_client: GithubClient,
-    namespace: ReviewNamespace,
     repository: GithubRepoAddress,
     top: GithubPullRequest,
 ) -> tuple[GithubPullRequest, ...]:
     """Walk exact managed base refs from the selected PR to trunk."""
 
+    namespace = current_review_namespace()
     top_down = [top]
     seen = {top.head.ref}
     base = top.base.ref
@@ -371,7 +362,6 @@ async def _load_pull_request_chain(
             )
         parent = matches[0]
         _validate_same_repository_managed_pull_request(
-            namespace=namespace,
             pull_request=parent,
             repository=repository,
         )
@@ -487,10 +477,10 @@ def _reject_duplicate_checkout_claims(
 
 def _validate_same_repository_managed_pull_request(
     *,
-    namespace: ReviewNamespace,
     pull_request: GithubPullRequest,
     repository: GithubRepoAddress,
 ) -> None:
+    namespace = current_review_namespace()
     expected_label = f"{repository.owner}:{pull_request.head.ref}"
     if pull_request.head.label != expected_label:
         raise CliError(
@@ -533,7 +523,6 @@ async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
     else:
         repository_paths = observe_repository_paths(
             jj_client=context.jj_client,
-            namespace=context.review_namespace,
             state=state,
         )
         local_stacks = sorted(
@@ -576,7 +565,6 @@ async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
     choices = _picker_choices(
         github_stacks=github_stacks,
         local_stacks=local_stacks,
-        namespace=context.review_namespace,
         pull_requests=pull_requests,
         repository=repository,
         state=state,
@@ -622,7 +610,6 @@ def _picker_choices(
     *,
     github_stacks: tuple[GithubStack, ...],
     local_stacks: list[LocalStack],
-    namespace: ReviewNamespace,
     pull_requests: dict[int, GithubPullRequest | None],
     repository: GithubRepoAddress,
     state: ReviewState,
@@ -647,10 +634,7 @@ def _picker_choices(
             )
             raise CliError(f"GitHub stack #{stack.number} refers to missing PR #{missing}.")
         resolved = tuple(member for member in members if member is not None)
-        if not all(
-            _picker_pull_request_is_adoptable(member, namespace, repository)
-            for member in resolved
-        ):
+        if not all(_picker_pull_request_is_adoptable(member, repository) for member in resolved):
             continue
         bottom = resolved[0]
         top = next(member for member in reversed(resolved) if member.number in active_numbers)
@@ -712,9 +696,8 @@ def _picker_pull_request_status(pull_request: GithubPullRequest) -> str:
 
 def _picker_pull_request_is_adoptable(
     pull_request: GithubPullRequest,
-    namespace: ReviewNamespace,
     repository: GithubRepoAddress,
 ) -> bool:
-    return namespace.contains(pull_request.head.ref) and (
+    return current_review_namespace().contains(pull_request.head.ref) and (
         pull_request.head.label == f"{repository.owner}:{pull_request.head.ref}"
     )

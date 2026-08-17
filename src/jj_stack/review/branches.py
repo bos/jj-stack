@@ -10,7 +10,7 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.models.review_state import ReviewIdentity, ReviewState
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review_namespace import ReviewNamespace
+from jj_stack.review_namespace import current_review_namespace
 
 if TYPE_CHECKING:
     from jj_stack.jj.client import JjClient
@@ -28,12 +28,11 @@ class ResolvedReviewBranch:
 def prepare_visible_review_snapshots(
     *,
     jj_client: JjClient,
-    namespace: ReviewNamespace,
     state: ReviewState,
 ) -> None:
     """Observe saved review bookmarks and narrow built-in bookmark immutability."""
 
-    visible = jj_client.visible_review_bookmark_targets(namespace=namespace)
+    visible = jj_client.visible_review_bookmark_targets()
     claims: dict[str, list[tuple[str, str]]] = {}
     for review in state.tracked_reviews():
         branch = review.review_identity.head_ref
@@ -48,7 +47,6 @@ def prepare_visible_review_snapshots(
 
 def resolve_review_branches(
     *,
-    namespace: ReviewNamespace,
     revisions: tuple[LocalRevision, ...],
     review_identities: Mapping[str, ReviewIdentity],
 ) -> tuple[ResolvedReviewBranch, ...]:
@@ -59,7 +57,7 @@ def resolve_review_branches(
             branch=(
                 identity.head_ref
                 if (identity := review_identities.get(revision.change_id)) is not None
-                else namespace.generate_branch(revision)
+                else current_review_namespace().generate_branch(revision)
             ),
             change_id=revision.change_id,
         )

@@ -13,9 +13,7 @@ from jj_stack.review.branches import (
     ensure_unique_review_branches,
     resolve_review_branches,
 )
-from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
-
-_NAMESPACE = ReviewNamespace("jj-stack")
+from jj_stack.review_namespace import current_review_namespace, review_branch_matches_change
 
 
 def test_generate_review_branch_normalizes_subject() -> None:
@@ -24,7 +22,7 @@ def test_generate_review_branch_normalizes_subject() -> None:
         description="Fix cache invalidation!!!\n\nBody text.\n",
     )
 
-    branch = _NAMESPACE.generate_branch(revision)
+    branch = current_review_namespace().generate_branch(revision)
 
     assert branch == "jj-stack/fix-cache-invalidation-zvlywqkx"
 
@@ -32,7 +30,7 @@ def test_generate_review_branch_normalizes_subject() -> None:
 def test_generate_review_branch_falls_back_for_blank_subject() -> None:
     revision = _revision(change_id="abcdefghijklmno", description="\n")
 
-    branch = _NAMESPACE.generate_branch(revision)
+    branch = current_review_namespace().generate_branch(revision)
 
     assert branch == "jj-stack/change-abcdefgh"
 
@@ -66,7 +64,6 @@ def test_review_branch_resolution_keeps_saved_branch_stable_after_subject_change
     )
 
     resolutions = resolve_review_branches(
-        namespace=_NAMESPACE,
         revisions=(renamed_revision,),
         review_identities=identities,
     )
@@ -97,7 +94,6 @@ def test_review_branch_resolution_rejects_new_branch_claimed_by_another_stack() 
 
     identities = {existing_change_id: _identity(head_ref=branch)}
     resolutions = resolve_review_branches(
-        namespace=_NAMESPACE,
         revisions=(_revision(change_id=new_change_id, description="shared"),),
         review_identities=identities,
     )
@@ -142,18 +138,3 @@ def _revision(*, change_id: str, description: str) -> LocalRevision:
         immutable=False,
         parents=("parent",),
     )
-
-
-def test_review_namespaces_keep_branch_ownership_independent() -> None:
-    """Two configured contexts must not share authority over review refs."""
-
-    team = ReviewNamespace("team-reviews")
-    revision = _revision(change_id="zvlywqkxtmnpqrstu", description="Fix cache")
-
-    assert _NAMESPACE.generate_branch(revision) == "jj-stack/fix-cache-zvlywqkx"
-    assert team.generate_branch(revision) == "team-reviews/fix-cache-zvlywqkx"
-    assert team.branch_ref("team-reviews/fix-cache-zvlywqkx") == (
-        "refs/heads/team-reviews/fix-cache-zvlywqkx"
-    )
-    with pytest.raises(ValueError, match="not a branch"):
-        team.branch_ref("jj-stack/fix-cache-zvlywqkx")

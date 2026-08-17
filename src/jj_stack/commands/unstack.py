@@ -194,7 +194,6 @@ def _resolve_local_github_stack(
     with console.spinner(description="Inspecting jj stack"):
         stack = select_review_path(
             jj_client=context.jj_client,
-            namespace=context.review_namespace,
             revset=selected_revset,
             state=state,
         ).stack
@@ -258,7 +257,6 @@ def _run_local_unstack(
     with console.spinner(description="Inspecting jj stack"):
         stack = select_review_path(
             jj_client=context.jj_client,
-            namespace=context.review_namespace,
             revset=selected_revset,
             state=state,
         ).stack

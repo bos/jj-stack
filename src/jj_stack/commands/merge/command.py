@@ -234,7 +234,6 @@ async def _stream_merge_async(
             trunk_branch, _trunk_targets = resolve_trunk_branch(
                 client=prepared.client,
                 github_repository_state=github_repository_state,
-                namespace=prepared_merge.context.review_namespace,
                 remote=remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )

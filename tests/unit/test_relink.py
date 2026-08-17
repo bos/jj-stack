@@ -13,9 +13,6 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
 from jj_stack.models.github import GithubBranchRef, GithubPullRequest
 from jj_stack.models.review_state import ReviewIdentity, ReviewState, SubmittedBaseline
-from jj_stack.review_namespace import ReviewNamespace
-
-_NAMESPACE = ReviewNamespace("jj-stack")
 
 
 @pytest.mark.parametrize(
@@ -38,7 +35,6 @@ def test_relink_requires_open_same_repository_pull_request(
             _load_exact_relink_pull_request(
                 change_id="feature1change",
                 github_client=cast(GithubClient, client),
-                namespace=_NAMESPACE,
                 pull_number=1,
                 repository_owner="octo-org",
             )

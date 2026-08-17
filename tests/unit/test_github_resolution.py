@@ -13,9 +13,6 @@ from jj_stack.github.resolution import (
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
-from jj_stack.review_namespace import ReviewNamespace
-
-_NAMESPACE = ReviewNamespace("jj-stack")
 
 
 def _remote(name: str) -> GitRemote:
@@ -117,7 +114,6 @@ def test_resolve_trunk_branch_prefers_the_default_branch_when_it_is_one_of_the_m
     branch, targets = resolve_trunk_branch(
         client=cast(JjClient, client),
         github_repository_state=_github_repository(default_branch="main"),
-        namespace=_NAMESPACE,
         remote=_remote("origin"),
         trunk_commit_id="trunk123",
     )
@@ -133,7 +129,6 @@ def test_resolve_trunk_branch_accepts_a_default_branch_ahead_of_local_trunk() ->
     branch, _targets = resolve_trunk_branch(
         client=cast(JjClient, client),
         github_repository_state=_github_repository(default_branch="main"),
-        namespace=_NAMESPACE,
         remote=_remote("origin"),
         trunk_commit_id="stale-local-trunk",
     )
@@ -148,7 +143,6 @@ def test_resolve_trunk_branch_rejects_a_default_branch_that_is_not_trunk() -> No
         resolve_trunk_branch(
             client=cast(JjClient, client),
             github_repository_state=_github_repository(default_branch="develop"),
-            namespace=_NAMESPACE,
             remote=_remote("origin"),
             trunk_commit_id="trunk123",
         )
@@ -165,7 +159,6 @@ def test_resolve_trunk_branch_falls_back_to_unique_non_review_remote_branch() ->
     branch, targets = resolve_trunk_branch(
         client=cast(JjClient, client),
         github_repository_state=_github_repository(default_branch=""),
-        namespace=_NAMESPACE,
         remote=_remote("origin"),
         trunk_commit_id="trunk123",
     )
@@ -185,7 +178,6 @@ def test_resolve_trunk_branch_rejects_ambiguous_remote_branches() -> None:
                 _RemoteBranchClient({"main": "trunk123", "stable": "trunk123"}),
             ),
             github_repository_state=_github_repository(default_branch=""),
-            namespace=_NAMESPACE,
             remote=_remote("origin"),
             trunk_commit_id="trunk123",
         )

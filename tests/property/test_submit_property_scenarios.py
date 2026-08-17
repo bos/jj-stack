@@ -333,11 +333,10 @@ def _install_remote_push_fault(monkeypatch: pytest.MonkeyPatch) -> None:
     failed = False
     original_mutate_review_refs = submit_command.JjClient.mutate_remote_review_refs
 
-    def mutate_review_refs_then_fail(self, *, namespace, remote, updates) -> None:
+    def mutate_review_refs_then_fail(self, *, remote, updates) -> None:
         nonlocal failed
         original_mutate_review_refs(
             self,
-            namespace=namespace,
             remote=remote,
             updates=updates,
         )

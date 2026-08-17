@@ -11,7 +11,6 @@ from jj_stack.models.review_state import ReviewState
 from jj_stack.models.stack import LocalRevision, LocalStack
 from jj_stack.review.branches import resolve_review_branches
 from jj_stack.review.selected import require_reviewable_revisions, select_review_path
-from jj_stack.review_namespace import ReviewNamespace
 
 from .descriptions import resolve_generated_descriptions
 from .models import (
@@ -33,14 +32,12 @@ def prepare_submit_inputs(
     remote = select_submit_remote(client.list_git_remotes())
     path = select_review_path(
         jj_client=client,
-        namespace=context.review_namespace,
         revset=options.revset,
         state=state,
     )
     stack = _select_submit_stack(
         base_revset=options.base_revset,
         jj_client=client,
-        namespace=context.review_namespace,
         stack=path.stack,
         state=state,
     )
@@ -63,7 +60,6 @@ def prepare_submit_inputs(
             )
     require_reviewable_revisions(stack.revisions)
     branch_resolutions = resolve_review_branches(
-        namespace=context.review_namespace,
         revisions=stack.revisions,
         review_identities=state.review_identities,
     )
@@ -97,7 +93,6 @@ def _select_submit_stack(
     *,
     base_revset: str | None,
     jj_client: JjClient,
-    namespace: ReviewNamespace,
     stack: LocalStack,
     state: ReviewState,
 ) -> LocalStack:
@@ -107,7 +102,6 @@ def _select_submit_stack(
         return stack
     base = select_review_path(
         jj_client=jj_client,
-        namespace=namespace,
         revset=base_revset,
         state=state,
     ).stack.head

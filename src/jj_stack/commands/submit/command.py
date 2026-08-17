@@ -65,7 +65,7 @@ from jj_stack.review.selection import (
     parse_comma_separated_flag_values,
     resolve_selected_revset,
 )
-from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
+from jj_stack.review_namespace import current_review_namespace, review_branch_matches_change
 from jj_stack.state.operation_lock import acquire_operation_lock
 
 from . import auto_close
@@ -361,7 +361,6 @@ def _github_inspection_results(
 def _recover_interrupted_first_submissions(
     *,
     client: JjClient,
-    namespace: ReviewNamespace,
     remote: GitRemote,
     resolutions: tuple[ResolvedReviewBranch, ...],
     state_identities: Mapping[str, ReviewIdentity],
@@ -374,6 +373,7 @@ def _recover_interrupted_first_submissions(
     )
     if not unresolved:
         return resolutions
+    namespace = current_review_namespace()
     patterns = tuple(
         f"refs/heads/{namespace.branch_glob}-{short_change_id(resolution.change_id)}"
         for resolution in unresolved
@@ -457,7 +457,6 @@ async def _apply_planned_submit(
             )
         with console.spinner(description="Pushing review branches"):
             prepared_inputs.client.mutate_remote_review_refs(
-                namespace=context.review_namespace,
                 remote=prepared_inputs.remote.name,
                 updates=review_ref_updates,
             )
@@ -537,7 +536,6 @@ async def run_submit_async(
     github_repository = require_github_repo(remote)
     branch_resolutions = _recover_interrupted_first_submissions(
         client=client,
-        namespace=context.review_namespace,
         remote=remote,
         resolutions=prepared_inputs.branch_resolutions,
         state_identities=state.review_identities,
@@ -547,7 +545,7 @@ async def run_submit_async(
         state.review_identities,
         github_repository.repository_key,
     )
-    visible_bookmarks = client.visible_review_bookmark_targets(namespace=context.review_namespace)
+    visible_bookmarks = client.visible_review_bookmark_targets()
     collisions = tuple(
         resolution.branch
         for resolution in branch_resolutions
@@ -625,7 +623,6 @@ async def run_submit_async(
             trunk_branch, trunk_targets = resolve_trunk_branch(
                 client=client,
                 github_repository_state=github_repository_state,
-                namespace=context.review_namespace,
                 remote=remote,
                 trunk_commit_id=stack.trunk.commit_id,
             )

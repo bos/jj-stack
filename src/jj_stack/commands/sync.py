@@ -85,6 +85,7 @@ from jj_stack.review.observation import (
 )
 from jj_stack.review.status import PreparedStatus, prepare_status, status_preparation_cli_error
 from jj_stack.review.trunk_evidence import classify_commit_ancestries
+from jj_stack.review_namespace import current_review_namespace
 from jj_stack.state.operation_lock import acquire_operation_lock
 from jj_stack.ui import Message
 
@@ -133,7 +134,7 @@ def _run_all_convergence(*, context: CommandContext, dry_run: bool) -> int:
                 remote=target.remote.name,
                 revision=previous_trunk.commit_id,
             )
-            if not context.review_namespace.contains(branch)
+            if not current_review_namespace().contains(branch)
         )
         context.jj_client.fetch_remote(branches=branches, remote=target.remote.name)
         progress.update("Comparing pull requests with trunk")
@@ -211,7 +212,6 @@ async def _run_global_plan(
             trunk_branch, _targets = resolve_trunk_branch(
                 client=context.jj_client,
                 github_repository_state=repository_state,
-                namespace=context.review_namespace,
                 remote=target.remote,
                 trunk_commit_id=trunk_commit_id,
             )
@@ -333,7 +333,6 @@ async def _run_selected_convergence(
             trunk_branch, _trunk_targets = resolve_trunk_branch(
                 client=prepared.client,
                 github_repository_state=repository_state,
-                namespace=context.review_namespace,
                 remote=target.remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )

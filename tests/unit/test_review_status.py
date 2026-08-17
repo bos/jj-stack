@@ -20,7 +20,6 @@ from jj_stack.review.status import (
     prepare_status,
     stream_status_async,
 )
-from jj_stack.review_namespace import ReviewNamespace
 from jj_stack.state.store import ReviewStateStore
 from tests.support.revision_helpers import make_revision
 
@@ -343,7 +342,6 @@ def _context(
         CommandContext,
         SimpleNamespace(
             jj_client=cast(JjClient, client),
-            review_namespace=ReviewNamespace("jj-stack"),
             state_store=cast(ReviewStateStore, _StateStoreStub(state or ReviewState())),
         ),
     )

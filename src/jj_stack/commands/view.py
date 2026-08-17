@@ -69,7 +69,7 @@ from jj_stack.review.status import (
     status_preparation_cli_error,
     stream_status,
 )
-from jj_stack.review_namespace import ReviewNamespace
+from jj_stack.review_namespace import current_review_namespace
 
 _SUMMARY_SECTION_HEAD_COUNT = 3
 _SUMMARY_SECTION_TAIL_COUNT = 3
@@ -151,7 +151,6 @@ def _run_status(
             console.machine_output(json.dumps(_view_json_payload(stacks=(rendered,)), indent=2))
             return EXIT_INCOMPLETE if incomplete else 0
         exit_code = _render_prepared_status(
-            namespace=context.review_namespace,
             prepared_status=prepared_status,
             verbose=verbose,
         )
@@ -217,7 +216,6 @@ def _run_status(
         exit_code = max(
             exit_code,
             _render_prepared_status(
-                namespace=context.review_namespace,
                 prepared_status=prepared_status,
                 verbose=verbose,
             ),
@@ -443,7 +441,6 @@ def _json_status_result(
 
 def _render_prepared_status(
     *,
-    namespace: ReviewNamespace,
     prepared_status: PreparedStatus,
     verbose: bool,
 ) -> int:
@@ -505,7 +502,6 @@ def _render_prepared_status(
     )
     _emit_lines(
         render_status_advisory_lines(
-            namespace=namespace,
             result=result,
         )
     )
@@ -686,11 +682,11 @@ def _render_submitted_section_title(revisions: tuple) -> str:
 
 def render_status_advisory_lines(
     *,
-    namespace: ReviewNamespace,
     result: StatusResult,
 ) -> tuple[ui.Renderable, ...]:
     """Render any advisories that follow the status stack output."""
 
+    namespace = current_review_namespace()
     classified_revisions = tuple(
         _ClassifiedStatusRevision(
             revision=revision,

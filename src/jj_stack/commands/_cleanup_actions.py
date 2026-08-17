@@ -20,7 +20,7 @@ from jj_stack.models.github import GithubIssueComment, GithubPullRequest
 from jj_stack.models.review_state import TrackedReview
 from jj_stack.review.github_stack_safety import GithubStackSelection
 from jj_stack.review.observation import RepositoryObservation
-from jj_stack.review_namespace import ReviewNamespace, review_branch_matches_change
+from jj_stack.review_namespace import review_branch_matches_change
 from jj_stack.ui import Message
 
 ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -370,7 +370,6 @@ def apply_remote_branch_cleanup(
     *,
     dry_run: bool,
     jj_client: JjClient,
-    namespace: ReviewNamespace,
     record_action: Callable[[ReviewMutationAction], None],
     remote_name: str,
     update: ReviewRefUpdate | None,
@@ -383,7 +382,6 @@ def apply_remote_branch_cleanup(
     if update is not None:
         if not dry_run:
             jj_client.mutate_remote_review_refs(
-                namespace=namespace,
                 remote=remote_name,
                 updates=(update,),
             )

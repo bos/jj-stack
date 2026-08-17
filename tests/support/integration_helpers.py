@@ -20,7 +20,6 @@ from jj_stack.identifiers import short_change_id
 from jj_stack.jj.client import JjClient, ReviewRefUpdate
 from jj_stack.models.stack import LocalStack
 from jj_stack.review.selected import select_review_path
-from jj_stack.review_namespace import ReviewNamespace
 from jj_stack.state.store import ReviewStateStore
 
 from .fake_github import (
@@ -36,7 +35,6 @@ _TEST_JJ_IDENTITY = {
     "JJ_EMAIL": "test@example.com",
     "JJ_USER": "Test User",
 }
-TEST_REVIEW_NAMESPACE = ReviewNamespace("jj-stack")
 _SHARED_TEMPLATE_ROOT: Path | None = None
 _TEMPLATE_MEMO: dict[str, Path] = {}
 _SUBMIT_CONFIG_MODULES = (
@@ -252,7 +250,6 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
         if exit_code != 0:
             raise RuntimeError(f"submitted-stack template build failed: exit {exit_code}")
         JjClient(repo).ensure_review_fetch_isolation(
-            namespace=TEST_REVIEW_NAMESPACE,
             remote="origin",
         )
 
@@ -280,7 +277,6 @@ def selected_stack(repo: Path, revset: str | None = None) -> LocalStack:
 
     return select_review_path(
         jj_client=JjClient(repo),
-        namespace=TEST_REVIEW_NAMESPACE,
         revset=revset,
         state=ReviewStateStore.for_repo(repo).load(),
     ).stack
@@ -338,7 +334,6 @@ def _build_manual_pr_template(template_root: Path) -> None:
     change_id = revision.change_id
     manual_bookmark = f"jj-stack/manual-feature-{short_change_id(change_id)}"
     JjClient(repo).mutate_remote_review_refs(
-        namespace=TEST_REVIEW_NAMESPACE,
         remote="origin",
         updates=(
             ReviewRefUpdate(

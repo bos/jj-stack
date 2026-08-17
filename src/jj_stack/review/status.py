@@ -190,14 +190,12 @@ def prepare_status(
             change_id=containing_change_id,
             inspection_mode=inspection_mode,
             jj_client=jj_client,
-            namespace=context.review_namespace,
             state=state,
         )
     else:
         selected_path = select_review_path(
             inspection_mode=inspection_mode,
             jj_client=jj_client,
-            namespace=context.review_namespace,
             revset=revset,
             state=state,
         )

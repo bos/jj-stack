@@ -15,13 +15,11 @@ from jj_stack.review.path import (
     RepositoryReviewPaths,
     project_repository_paths,
 )
-from jj_stack.review_namespace import ReviewNamespace
 
 
 def observe_repository_paths(
     *,
     jj_client: JjClient,
-    namespace: ReviewNamespace,
     state: ReviewState,
     descendant_of: Sequence[str] = (),
     exclude_trunk_descendants: bool = False,
@@ -51,7 +49,7 @@ def observe_repository_paths(
         if not descendant_of:
             raise ValueError("Working-copy dependency observation requires an exact ancestor.")
         candidates = f"({candidates} | (working_copies() & {visible_scope}))"
-    prepare_visible_review_snapshots(jj_client=jj_client, namespace=namespace, state=state)
+    prepare_visible_review_snapshots(jj_client=jj_client, state=state)
     rows = jj_client.query_revisions_with_membership(
         f"trunk() | ({candidates}) | parents({candidates}) | @",
         membership_revsets=("trunk()", candidates, trunk_path),

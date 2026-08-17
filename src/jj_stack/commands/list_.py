@@ -120,7 +120,6 @@ def _run_list(
         with console.spinner(description="Inspecting local stacks"):
             repository_paths = observe_repository_paths(
                 jj_client=context.jj_client,
-                namespace=context.review_namespace,
                 state=state,
             )
         discovered = tuple(

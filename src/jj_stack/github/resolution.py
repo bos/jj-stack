@@ -10,7 +10,7 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepository
-from jj_stack.review_namespace import ReviewNamespace
+from jj_stack.review_namespace import current_review_namespace
 
 if TYPE_CHECKING:
     from jj_stack.jj.client import JjClient
@@ -167,12 +167,12 @@ def resolve_trunk_branch(
     *,
     client: JjClient,
     github_repository_state: GithubRepository,
-    namespace: ReviewNamespace,
     remote: GitRemote,
     trunk_commit_id: str,
 ) -> tuple[str, dict[str, str]]:
     """Resolve the GitHub base branch used for bottom-of-stack pull requests."""
 
+    namespace = current_review_namespace()
     remote_targets = {
         branch: target
         for branch, target in client.list_remote_branches(

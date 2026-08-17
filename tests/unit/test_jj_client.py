@@ -22,11 +22,9 @@ from jj_stack.jj.client import (
     _membership_scan_template,
 )
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review_namespace import ReviewNamespace
 from tests.support.revision_helpers import make_revision
 
 _REPO_GIT_DIR = str(Path("/repo/.git"))
-_NAMESPACE = ReviewNamespace("jj-stack")
 
 
 def _revision_line(
@@ -400,7 +398,6 @@ def test_missing_review_fetch_isolation_is_a_shared_dry_run_terminal(
 
     monkeypatch.setattr(subprocess, "run", runner)
     result = JjClient(Path("/repo")).ensure_review_fetch_isolation(
-        namespace=_NAMESPACE,
         remote="origin",
         dry_run=True,
     )
@@ -479,7 +476,6 @@ def test_review_fetch_isolation_normalizes_duplicate_exclusions_once(
 
     monkeypatch.setattr(subprocess, "run", runner)
     result = JjClient(Path("/repo")).ensure_review_fetch_isolation(
-        namespace=_NAMESPACE,
         remote="origin",
     )
 
@@ -526,7 +522,6 @@ def test_review_fetch_isolation_reports_the_effective_override_origin(
 
     with pytest.raises(CliError) as raised:
         JjClient(Path("/repo")).ensure_review_fetch_isolation(
-            namespace=_NAMESPACE,
             remote="origin",
         )
 
@@ -549,7 +544,7 @@ def test_imported_review_bookmark_scan_reports_every_reserved_namespace_ref(
 
     monkeypatch.setattr(subprocess, "run", runner)
 
-    assert JjClient(Path("/repo")).visible_review_bookmark_targets(namespace=_NAMESPACE) == {
+    assert JjClient(Path("/repo")).visible_review_bookmark_targets() == {
         "jj-stack/feature-abcdefgh": frozenset({"two"}),
         "jj-stack/not-managed": frozenset({"one"}),
     }
@@ -611,7 +606,6 @@ def test_remote_review_ref_mutation_uses_one_atomic_exact_lease_push(
     monkeypatch.setattr(subprocess, "run", runner)
     client = JjClient(Path("/repo"))
     client.mutate_remote_review_refs(
-        namespace=_NAMESPACE,
         remote="origin",
         updates=(
             ReviewRefUpdate(

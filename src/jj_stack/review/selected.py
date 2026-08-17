@@ -21,7 +21,6 @@ from jj_stack.review.path import (
     SelectedReviewPath,
     project_selected_path,
 )
-from jj_stack.review_namespace import ReviewNamespace
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,13 +40,12 @@ def select_review_path(
     *,
     inspection_mode: bool = False,
     jj_client: JjClient,
-    namespace: ReviewNamespace,
     state: ReviewState,
     revset: str | None = None,
 ) -> SelectedReviewPath:
     """Collect the bounded facts for one selector and project its parent path."""
 
-    prepare_visible_review_snapshots(jj_client=jj_client, namespace=namespace, state=state)
+    prepare_visible_review_snapshots(jj_client=jj_client, state=state)
 
     if revset is None:
         selector = "@ | @-"
@@ -99,12 +97,11 @@ def select_review_path_containing_change(
     inspection_mode: bool = False,
     change_id: str,
     jj_client: JjClient,
-    namespace: ReviewNamespace,
     state: ReviewState,
 ) -> SelectedReviewPath:
     """Project the unique ordinary path whose head descends from one tracked change."""
 
-    prepare_visible_review_snapshots(jj_client=jj_client, namespace=namespace, state=state)
+    prepare_visible_review_snapshots(jj_client=jj_client, state=state)
     linked_selector = _change_id_revset(change_id)
     trunk_path = "first_ancestors(trunk())"
     nonempty_descendants = f"((({linked_selector}) ~ {trunk_path}):: ~ {trunk_path}) ~ empty()"

@@ -10,6 +10,7 @@ from jj_stack.models.stack import LocalRevision
 
 _DEFAULT_SLUG = "change"
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_current_namespace: ReviewNamespace | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +55,21 @@ class ReviewNamespace:
         if not self.contains(branch):
             raise ValueError(f"not a branch in the {self.branch_prefix} namespace: {branch!r}")
         return f"refs/heads/{branch}"
+
+
+def install_review_namespace(prefix: str) -> None:
+    """Install the configured namespace for the current CLI invocation."""
+
+    global _current_namespace
+    _current_namespace = ReviewNamespace(prefix)
+
+
+def current_review_namespace() -> ReviewNamespace:
+    """Return the namespace installed during command bootstrap."""
+
+    if _current_namespace is None:
+        raise RuntimeError("review namespace has not been installed")
+    return _current_namespace
 
 
 def review_branch_matches_change(branch: str, change_id: str) -> bool:

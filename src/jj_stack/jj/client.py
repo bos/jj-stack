@@ -28,7 +28,7 @@ from jj_stack.errors import (
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.stack import LocalRevision
-from jj_stack.review_namespace import ReviewNamespace
+from jj_stack.review_namespace import current_review_namespace
 
 _REVISION_JSON_FIELDS = (
     r'"\"change_id\":" ++ json(change_id) ++ '
@@ -613,12 +613,12 @@ class JjClient:
     def ensure_review_fetch_isolation(
         self,
         *,
-        namespace: ReviewNamespace,
         remote: str,
         dry_run: bool = False,
     ) -> ReviewFetchIsolation:
         """Ensure ordinary fetches cannot import jj-stack review branches."""
 
+        namespace = current_review_namespace()
         override_key = f"remotes.{json.dumps(remote)}.fetch-bookmarks"
         override_origin = self._effective_config_origin(override_key)
         if override_origin is not None:
@@ -690,11 +690,10 @@ class JjClient:
 
     def visible_review_bookmark_targets(
         self,
-        *,
-        namespace: ReviewNamespace,
     ) -> dict[str, frozenset[str]]:
         """Return visible reserved-namespace bookmark targets grouped by name."""
 
+        namespace = current_review_namespace()
         targets_by_name: dict[str, set[str]] = {}
         for row in self._bookmark_rows(namespace.branch_glob):
             targets_by_name.setdefault(row.name, set()).update(row.target)
@@ -779,7 +778,6 @@ class JjClient:
         *,
         remote: str,
         branch: str,
-        namespace: ReviewNamespace,
         expected_target: str,
         expected_change_id: str | None = None,
         expected_chain: Sequence[tuple[str, str, ExpectedGitChangeId]] = (),
@@ -791,7 +789,7 @@ class JjClient:
         tuple accepts any listed ID, including a missing change-ID header represented by `None`.
         """
 
-        ref = namespace.branch_ref(branch)
+        ref = current_review_namespace().branch_ref(branch)
         chain = tuple(expected_chain)
         if chain and (
             expected_parent_commit_id is None
@@ -944,12 +942,12 @@ class JjClient:
     def mutate_remote_review_refs(
         self,
         *,
-        namespace: ReviewNamespace,
         remote: str,
         updates: Sequence[ReviewRefUpdate],
     ) -> None:
         """Atomically apply a complete review-ref update set with exact leases."""
 
+        namespace = current_review_namespace()
         ordered_updates = tuple(updates)
         if not ordered_updates:
             return

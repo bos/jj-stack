@@ -66,7 +66,6 @@ async def observe_global_sync(
     change_ids = tuple(candidate.change_id for candidate in candidates)
     prepare_visible_review_snapshots(
         jj_client=context.jj_client,
-        namespace=context.review_namespace,
         state=state,
     )
     all_copies, local_copies = context.jj_client.query_revisions_by_change_ids_with_off_trunk(
@@ -78,7 +77,6 @@ async def observe_global_sync(
     paths = (
         observe_repository_paths(
             jj_client=context.jj_client,
-            namespace=context.review_namespace,
             descendant_of=anchors,
             exclude_trunk_descendants=True,
             include_working_copies=True,

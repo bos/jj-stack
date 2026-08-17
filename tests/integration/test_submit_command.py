@@ -20,7 +20,6 @@ from ..support.fake_github import (
     create_app,
 )
 from ..support.integration_helpers import (
-    TEST_REVIEW_NAMESPACE,
     commit_file,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
@@ -80,19 +79,25 @@ def _assert_stack_pull_requests_match_dag(
         assert pull_request.base_ref == expected_base
 
 
-def test_submit_keeps_one_pr_ordinary_until_github_stack_is_needed(
+def test_submit_uses_configured_namespace_and_adds_stack_only_when_needed(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(
+        monkeypatch,
+        tmp_path,
+        fake_repo,
+        extra_config_lines=['branch_prefix = "team-reviews"'],
+    )
     commit_file(repo, "feature 1", "feature-1.txt")
 
     assert run_main(repo, config_path, "submit") == 0
     capsys.readouterr()
 
     assert tuple(fake_repo.pull_requests) == (1,)
+    assert fake_repo.pull_requests[1].head_ref.startswith("team-reviews/")
     assert fake_repo.github_stacks == {}
     assert issue_comments(fake_repo, 1) == []
 
@@ -101,6 +106,7 @@ def test_submit_keeps_one_pr_ordinary_until_github_stack_is_needed(
     capsys.readouterr()
 
     assert tuple(fake_repo.pull_requests) == (1, 2)
+    assert fake_repo.pull_requests[2].head_ref.startswith("team-reviews/")
     assert fake_repo.github_stacks == {1: (1, 2)}
     assert all(issue_comments(fake_repo, number) == [] for number in (1, 2))
 
@@ -616,7 +622,6 @@ def test_submit_recreates_github_stack_only_after_active_review_grows_to_two(
     fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.apply_squash_merge(fake_repo.pull_requests[1])
     JjClient(repo).ensure_review_fetch_isolation(
-        namespace=TEST_REVIEW_NAMESPACE,
         remote="origin",
     )
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
@@ -651,7 +656,6 @@ def test_submit_appends_to_active_suffix_after_historical_prefix(
         base_ref="main",
     )
     JjClient(repo).ensure_review_fetch_isolation(
-        namespace=TEST_REVIEW_NAMESPACE,
         remote="origin",
     )
     run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
@@ -1003,7 +1007,7 @@ def test_submit_uses_readable_review_branch_names(
 
     assert run_main(repo, config_path, "submit") == 0
     state = ReviewStateStore.for_repo(repo).load()
-    assert JjClient(repo).visible_review_bookmark_targets(namespace=TEST_REVIEW_NAMESPACE) == {}
+    assert JjClient(repo).visible_review_bookmark_targets() == {}
 
     for revision, subject in zip(stack.revisions, ("feature-1", "feature-2"), strict=True):
         branch = state.review_identities[revision.change_id].head_ref
@@ -1344,7 +1348,6 @@ def test_submit_dry_run_does_not_mutate_local_remote_or_github_state(
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
     JjClient(repo).ensure_review_fetch_isolation(
-        namespace=TEST_REVIEW_NAMESPACE,
         remote="origin",
     )
 
@@ -1411,9 +1414,7 @@ def test_submit_accepts_a_matching_visible_review_bookmark(
     if tracked:
         run_command(["jj", "bookmark", "track", f"{identity.head_ref}@origin"], repo)
 
-    assert identity.head_ref in JjClient(repo).visible_review_bookmark_targets(
-        namespace=TEST_REVIEW_NAMESPACE
-    )
+    assert identity.head_ref in JjClient(repo).visible_review_bookmark_targets()
     assert run_main(repo, config_path, "submit", change_id) == 0
     assert "divergent changes are not supported" not in capsys.readouterr().err
 
@@ -1716,11 +1717,10 @@ def test_submit_rerun_recovers_after_lost_remote_update_response(
     def mutate_then_fail(
         self,
         *,
-        namespace,
         remote: str,
         updates,
     ) -> None:
-        original_mutate(self, namespace=namespace, remote=remote, updates=updates)
+        original_mutate(self, remote=remote, updates=updates)
         raise RuntimeError("Simulated failure after remote update")
 
     monkeypatch.setattr(

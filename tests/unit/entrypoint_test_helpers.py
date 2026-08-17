@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import pytest
 
 from jj_stack.jj.client import JjClient
-from jj_stack.review_namespace import ReviewNamespace
 
 
 def app_context(
@@ -15,7 +14,6 @@ def app_context(
     return SimpleNamespace(
         repo_root=tmp_path,
         jj_client=JjClient(tmp_path),
-        review_namespace=ReviewNamespace("jj-stack"),
         state_store=SimpleNamespace(),
         config=SimpleNamespace(
             change={},

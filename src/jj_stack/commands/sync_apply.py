@@ -191,7 +191,6 @@ def _apply_local_convergence(
         attachment = context.jj_client.import_remote_review_ref(
             remote=remote_name,
             branch=top.candidate.review_identity.head_ref,
-            namespace=context.review_namespace,
             expected_target=destination,
             expected_change_id=top.candidate.change_id,
             expected_chain=tuple(
@@ -251,7 +250,6 @@ def _apply_github_stack_rebase(
     with context.jj_client.import_remote_review_ref(
         remote=remote_name,
         branch=top.candidate.review_identity.head_ref,
-        namespace=context.review_namespace,
         expected_target=top.remote_commit_id,
         expected_chain=tuple(
             (
@@ -272,7 +270,6 @@ def _apply_github_stack_rebase(
             context.jj_client.integrate_operation(operation_id)
         desired_by_change = {item.change_id: item for item in desired}
         context.jj_client.mutate_remote_review_refs(
-            namespace=context.review_namespace,
             remote=remote_name,
             updates=tuple(
                 ReviewRefUpdate(
