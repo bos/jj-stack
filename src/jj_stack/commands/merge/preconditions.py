@@ -107,7 +107,7 @@ def _local_precondition_error(
 
     identity = observed.identity
     local_commits = observed.local_commits
-    label = planned.change_id
+    label = short_change_id(planned.change_id)
     if (
         identity != planned.identity
         or identity is None
@@ -144,14 +144,15 @@ def _github_pr_precondition_error(
     """Explain why GitHub's view of the pull request does not match the plan."""
 
     pr = observed.pr
+    label = short_change_id(planned.change_id)
     if pr is None:
-        return f"GitHub no longer reports the saved pull request for {planned.change_id}"
+        return f"GitHub no longer reports the saved pull request for {label}"
     pr = pr.normalize_state()
     # The head commit is deliberately not compared here. GitHub is given the expected head with
     # the merge request and rejects a stale one atomically, which a check made beforehand cannot
     # do; the PR branch is still compared against the submitted baseline above.
     if not planned.identity.matches_pr(pr):
-        return f"the pull request linked to {planned.change_id} changed"
+        return f"the pull request linked to {label} changed"
     if pr.state == "merged" and not inactive_allowed:
         return f"pull request #{pr.number} is already merged"
     if pr.state != "open" and not inactive_allowed:

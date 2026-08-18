@@ -189,9 +189,8 @@ def test_stack_merge_reports_github_failure_during_automatic_sync(
     assert "final trunk commit" in captured.out
     assert "Updating the local stack after the completed merge" in captured.out
     error = " ".join(captured.err.split())
-    assert "GitHub completed the merge, but the local stack update did not finish" in error
-    assert "Do not run jj-stack merge again" in error
-    assert f"jj-stack sync {stack_before.head.change_id}" in error
+    assert f"Continue with jj-stack sync {stack_before.head.change_id[:8]}." in error
+    assert stack_before.head.change_id not in error
     assert "Could not update the local stack after the completed merge" in error
     assert "request failed (sync repo lookup failed)" in error
     assert state_store.load() == state_before
@@ -440,11 +439,11 @@ def test_merge_dry_run_ignores_closed_pr_for_reused_head_branch(
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     state_before = TrackingStore.for_repo(repo).load()
 
-    exit_code = run_main(repo, config_path, "merge", "--dry-run")
+    exit_code = run_main(repo, config_path, "merge", "-p", "2", "--dry-run")
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "Planned merge actions:" in captured.out
+    assert f"Using PR #2 -> {change_id[:8]}\n" in captured.out
     assert "merge PR #2" in captured.out
     assert fake_repo.prs[1].state == "closed"
     assert fake_repo.prs[2].state == "open"

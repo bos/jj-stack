@@ -128,7 +128,7 @@ def _run_merge(
             raise CliError(
                 "Could not update the local stack after the completed merge.",
                 hint=t"Resolve the GitHub error, then run "
-                t"{ui.cmd(f'jj-stack sync {sync_change_id}')}",
+                t"{ui.cmd('jj-stack sync')} {ui.change_id(sync_change_id)}",
             ) from error
         raise
     if exit_code:
@@ -140,7 +140,7 @@ def _warn_incomplete_post_merge_sync(sync_change_id: str) -> None:
     console.warning(
         t"GitHub completed the merge, but the local stack update did not finish. Do not run "
         t"{ui.cmd('jj-stack merge')} again. Continue with "
-        t"{ui.cmd(f'jj-stack sync {sync_change_id}')}."
+        t"{ui.cmd('jj-stack sync')} {ui.change_id(sync_change_id)}."
     )
 
 
@@ -156,7 +156,7 @@ def _resolve_merge_target(
             pr_reference=pr,
             revset=revset,
         )
-        console.note(t"Using PR #{pr_number} -> {ui.revset(resolved_revset)}")
+        console.note(t"Using PR #{pr_number} -> {ui.change_id(resolved_revset)}")
         return None, resolved_revset
     return (
         resolve_selected_revset(
