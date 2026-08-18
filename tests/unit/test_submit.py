@@ -245,7 +245,8 @@ def test_discovered_pr_must_have_only_one_open_pr() -> None:
     with pytest.raises(CliError, match="multiple pull requests"):
         _select_discovered_pr(
             head_label="octo-org:jj-stack/foo",
-            prs=prs,
+            open_prs=prs,
+            tracked_pr=None,
             tracked_pr_number=None,
         )
 

@@ -210,7 +210,7 @@ def test_checkout_pr_rejects_cross_repo_head(
     assert TrackingStore.for_repo(repo).load() == initial_state
 
 
-def test_checkout_pr_rejects_ambiguous_top_head(
+def test_checkout_pr_uses_exact_number_when_top_head_is_shared(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -220,15 +220,15 @@ def test_checkout_pr_rejects_ambiguous_top_head(
     initial_state = TrackingStore.for_repo(repo).load()
     top = fake_repo.prs[2]
     fake_repo.create_pr(
-        base_ref=top.base_ref,
+        base_ref="main",
         body="duplicate",
         head_ref=top.head_ref,
         title="duplicate",
     )
 
-    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 1
+    assert _main(repo, config_path, "checkout", "--pull-request", "2") == 0
 
-    assert "does not uniquely identify" in capsys.readouterr().err
+    assert "already up to date" in capsys.readouterr().out
     assert TrackingStore.for_repo(repo).load() == initial_state
 
 

@@ -417,13 +417,26 @@ def test_stack_merge_requires_a_resource_only_when_a_multi_pr_merge_can_proceed(
     assert fake_repo.stack_merge_requests == []
 
 
-def test_merge_dry_run_validates_without_mutation(
+def test_merge_dry_run_ignores_closed_pr_for_reused_head_branch(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = selected_stack(repo).head.change_id
+    old_head_ref = fake_repo.prs[1].head_ref
+    fake_repo.update_pr_state(fake_repo.prs[1], state="closed")
+    assert run_main(repo, config_path, "cleanup", change_id) == 0
+    assert run_main(repo, config_path, "submit", change_id) == 0
+    capsys.readouterr()
+    assert fake_repo.prs[2].head_ref == old_head_ref
+    fake_repo.create_pr(
+        base_ref="release",
+        body="shared head",
+        head_ref=old_head_ref,
+        title="shared head",
+    )
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     state_before = TrackingStore.for_repo(repo).load()
 
@@ -432,8 +445,10 @@ def test_merge_dry_run_validates_without_mutation(
 
     assert exit_code == 0
     assert "Planned merge actions:" in captured.out
-    assert "merge PR #1" in captured.out
-    assert fake_repo.prs[1].state == "open"
+    assert "merge PR #2" in captured.out
+    assert fake_repo.prs[1].state == "closed"
+    assert fake_repo.prs[2].state == "open"
+    assert fake_repo.prs[3].state == "open"
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert TrackingStore.for_repo(repo).load() == state_before
 

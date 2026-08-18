@@ -66,14 +66,6 @@ class _GithubClientStub:
         assert pr_number == self.pr.number
         return self.pr
 
-    async def get_prs_by_head_refs(
-        self,
-        *,
-        head_refs: tuple[str, ...],
-    ) -> dict[str, tuple[GithubPR, ...]]:
-        assert head_refs == (self.pr.head.ref,)
-        return {self.pr.head.ref: (self.pr,)}
-
 
 def _pr(*, head_owner: str, state: str) -> GithubPR:
     branch = "jj-stack/manual-feature-feature1"

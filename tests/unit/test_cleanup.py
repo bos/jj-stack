@@ -120,6 +120,27 @@ def test_cleanup_blocks_when_the_exact_remote_branch_drifted() -> None:
     assert "different commit" in plain_text(blocker.body)
 
 
+def test_cleanup_preserves_a_head_branch_shared_by_another_open_pr() -> None:
+    competing_pr = _pr().model_copy(
+        update={
+            "base": GithubBranchRef(ref="release"),
+            "number": 2,
+            "state": "open",
+        }
+    )
+
+    _pr_result, update, blocker = plan_pr_cleanup(
+        allowed_states=frozenset({"closed", "merged"}),
+        candidate=_candidate(),
+        observation=_observation(open_head_prs=(competing_pr,)),
+    )
+
+    assert update is None
+    assert blocker is not None
+    assert blocker.kind == "remote branch"
+    assert "another open pull request" in plain_text(blocker.body)
+
+
 def _fake_context(
     *,
     jj_client: JjClient | None = None,
@@ -173,6 +194,7 @@ def _pr() -> GithubPR:
 
 def _observation(
     *,
+    open_head_prs: tuple[GithubPR, ...] = (),
     remote_target: str | None = _BASELINE.commit_id,
 ) -> RepoFacts:
     identity = _identity()
@@ -186,7 +208,7 @@ def _observation(
         prs={
             CHANGE_ID: PRFacts(
                 baseline=_BASELINE,
-                head_prs=(pr,),
+                open_head_prs=open_head_prs,
                 identity=identity,
                 local_commits=(),
                 pr=pr,

@@ -449,6 +449,7 @@ async def _observe_cleanup_prs(
                 context=context,
                 github_client=github_client,
                 include_open_dependents=True,
+                include_open_head_prs=True,
                 remote_name=remote_name,
             )
         except GithubClientError as error:
@@ -460,6 +461,7 @@ async def _observe_cleanup_prs(
             context=context,
             github_client=github_client,
             include_open_dependents=True,
+            include_open_head_prs=True,
             remote_name=remote_name,
         )
     except GithubClientError:

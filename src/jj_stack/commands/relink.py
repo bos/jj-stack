@@ -159,11 +159,6 @@ async def _load_exact_relink_pr(
 ) -> tuple[GithubPR, str]:
     try:
         pr = await github_client.get_pr(pr_number=pr_number)
-        head_matches = (
-            await github_client.get_prs_by_head_refs(
-                head_refs=(pr.head.ref,),
-            )
-        ).get(pr.head.ref, ())
     except GithubClientError as error:
         raise CliError(f"Could not load pull request #{pr_number}") from error
     if pr.state != "open":
@@ -178,10 +173,6 @@ async def _load_exact_relink_pr(
             t"Pull request #{pr_number} head "
             t"{ui.bookmark(pr.head.label or branch)} does not belong to the "
             t"configured repo."
-        )
-    if len(head_matches) != 1 or head_matches[0].number != pr_number:
-        raise CliError(
-            t"Head branch {ui.bookmark(branch)} does not uniquely identify PR #{pr_number}."
         )
     namespace = current_pr_branch_namespace()
     if not namespace.contains(branch) or not pr_branch_matches_change(

@@ -179,10 +179,6 @@ async def _checkout_pr_stack(
             pr=top_pr,
             repo=repo,
         )
-        await _require_unique_pr_head(
-            github_client=github_client,
-            pr=top_pr,
-        )
         top_head_sha = _require_pr_head_sha(top_pr)
         observed_top = client.list_remote_branches(
             remote=remote.name,
@@ -345,7 +341,7 @@ async def _load_pr_chain(
             )
         seen.add(base)
         try:
-            matches = (await github_client.get_prs_by_head_refs(head_refs=(base,))).get(
+            matches = (await github_client.get_open_prs_by_head_refs(head_refs=(base,))).get(
                 base,
                 (),
             )
@@ -365,27 +361,6 @@ async def _load_pr_chain(
         top_down.append(parent)
         base = parent.base.ref
     return tuple(reversed(top_down))
-
-
-async def _require_unique_pr_head(
-    *,
-    github_client: GithubClient,
-    pr: GithubPR,
-) -> None:
-    try:
-        matches = (
-            await github_client.get_prs_by_head_refs(
-                head_refs=(pr.head.ref,),
-            )
-        ).get(pr.head.ref, ())
-    except GithubClientError as error:
-        raise CliError(t"Could not verify PR #{pr.number}'s head branch.") from error
-    if len(matches) != 1 or matches[0].number != pr.number:
-        raise CliError(
-            t"Head branch {ui.bookmark(pr.head.ref)} does not uniquely identify PR #{pr.number}.",
-            hint=t"Inspect them with {ui.cmd('jj-stack view')}, then attach the "
-            t"intended PR with {ui.cmd('jj-stack relink')}.",
-        )
 
 
 def _save_checkout_tracking(

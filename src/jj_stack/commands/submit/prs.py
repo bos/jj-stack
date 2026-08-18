@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 import jj_stack.ui as ui
@@ -15,6 +16,7 @@ from jj_stack.models.tracking import (
     TrackedPR,
     TrackingState,
 )
+from jj_stack.stack.pr_facts import has_competing_open_pr
 from jj_stack.ui import Message
 
 from .models import (
@@ -46,15 +48,24 @@ async def discover_prs_by_branch(
     if not branches:
         return {}
 
-    discovered_prs = await _github_request(
-        github_client.get_prs_by_head_refs(head_refs=branches),
-        error_message="Could not batch pull request discovery for branches",
+    open_prs_by_branch, tracked_prs_by_number = await asyncio.gather(
+        _github_request(
+            github_client.get_open_prs_by_head_refs(head_refs=branches),
+            error_message="Could not batch open pull request discovery for branches",
+        ),
+        _github_request(
+            github_client.get_prs_by_numbers(pr_numbers=tuple(tracked_prs.values())),
+            error_message="Could not batch saved pull request discovery by number",
+        ),
     )
 
     return {
         branch: _select_discovered_pr(
             head_label=f"{github_client.repo.owner}:{branch}",
-            prs=discovered_prs.get(branch, ()),
+            open_prs=open_prs_by_branch.get(branch, ()),
+            tracked_pr=(
+                tracked_prs_by_number.get(tracked_prs[branch]) if branch in tracked_prs else None
+            ),
             tracked_pr_number=tracked_prs.get(branch),
         )
         for branch in branches
@@ -294,17 +305,17 @@ def _reviewers_to_re_request(
 def _select_discovered_pr(
     *,
     head_label: str,
-    prs: tuple[GithubPR, ...],
+    open_prs: tuple[GithubPR, ...],
+    tracked_pr: GithubPR | None,
     tracked_pr_number: int | None,
 ) -> GithubPR | None:
-    open_prs = tuple(pr for pr in prs if pr.state == "open")
-    tracked_pr = next(
-        (pr for pr in prs if pr.number == tracked_pr_number),
-        None,
-    )
-    if len(open_prs) > 1 or (
-        open_prs and tracked_pr is not None and open_prs[0].number != tracked_pr.number
-    ):
+    ambiguous = len(open_prs) > 1
+    if tracked_pr_number is not None and tracked_pr is not None:
+        ambiguous = ambiguous or has_competing_open_pr(
+            open_head_prs=open_prs,
+            pr_number=tracked_pr_number,
+        )
+    if ambiguous:
         raise DriftError(
             t"GitHub reports multiple pull requests for head branch {ui.bookmark(head_label)}.",
             condition="pr_ambiguous",
@@ -313,7 +324,9 @@ def _select_discovered_pr(
                 t"with {ui.cmd('relink')} before submitting again."
             ),
         )
-    return tracked_pr or (open_prs[0] if open_prs else None)
+    if tracked_pr_number is not None:
+        return tracked_pr
+    return open_prs[0] if open_prs else None
 
 
 def ensure_pr_link_is_consistent(

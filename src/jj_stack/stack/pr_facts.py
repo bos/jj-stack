@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 
 import jj_stack.github.resolution as github_resolution
@@ -26,7 +26,7 @@ class PRFacts:
     """Fresh facts for one change ID; no field decides whether a mutation is safe."""
 
     baseline: SubmittedBaseline | None
-    head_prs: tuple[GithubPR, ...]
+    open_head_prs: tuple[GithubPR, ...]
     identity: PRIdentity | None
     local_commits: tuple[LocalCommit, ...]
     pr: GithubPR | None
@@ -43,6 +43,16 @@ class RepoFacts:
     remote: GitRemote | None
     repo: github_resolution.GithubRepoAddress
     prs: Mapping[str, PRFacts]
+
+
+def has_competing_open_pr(
+    *,
+    open_head_prs: tuple[GithubPR, ...],
+    pr_number: int,
+) -> bool:
+    """Return whether another open PR uses one exact PR's head branch."""
+
+    return any(candidate.number != pr_number for candidate in open_head_prs)
 
 
 def duplicate_pr_claim_change_ids(
@@ -70,6 +80,7 @@ async def observe_prs(
     github_client: GithubClient,
     remote_name: str,
     include_open_dependents: bool = False,
+    include_open_head_prs: bool = False,
     include_remote_targets: bool = True,
     github_repo_snapshot: GithubRepo | None = None,
     local_commits_snapshot: Mapping[str, tuple[LocalCommit, ...]] | None = None,
@@ -86,9 +97,14 @@ async def observe_prs(
     known_identities = tuple(identity for identity in identities.values() if identity is not None)
     head_refs = tuple(dict.fromkeys(identity.head_ref for identity in known_identities))
     pr_numbers = tuple(dict.fromkeys(identity.pr_number for identity in known_identities))
+    open_heads_request: Awaitable[dict[str, tuple[GithubPR, ...]]]
+    if include_open_head_prs:
+        open_heads_request = github_client.get_open_prs_by_head_refs(head_refs=head_refs)
+    else:
+        open_heads_request = asyncio.sleep(0, result={})
     numbered, by_head, by_base, github_repo = await asyncio.gather(
         github_client.get_prs_by_numbers(pr_numbers=pr_numbers),
-        github_client.get_prs_by_head_refs(head_refs=head_refs),
+        open_heads_request,
         (
             github_client.get_open_prs_by_base_refs(base_refs=head_refs)
             if include_open_dependents
@@ -117,7 +133,7 @@ async def observe_prs(
     prs = {
         change_id: PRFacts(
             baseline=state.submitted_baselines.get(change_id),
-            head_prs=(by_head.get(identity.head_ref, ()) if identity is not None else ()),
+            open_head_prs=(by_head.get(identity.head_ref, ()) if identity is not None else ()),
             identity=identity,
             local_commits=matches,
             pr=(numbered.get(identity.pr_number) if identity is not None else None),

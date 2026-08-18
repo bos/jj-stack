@@ -378,7 +378,7 @@ def test_list_falls_back_when_github_unavailable(
     app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def get_prs_by_head_refs(self, *, head_refs):
+        async def get_open_prs_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(

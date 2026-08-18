@@ -250,21 +250,21 @@ class GithubClient:
                 )
         return results
 
-    async def get_prs_by_head_refs(
+    async def get_open_prs_by_head_refs(
         self,
         *,
         head_refs: Sequence[str],
     ) -> dict[str, tuple[GithubPR, ...]]:
-        return await self._get_prs_by_refs(refs=head_refs, base=False)
+        return await self._get_open_prs_by_refs(refs=head_refs, base=False)
 
     async def get_open_prs_by_base_refs(
         self,
         *,
         base_refs: Sequence[str],
     ) -> dict[str, tuple[GithubPR, ...]]:
-        return await self._get_prs_by_refs(refs=base_refs, base=True)
+        return await self._get_open_prs_by_refs(refs=base_refs, base=True)
 
-    async def _get_prs_by_refs(
+    async def _get_open_prs_by_refs(
         self,
         *,
         base: bool,
@@ -279,7 +279,7 @@ class GithubClient:
         results: dict[str, tuple[GithubPR, ...]] = {}
         for chunk in _chunked(refs, size=_GRAPHQL_PR_BATCH_SIZE):
             aliases = {f"{kind}_{index}": ref for index, ref in enumerate(chunk)}
-            query = _prs_by_ref_query(aliases, base=base)
+            query = _open_prs_by_ref_query(aliases, base=base)
             payload = await self._graphql_query(
                 query,
                 variables=self._repo_variables,
@@ -819,17 +819,16 @@ def _prs_by_number_query(numbers: Sequence[int]) -> str:
     )
 
 
-def _prs_by_ref_query(aliases: dict[str, str], *, base: bool) -> str:
+def _open_prs_by_ref_query(aliases: dict[str, str], *, base: bool) -> str:
     first = 100 if base else 2
-    operation_name = "OpenPullRequestsByBaseRef" if base else "PullRequestsByHeadRef"
+    operation_name = "OpenPullRequestsByBaseRef" if base else "OpenPullRequestsByHeadRef"
     ref_argument = "baseRefName" if base else "headRefName"
-    states = "[OPEN]" if base else "[OPEN, CLOSED, MERGED]"
     selections = "\n\n".join(
         _graphql_document(
             f"""
             {alias}: pullRequests(
               first: {first},
-              states: {states},
+              states: [OPEN],
               {ref_argument}: {json.dumps(ref)}
             ) {{
               nodes {{

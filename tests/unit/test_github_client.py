@@ -378,7 +378,7 @@ def test_github_client_rejects_incomplete_pr_connection(
         asyncio.run(run_test())
 
 
-def test_github_client_batches_pr_lookup_by_head_ref_with_graphql() -> None:
+def test_github_client_batches_open_pr_lookup_by_head_ref_with_graphql() -> None:
     def handler(request: httpxyz.Request) -> httpxyz.Response:
         assert request.url.path == "/graphql"
         payload = json.loads(request.content.decode("utf-8"))
@@ -387,7 +387,7 @@ def test_github_client_batches_pr_lookup_by_head_ref_with_graphql() -> None:
         assert 'headRefName: "jj-stack/nine"' in payload["query"]
         assert "headRepositoryOwner" in payload["query"]
         assert "reviewDecision" in payload["query"]
-        assert "states: [OPEN, CLOSED, MERGED]" in payload["query"]
+        assert "states: [OPEN]" in payload["query"]
         return httpxyz.Response(
             200,
             json={
@@ -400,9 +400,9 @@ def test_github_client_batches_pr_lookup_by_head_ref_with_graphql() -> None:
                                     "body": None,
                                     "headRefName": "jj-stack/nine",
                                     "headRepositoryOwner": {"login": "octo-org"},
-                                    "mergedAt": "2026-03-16T12:00:00Z",
+                                    "mergedAt": None,
                                     "number": 9,
-                                    "state": "MERGED",
+                                    "state": "OPEN",
                                     "title": "nine",
                                     "url": "https://github.test/octo-org/stacked-prs/pull/9",
                                 }
@@ -432,7 +432,7 @@ def test_github_client_batches_pr_lookup_by_head_ref_with_graphql() -> None:
 
     async def run_test() -> tuple[str, str, str | None, str | None]:
         async with _github_client(handler) as client:
-            prs = await client.get_prs_by_head_refs(
+            prs = await client.get_open_prs_by_head_refs(
                 head_refs=("jj-stack/seven", "jj-stack/nine"),
             )
         pr_7 = prs["jj-stack/seven"][0]
@@ -446,7 +446,7 @@ def test_github_client_batches_pr_lookup_by_head_ref_with_graphql() -> None:
 
     assert asyncio.run(run_test()) == (
         "jj-stack/seven",
-        "merged",
+        "open",
         "octo-org:jj-stack/seven",
         "approved",
     )
@@ -538,7 +538,7 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
 
     async def run_test() -> list[int]:
         async with _github_client(handler) as client:
-            prs = await client.get_prs_by_head_refs(
+            prs = await client.get_open_prs_by_head_refs(
                 head_refs=("jj-stack/seven",),
             )
         return [pr.number for pr in prs["jj-stack/seven"]]

@@ -21,7 +21,7 @@ from jj_stack.models.github import GithubIssueComment, GithubPR
 from jj_stack.models.tracking import TrackedPR
 from jj_stack.pr_branch_namespace import pr_branch_matches_change
 from jj_stack.stack.github_stack_safety import GithubStackSelection
-from jj_stack.stack.pr_facts import RepoFacts
+from jj_stack.stack.pr_facts import RepoFacts, has_competing_open_pr
 from jj_stack.ui import Message
 
 ActionPresentationStatus = Literal["applied", "blocked", "planned", "skipped"]
@@ -68,14 +68,10 @@ def check_tracked_pr(
         pr = pr.normalize_state()
     if reason is None:
         assert pr is not None
-        exact_link = (
-            pr_identity.matches_pr(pr),
-            tuple(pr.number for pr in observed.head_prs),
-        )
-        if exact_link != (True, (pr_number,)):
+        if not pr_identity.matches_pr(pr):
             reason = (
-                t"cannot inspect saved PR #{pr_number} because its live PR and head "
-                t"no longer uniquely match {ui.bookmark(pr_identity.head_ref)}"
+                t"cannot inspect saved PR #{pr_number} because its live PR no longer "
+                t"matches {ui.bookmark(pr_identity.head_ref)}"
             )
         elif not candidate.matches_snapshot(pr, repo_key=repo_key):
             reason = (
@@ -284,6 +280,21 @@ def plan_pr_cleanup(
     change_id = candidate.change_id
     pr_identity = candidate.pr_identity
     submitted_baseline = candidate.submitted_baseline
+    observed = observation.prs[change_id]
+    if has_competing_open_pr(
+        open_head_prs=observed.open_head_prs,
+        pr_number=pr_identity.pr_number,
+    ):
+        return (
+            pr,
+            None,
+            CleanupAction(
+                kind="remote branch",
+                body=t"cannot delete {ui.bookmark(pr_identity.head_ref)} because another open "
+                t"pull request uses it as its head branch",
+                status="blocked",
+            ),
+        )
     configured_repo = observation.configured_repo
     if (
         observation.remote is None

@@ -150,11 +150,7 @@ def _github_pr_precondition_error(
     # The head commit is deliberately not compared here. GitHub is given the expected head with
     # the merge request and rejects a stale one atomically, which a check made beforehand cannot
     # do; the PR branch is still compared against the submitted baseline above.
-    if (
-        not planned.identity.matches_pr(pr)
-        or len(observed.head_prs) != 1
-        or observed.head_prs[0].number != pr.number
-    ):
+    if not planned.identity.matches_pr(pr):
         return f"the pull request linked to {planned.change_id} changed"
     if pr.state == "merged" and not inactive_allowed:
         return f"pull request #{pr.number} is already merged"

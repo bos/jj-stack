@@ -387,7 +387,7 @@ def test_view_preserves_remote_observations_when_github_lookup_fails(
     app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class FailingPRLookupClient(GithubClient):
-        async def get_prs_by_head_refs(self, *, head_refs):
+        async def get_open_prs_by_head_refs(self, *, head_refs):
             raise GithubClientError(
                 'GitHub request failed: 404 {"message":"Not Found","documentation_url":"x"}',
                 status_code=404,
@@ -424,7 +424,7 @@ def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
     app = create_app(FakeGithubState.single_repo(fake_repo))
 
     class OfflineGithubClient(GithubClient):
-        async def get_prs_by_head_refs(self, *, head_refs):
+        async def get_open_prs_by_head_refs(self, *, head_refs):
             raise GithubClientError("Connection refused")
 
     patch_github_client_builders(

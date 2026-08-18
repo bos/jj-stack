@@ -166,7 +166,7 @@ def test_pr_lookup_falls_back_to_exact_remembered_pr_number() -> None:
             repo="stacked-prs",
         )
 
-        async def get_prs_by_head_refs(self, *, head_refs):
+        async def get_open_prs_by_head_refs(self, *, head_refs):
             assert head_refs == ("jj-stack/old-branch",)
             return {"jj-stack/old-branch": ()}
 

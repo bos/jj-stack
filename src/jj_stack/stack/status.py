@@ -561,7 +561,7 @@ async def _discover_pr_lookups(
         return {}
 
     try:
-        discovered_prs = await github_client.get_prs_by_head_refs(
+        discovered_prs = await github_client.get_open_prs_by_head_refs(
             head_refs=branches,
         )
     except GithubClientError as error:

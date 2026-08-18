@@ -48,6 +48,8 @@ def test_cli_color_config_read_ignores_working_copy(
 def test_time_output_prefix_uses_prefix_and_timestamp_semantic_style(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
     repo = Path.cwd()
     stdout = 'colors.prefix.bold\0true\ncolors.timestamp\0"cyan"\n'
 
