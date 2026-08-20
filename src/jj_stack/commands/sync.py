@@ -64,6 +64,7 @@ from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import GithubTarget, resolve_github_target, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import UnsupportedStackError
+from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 from jj_stack.stack.convergence import (
@@ -183,21 +184,22 @@ async def _run_global_plan(
     trunk_commit_id: str,
 ) -> tuple[int, tuple[str, ...], str | None]:
     async with build_github_client(repo=target.repo) as github:
-        try:
-            facts = await observe_global_sync(
-                context=context,
-                github=github,
-                remote_name=target.remote.name,
-                trunk_commit_id=trunk_commit_id,
+        with console.spinner(description="Inspecting tracked pull requests"):
+            try:
+                facts = await observe_global_sync(
+                    context=context,
+                    github=github,
+                    remote_name=target.remote.name,
+                    trunk_commit_id=trunk_commit_id,
+                )
+            except GithubClientError as error:
+                raise CliError("Could not inspect pull requests") from error
+            state = context.state_store.load()
+            plan = build_global_convergence_plan(
+                facts=facts,
+                repo=target.repo,
+                state=state,
             )
-        except GithubClientError as error:
-            raise CliError("Could not inspect pull requests") from error
-        state = context.state_store.load()
-        plan = build_global_convergence_plan(
-            facts=facts,
-            repo=target.repo,
-            state=state,
-        )
         for candidate, reason in plan.blocked:
             console.warning(
                 t"Skipped PR #{candidate.pr_identity.pr_number} for "
@@ -254,15 +256,16 @@ def run_stack_convergence(
     revset: str | None,
     trunk_branch: str | None = None,
 ) -> int:
-    try:
-        prepared_status = prepare_status(
-            context=context,
-            fetch_remote_state=fetch_remote_state,
-            observe_remote_targets=False,
-            revset=revset,
-        )
-    except UnsupportedStackError as error:
-        raise status_preparation_cli_error(error) from error
+    with console.spinner(description="Inspecting local stack"):
+        try:
+            prepared_status = prepare_status(
+                context=context,
+                fetch_remote_state=fetch_remote_state,
+                observe_remote_targets=False,
+                revset=revset,
+            )
+        except UnsupportedStackError as error:
+            raise status_preparation_cli_error(error) from error
     if print_selected and prepared_status.prepared.stack.changes:
         head = prepared_status.prepared.stack.head
         print_selected_line(head.change_id, head.subject)
@@ -297,59 +300,70 @@ async def _run_selected_convergence(
     if not selected:
         console.output("Nothing to sync: the selected change is already on trunk.")
         return 0
+    complete = False
+    github_stacks: tuple[GithubStack, ...] = ()
+    plan: SelectedConvergencePlan | None = None
     async with build_github_client(repo=target.repo) as github:
-        observation, observed_stacks = await asyncio.gather(
-            observe_prs(
-                change_ids=tuple(change.change_id for change in selected),
-                context=context,
-                github_client=github,
-                include_remote_targets=False,
-                remote_name=target.remote.name,
-            ),
-            observe_github_stacks(github=github),
-        )
-        if queued := queued_pr_numbers(observation, selected):
-            _render_queued_sync(queued)
-            return 0
-        observation, github_stacks, complete = await complete_sync_observation(
-            context=context,
-            github=github,
-            initial=observation,
-            remote_name=target.remote.name,
-            repo=target.repo,
-            selected=selected,
-            stacks=observed_stacks,
-        )
-        if queued := queued_pr_numbers(observation, selected):
+        with console.spinner(description="Inspecting pull requests") as progress:
+            observation, observed_stacks = await asyncio.gather(
+                observe_prs(
+                    change_ids=tuple(change.change_id for change in selected),
+                    context=context,
+                    github_client=github,
+                    include_remote_targets=False,
+                    remote_name=target.remote.name,
+                ),
+                observe_github_stacks(github=github),
+            )
+            queued = queued_pr_numbers(observation, selected)
+            if not queued:
+                progress.update("Checking PR branches")
+                observation, github_stacks, complete = await complete_sync_observation(
+                    context=context,
+                    github=github,
+                    initial=observation,
+                    remote_name=target.remote.name,
+                    repo=target.repo,
+                    selected=selected,
+                    stacks=observed_stacks,
+                )
+                queued = queued_pr_numbers(observation, selected)
+            if not queued and complete:
+                progress.update("Planning local sync")
+                repo_state = observation.github_repo
+                if repo_state is None:
+                    raise AssertionError("Sync observation requires GitHub repo state.")
+                if trunk_branch is None:
+                    trunk_branch, _trunk_targets = resolve_trunk_branch(
+                        client=prepared.client,
+                        github_repo_state=repo_state,
+                        remote=target.remote,
+                        trunk_commit_id=prepared.stack.trunk.commit_id,
+                    )
+                ancestries = _classify_observed_ancestries(
+                    context=context,
+                    observation=observation,
+                    trunk_commit_id=prepared.stack.trunk.commit_id,
+                )
+                plan = build_selected_convergence_plan(
+                    ancestries=ancestries,
+                    context=context,
+                    github_stacks=github_stacks,
+                    observation=observation,
+                    prepared_status=prepared_status,
+                    repo=target.repo,
+                    trunk_branch=trunk_branch,
+                )
+        if queued:
             _render_queued_sync(queued)
             return 0
         if not complete:
             console.output("No merged changes in this stack need rebasing.")
             return 0
-        repo_state = observation.github_repo
-        if repo_state is None:
-            raise AssertionError("Sync observation requires GitHub repo state.")
+        if plan is None:
+            raise AssertionError("Complete sync observation requires a convergence plan.")
         if trunk_branch is None:
-            trunk_branch, _trunk_targets = resolve_trunk_branch(
-                client=prepared.client,
-                github_repo_state=repo_state,
-                remote=target.remote,
-                trunk_commit_id=prepared.stack.trunk.commit_id,
-            )
-        ancestries = _classify_observed_ancestries(
-            context=context,
-            observation=observation,
-            trunk_commit_id=prepared.stack.trunk.commit_id,
-        )
-        plan = build_selected_convergence_plan(
-            ancestries=ancestries,
-            context=context,
-            github_stacks=github_stacks,
-            observation=observation,
-            prepared_status=prepared_status,
-            repo=target.repo,
-            trunk_branch=trunk_branch,
-        )
+            raise AssertionError("Complete sync observation requires a trunk branch.")
         _render_selected_plan(dry_run=dry_run, plan=plan)
         return await apply_selected_convergence(
             context=context,

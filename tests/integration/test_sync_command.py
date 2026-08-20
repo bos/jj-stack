@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 import jj_stack.commands.sync_apply as sync_apply
+import jj_stack.console as console
 from jj_stack.errors import EXIT_GITHUB, EXIT_INCOMPLETE, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
@@ -179,6 +181,19 @@ def test_sync_all_finds_cross_workspace_recovery(
     pr_branch = state_store.load().pr_identities[submitted.change_id].head_ref
     _squash_merge_pr(fake_repo, 1)
     landed_commit_id = read_remote_ref(fake_repo.git_dir, "main")
+    progress_phases: list[str] = []
+
+    @contextmanager
+    def record_spinner(*, description: str):
+        progress_phases.append(description)
+
+        class Handle:
+            def update(self, next_description: str) -> None:
+                progress_phases.append(next_description)
+
+        yield Handle()
+
+    monkeypatch.setattr(console, "spinner", record_spinner)
 
     capsys.readouterr()
 
@@ -191,6 +206,15 @@ def test_sync_all_finds_cross_workspace_recovery(
     rewritten_dependent = JjClient(other_workspace).resolve_commit("@")
     assert rewritten_dependent.change_id == dependent.change_id
     assert rewritten_dependent.parents == (landed_commit_id,)
+    assert progress_phases == [
+        "Fetching trunk",
+        "Comparing pull requests with trunk",
+        "Inspecting tracked pull requests",
+        "Inspecting local stack",
+        "Inspecting pull requests",
+        "Checking PR branches",
+        "Planning local sync",
+    ]
 
 
 def test_sync_all_rebases_a_workspace_child_of_an_exact_merge_side_copy(
