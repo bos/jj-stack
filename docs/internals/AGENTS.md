@@ -7,16 +7,10 @@ are written for contributors and maintainers. Most users will never open this di
 
 ## What belongs here
 
-- `design.md` — the single canonical product spec and behavioral policy. Read it before changing
-  user-visible behavior.
-- `implementation-strategy.md` — how the tool is built: component boundaries,
-  tooling, test strategy. This file is not a changelog. Update it when the
-  *strategy* changes (new tool, new component boundary, new test layer), not
-  for every landed implementation change.
+- `design.md` — enduring product rules, not an exhaustive catalog of observable behavior.
+- `implementation-strategy.md` — component boundaries, tooling, and test strategy. It is not a
+  changelog.
 - `testing-philosophy.md` — what kinds of tests to write and why.
-Only `design.md` defines product behavior. Other documents explain implementation, testing,
-or review practice. Accepted plans guide their scoped work but do not change behavior until
-`design.md` is updated.
 
 ## Vocabulary
 
@@ -29,12 +23,6 @@ for abandoned mechanisms or completed slices; keep that history in `jj` commits.
 internal terminology as permission to make user-facing docs or help harder to understand. See
 `docs/AGENTS.md` for the stricter public vocabulary rules.
 
-## When to update these files
-
-- **design.md**: update the relevant section when adding a command, changing semantics, or adding
-  a behavioral invariant. It is not a changelog.
-- **implementation-strategy.md**: update only when the build, test, or
-  component strategy changes. `jj log` is the changelog; this file is not.
 ## What not to put here
 
 These files are not a changelog, a commit log summary, or a task list for the

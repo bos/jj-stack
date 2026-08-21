@@ -1,7 +1,7 @@
 # jj-stack implementation strategy
 
-[design.md](design.md) defines product behavior. This document records the architectural choices
-that are not obvious from reading the source tree.
+[design.md](design.md) records enduring product rules. This document records the architectural
+choices that are not obvious from reading the source tree.
 
 ## Authority and stored state
 

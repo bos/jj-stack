@@ -63,13 +63,13 @@ Specific patterns to watch for in help text:
 - For persisted records, say "tracking data" or describe the effect
 - Say "tracking" rather than naming jj-stack's local tracking implementation
 
-## Updating user docs after implementing something
+## Routing user documentation changes
 
-When you add a feature or change behavior, ask:
+When the root documentation gate is met, update only the closest relevant location:
 
-1. Does `docs/troubleshooting.md` need a new symptom/fix entry?
-2. Does one of the guides under `docs/guides/` need a new step or note?
-3. Does `docs/README.md` need an updated command list?
+- Add to `docs/troubleshooting.md` only for a recurring user-visible symptom and recovery.
+- Change a guide under `docs/guides/` only when its workflow steps or decisions change.
+- Change `docs/README.md` only when the documentation overview or command set changes.
 
 The `--help` output is the canonical flag reference. User docs should explain
 *when* and *why* to use a command, not duplicate the flag list.

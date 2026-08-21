@@ -55,22 +55,24 @@ compatibility code, migration code, or the like.
   describing concrete inputs and effects.
 - `design.md` and `implementation-strategy.md` describe the current product and architecture, not
   completed slices or abandoned mechanisms. Keep implementation history in `jj` commits.
+- Default to code and tests only. Update documentation only when a change intentionally adds or
+  changes a supported product rule or user workflow, or makes a specific existing statement
+  materially inaccurate. A bug and its fix are not by themselves a documentation trigger.
+- When documentation is required, update only the affected source: `design.md` for an enduring
+  product rule, user docs or `--help` for user guidance, and `implementation-strategy.md` for an
+  architecture, tooling, or test-layer strategy change.
 
 # Behaviour changes
 
 - In user-facing output, identify revisions by `change_id` by default. If a concrete immutable
   snapshot matters, include the `commit_id` second and label it explicitly.
-- Read [docs/internals/design.md](docs/internals/design.md), the single canonical product spec,
-  before changing behavior or adding tests. Design prose is derived from principles, not
-  the other way around: evaluate a documented behavior on its merits before extending it,
-  and prefer deleting case-specific rules that follow from the principles over adding new
-  ones. Never add durable transaction or replay state; recovery is observational
-  (see design.md).
+- Read [docs/internals/design.md](docs/internals/design.md) before intentionally changing product
+  semantics or adding tests for product behavior. Design prose is derived from principles, not
+  the other way around: evaluate a documented behavior on its merits before extending it, and
+  prefer deleting case-specific rules that follow from the principles over adding new ones. Never
+  add durable transaction or replay state; recovery is observational (see design.md).
 - Preserve the core invariants: the `jj` DAG determines stack topology, local cache is sparse,
   GitHub pull requests are derived from the local `jj` stack, and ambiguous linkage fails closed.
-- If behavior changes, update `design.md` and the user docs in the same change and make sure tests
-  pass. Update `implementation-strategy.md` only for an architecture, tooling, or test-layer
-  change; use `jj` commits for slice history.
 
 # Testing
 

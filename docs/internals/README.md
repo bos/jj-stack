@@ -7,8 +7,8 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
 
 ## Suggested reading order
 
-- Start with the summary and core concepts in **[design.md](design.md)**. It is the single
-  product specification and must be read before changing user-visible behavior.
+- Start with the summary and core concepts in **[design.md](design.md)** for enduring product
+  rules.
 - Read **[implementation-strategy.md](implementation-strategy.md)** for state authority,
   execution boundaries, mutation ordering, and complexity policy.
 - Read **[testing-philosophy.md](testing-philosophy.md)** before changing tests.
@@ -20,6 +20,3 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
 - **[property-testing.md](property-testing.md)** — the generated integration harness and how to
   run it.
 - **[releasing.md](releasing.md)** — release qualification and publication.
-Only [design.md](design.md) defines product behavior. The other documents explain implementation,
-testing, or review practice. Accepted plans guide their scoped work but do not change behavior
-until the design is updated.

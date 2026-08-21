@@ -1,6 +1,7 @@
 # Stacked GitHub pull requests from `jj`: design
 
-This is the canonical product specification for `jj-stack`.
+This is the authoritative record of enduring product rules for `jj-stack`, not an exhaustive
+catalog of every observable behavior.
 Implementation structure belongs in `implementation-strategy.md`; testing guidance belongs in the
 testing and review documents.
 
