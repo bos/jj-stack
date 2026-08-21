@@ -223,16 +223,21 @@ async def _stream_merge_async(
         raise AssertionError("Prepared merge requires resolved GitHub and remote targets.")
 
     async with build_github_client(repo=github_repo) as github_client:
-        try:
-            github_repo_state = await github_client.get_repo()
-        except GithubClientError as error:
-            raise CliError(
-                t"Could not load GitHub repo {github_repo.full_name}",
-                hint="Resolve the GitHub error above, then rerun merge.",
-            ) from error
         with console.spinner(description="Loading remote branches"):
+            try:
+                github_repo_state, branches_at_trunk = await asyncio.gather(
+                    github_client.get_repo(),
+                    github_client.list_branches_for_head_commit(
+                        commit_sha=prepared.stack.trunk.commit_id
+                    ),
+                )
+            except GithubClientError as error:
+                raise CliError(
+                    t"Could not inspect GitHub repo {github_repo.full_name}",
+                    hint="Resolve the GitHub error above, then rerun merge.",
+                ) from error
             trunk_branch, _trunk_targets = resolve_trunk_branch(
-                client=prepared.client,
+                branches_at_trunk=branches_at_trunk,
                 github_repo_state=github_repo_state,
                 remote=remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,

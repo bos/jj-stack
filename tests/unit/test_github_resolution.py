@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import cast
-
 import pytest
 
 from jj_stack.errors import CliError
@@ -10,7 +8,6 @@ from jj_stack.github.resolution import (
     resolve_trunk_branch,
     select_submit_remote,
 )
-from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepo
 
@@ -109,10 +106,8 @@ def test_parse_github_repo_rejects_fetch_and_push_repo_mismatch() -> None:
 
 
 def test_resolve_trunk_branch_prefers_the_default_branch_when_it_is_one_of_the_matches() -> None:
-    client = _RemoteBranchClient({"main": "trunk123", "stable": "trunk123"})
-
     branch, targets = resolve_trunk_branch(
-        client=cast(JjClient, client),
+        branches_at_trunk=("main", "stable"),
         github_repo_state=_github_repo(default_branch="main"),
         remote=_remote("origin"),
         trunk_commit_id="trunk123",
@@ -120,14 +115,11 @@ def test_resolve_trunk_branch_prefers_the_default_branch_when_it_is_one_of_the_m
 
     assert branch == "main"
     assert targets == {"main": "trunk123", "stable": "trunk123"}
-    assert client.patterns == [("refs/heads/*",)]
 
 
 def test_resolve_trunk_branch_accepts_a_default_branch_ahead_of_local_trunk() -> None:
-    client = _RemoteBranchClient({"main": "moved-ahead"})
-
     branch, _targets = resolve_trunk_branch(
-        client=cast(JjClient, client),
+        branches_at_trunk=(),
         github_repo_state=_github_repo(default_branch="main"),
         remote=_remote("origin"),
         trunk_commit_id="stale-local-trunk",
@@ -137,11 +129,9 @@ def test_resolve_trunk_branch_accepts_a_default_branch_ahead_of_local_trunk() ->
 
 
 def test_resolve_trunk_branch_rejects_a_default_branch_that_is_not_trunk() -> None:
-    client = _RemoteBranchClient({"develop": "develop999", "main": "trunk123"})
-
     with pytest.raises(CliError, match="default branch"):
         resolve_trunk_branch(
-            client=cast(JjClient, client),
+            branches_at_trunk=("main",),
             github_repo_state=_github_repo(default_branch="develop"),
             remote=_remote("origin"),
             trunk_commit_id="trunk123",
@@ -149,15 +139,8 @@ def test_resolve_trunk_branch_rejects_a_default_branch_that_is_not_trunk() -> No
 
 
 def test_resolve_trunk_branch_falls_back_to_unique_non_pr_remote_branch() -> None:
-    client = _RemoteBranchClient(
-        {
-            "main": "trunk123",
-            "jj-stack/feature-abcdefgh": "trunk123",
-        }
-    )
-
     branch, targets = resolve_trunk_branch(
-        client=cast(JjClient, client),
+        branches_at_trunk=("main", "jj-stack/feature-abcdefgh"),
         github_repo_state=_github_repo(default_branch=""),
         remote=_remote("origin"),
         trunk_commit_id="trunk123",
@@ -173,33 +156,11 @@ def test_resolve_trunk_branch_rejects_ambiguous_remote_branches() -> None:
         match="multiple remote branches",
     ):
         resolve_trunk_branch(
-            client=cast(
-                JjClient,
-                _RemoteBranchClient({"main": "trunk123", "stable": "trunk123"}),
-            ),
+            branches_at_trunk=("main", "stable"),
             github_repo_state=_github_repo(default_branch=""),
             remote=_remote("origin"),
             trunk_commit_id="trunk123",
         )
-
-
-class _RemoteBranchClient:
-    def __init__(self, targets: dict[str, str]) -> None:
-        self.targets = targets
-        self.patterns: list[tuple[str, ...]] = []
-
-    def list_remote_branches(
-        self,
-        *,
-        remote: str,
-        patterns: tuple[str, ...],
-    ) -> dict[str, str]:
-        assert remote == "origin"
-        self.patterns.append(patterns)
-        if patterns == ("refs/heads/*",):
-            return dict(self.targets)
-        requested = {pattern.removeprefix("refs/heads/") for pattern in patterns}
-        return {branch: target for branch, target in self.targets.items() if branch in requested}
 
 
 def _github_repo(default_branch: str) -> GithubRepo:

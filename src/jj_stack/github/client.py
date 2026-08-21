@@ -146,6 +146,32 @@ class GithubClient:
         response = await self._request("GET", self._repo_path)
         return GithubRepo.model_validate(self._expect_success(response))
 
+    async def list_branches_for_head_commit(self, *, commit_sha: str) -> tuple[str, ...]:
+        """List branches whose head is exactly the given commit."""
+
+        response = await self._request(
+            "GET",
+            f"{self._repo_path}/commits/{commit_sha}/branches-where-head",
+        )
+        if response.status_code == 422:
+            try:
+                error_payload = response.json()
+            except json.JSONDecodeError:
+                error_payload = None
+            if isinstance(error_payload, dict) and str(
+                error_payload.get("message", "")
+            ).startswith("No commit found for SHA:"):
+                return ()
+        payload = self._expect_json_payload(response, response_name="branch-at-commit lookup")
+        if not isinstance(payload, list) or any(
+            not isinstance(branch, dict) or not isinstance(branch.get("name"), str)
+            for branch in payload
+        ):
+            raise GithubClientError(
+                "GitHub branch-at-commit lookup response had invalid branch data."
+            )
+        return tuple(branch["name"] for branch in payload)
+
     async def list_stacks(self) -> tuple[GithubStack, ...]:
         payload = await self._get_paginated_json_array(
             f"{self._repo_path}/stacks",

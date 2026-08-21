@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import jj_stack.ui as ui
@@ -11,9 +11,6 @@ from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepo
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
-
-if TYPE_CHECKING:
-    from jj_stack.jj.client import JjClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +162,7 @@ def require_github_repo(remote: GitRemote) -> GithubRepoAddress:
 
 def resolve_trunk_branch(
     *,
-    client: JjClient,
+    branches_at_trunk: Sequence[str],
     github_repo_state: GithubRepo,
     remote: GitRemote,
     trunk_commit_id: str,
@@ -173,17 +170,10 @@ def resolve_trunk_branch(
     """Resolve the GitHub base branch used for bottom-of-stack pull requests."""
 
     namespace = current_pr_branch_namespace()
-    remote_targets = {
-        branch: target
-        for branch, target in client.list_remote_branches(
-            remote=remote.name,
-            patterns=("refs/heads/*",),
-        ).items()
-        if not namespace.contains(branch)
-    }
     matches = tuple(
-        branch for branch, target in remote_targets.items() if target == trunk_commit_id
+        sorted(branch for branch in branches_at_trunk if not namespace.contains(branch))
     )
+    trunk_targets = {branch: trunk_commit_id for branch in matches}
     default_branch = github_repo_state.default_branch
     if default_branch:
         # No match at all usually just means trunk() is behind the remote, which is fine.
@@ -200,9 +190,9 @@ def resolve_trunk_branch(
                     t"the branch the pull requests should target."
                 ),
             )
-        return default_branch, remote_targets
+        return default_branch, trunk_targets
     if len(matches) == 1:
-        return matches[0], remote_targets
+        return matches[0], trunk_targets
     if len(matches) > 1:
         raise CliError(
             t"Could not determine the trunk branch because multiple remote branches on "

@@ -598,6 +598,7 @@ async def run_submit_async(
                 github_repo_result,
                 discovered_prs_result,
                 observed_stacks_result,
+                branches_at_trunk_result,
             ) = await asyncio.gather(
                 github_client.get_repo(),
                 discover_prs_by_branch(
@@ -606,6 +607,7 @@ async def run_submit_async(
                     tracked_prs=tracked_prs,
                 ),
                 github_client.list_stacks(),
+                github_client.list_branches_for_head_commit(commit_sha=stack.trunk.commit_id),
                 return_exceptions=True,
             )
             github_repo_state, discovered_prs, observed_stacks = _github_inspection_results(
@@ -614,8 +616,10 @@ async def run_submit_async(
                 repo_name=github_repo.full_name,
                 stacks=observed_stacks_result,
             )
+            if isinstance(branches_at_trunk_result, BaseException):
+                raise branches_at_trunk_result
             trunk_branch, trunk_targets = resolve_trunk_branch(
-                client=client,
+                branches_at_trunk=branches_at_trunk_result,
                 github_repo_state=github_repo_state,
                 remote=remote,
                 trunk_commit_id=stack.trunk.commit_id,

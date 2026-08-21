@@ -665,6 +665,16 @@ class FakeGithubRepo:
                 heads[ref_name.removeprefix("refs/heads/")] = commit_id
         return heads
 
+    def has_commit(self, commit_id: str) -> bool:
+        """Return whether the backing repo contains the commit."""
+
+        completed = subprocess.run(
+            ["git", "--git-dir", str(self.git_dir), "cat-file", "-e", f"{commit_id}^{{commit}}"],
+            capture_output=True,
+            check=False,
+        )
+        return completed.returncode == 0
+
     def is_ancestor(self, ancestor_commit: str, descendant_commit: str) -> bool:
         completed = subprocess.run(
             [
@@ -799,6 +809,21 @@ def _register_repo_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
         if repo is None:
             raise HTTPException(status_code=404, detail="Not Found")
         return repo.to_payload()
+
+    @app.get("/repos/{owner}/{repo_name}/commits/{commit_sha}/branches-where-head")
+    async def list_branches_for_head_commit(
+        owner: str,
+        repo_name: str,
+        commit_sha: str,
+    ) -> list[dict[str, str]]:
+        repo = _get_repo(fake_state, owner, repo_name)
+        if not repo.has_commit(commit_sha):
+            raise HTTPException(status_code=422, detail=f"No commit found for SHA: {commit_sha}")
+        return [
+            {"name": branch}
+            for branch, target in repo.branch_heads().items()
+            if target == commit_sha
+        ]
 
 
 def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> None:

@@ -103,6 +103,25 @@ def test_github_client_does_not_retry_non_rate_limited_errors() -> None:
     assert attempts == 1
 
 
+def test_github_client_treats_an_unknown_head_commit_as_no_matching_branches() -> None:
+    def handler(request: httpxyz.Request) -> httpxyz.Response:
+        assert request.method == "GET"
+        assert request.url.path == (
+            "/repos/octo-org/stacked-prs/commits/trunk123/branches-where-head"
+        )
+        return httpxyz.Response(
+            422,
+            json={"message": "No commit found for SHA: trunk123"},
+            request=request,
+        )
+
+    async def run_test() -> tuple[str, ...]:
+        async with _github_client(handler) as client:
+            return await client.list_branches_for_head_commit(commit_sha="trunk123")
+
+    assert asyncio.run(run_test()) == ()
+
+
 @pytest.mark.parametrize(
     ("base", "body", "title", "expected_payload"),
     (

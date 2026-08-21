@@ -211,8 +211,11 @@ async def _run_global_plan(
             repo_state = facts.pr_facts.github_repo
             if repo_state is None:
                 raise AssertionError("Global sync requires GitHub repo state.")
+            branches_at_trunk = await github.list_branches_for_head_commit(
+                commit_sha=trunk_commit_id
+            )
             trunk_branch, _targets = resolve_trunk_branch(
-                client=context.jj_client,
+                branches_at_trunk=branches_at_trunk,
                 github_repo_state=repo_state,
                 remote=target.remote,
                 trunk_commit_id=trunk_commit_id,
@@ -334,8 +337,11 @@ async def _run_selected_convergence(
                 if repo_state is None:
                     raise AssertionError("Sync observation requires GitHub repo state.")
                 if trunk_branch is None:
+                    branches_at_trunk = await github.list_branches_for_head_commit(
+                        commit_sha=prepared.stack.trunk.commit_id
+                    )
                     trunk_branch, _trunk_targets = resolve_trunk_branch(
-                        client=prepared.client,
+                        branches_at_trunk=branches_at_trunk,
                         github_repo_state=repo_state,
                         remote=target.remote,
                         trunk_commit_id=prepared.stack.trunk.commit_id,
