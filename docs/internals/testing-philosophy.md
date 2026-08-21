@@ -71,9 +71,8 @@ Existing tests are evidence of past intent, not a reason to keep unnecessary beh
   server. Use them when confidence depends on revsets, DAG or workspace behavior, subprocesses,
   or cross-system transitions.
 
-No credentialed live suite exists. Assumptions that depend on real GitHub require a separately
-approved experiment in a disposable repo. Record any known fake-server difference beside
-the affected fake behavior and test.
+Live GitHub checks are an opt-in release gate; they do not replace deterministic local coverage.
+Record any known fake-server difference beside the affected fake behavior and test.
 
 If a behavior has both component and integration risk, keep one representative integration test
 and only the unit cases that protect additional decisions. CLI parsing tests are useful when

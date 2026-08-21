@@ -498,7 +498,7 @@ class FakeGithubRepo:
     def rebase_stack_onto_base(self, stack_number: int, *, base_ref: str) -> tuple[str, ...]:
         """Model GitHub's native stack rebase, which drops jj change-ID headers.
 
-        A credentialed test against GitHub's stack UI confirmed this commit shape on 2026-08-13.
+        A live test against GitHub's stack UI confirmed this commit shape on 2026-08-13.
         """
 
         members = self.github_stacks[stack_number]

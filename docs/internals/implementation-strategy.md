@@ -92,9 +92,7 @@ FastAPI GitHub server. The fake implements only behavior the client needs, and i
 ancestry assertions use a real backing Git repo rather than mocked JSON alone.
 
 Fake behavior should match observed GitHub behavior, including surprising behavior. A known
-difference must be documented beside the fake and affected tests. There is no credentialed live
-suite; an unverified GitHub assumption remains conditional until a separately approved experiment
-runs in a disposable repo.
+difference must be documented beside the fake and affected tests.
 
 [testing-philosophy.md](testing-philosophy.md) defines which tests are worth keeping, and
 [property-testing.md](property-testing.md) explains the generated integration harness.
