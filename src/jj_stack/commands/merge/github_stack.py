@@ -16,6 +16,9 @@ from jj_stack.ui import Message
 from .models import MergeAction, MergeChange, MergeExecutionInputs, MergePlan, MergeResult
 from .preconditions import merge_precondition_error
 
+_MERGE_POLL_TIMEOUT_SECONDS = 600.0
+_MAX_MERGE_POLL_INTERVAL_SECONDS = 30.0
+
 
 @dataclass(frozen=True, slots=True)
 class AsyncMergePlan:
@@ -235,14 +238,32 @@ async def _terminal(
             "GitHub accepted the stack merge without an operation ID to follow.",
             hint=t"Run {ui.cmd('jj-stack sync')} to see whether the merge completed.",
         )
-    while result.status == "pending":
-        result = await github.poll_stack_merge(
-            operation_uuid=operation_uuid or "",
-            pr_number=pr_number,
-        )
-        if result.status == "pending":
-            await asyncio.sleep(1)
+    poll_interval = 2.0
+    try:
+        async with asyncio.timeout(_MERGE_POLL_TIMEOUT_SECONDS):
+            while result.status == "pending":
+                result = await github.poll_stack_merge(
+                    operation_uuid=operation_uuid or "",
+                    pr_number=pr_number,
+                )
+                if result.status == "pending":
+                    await asyncio.sleep(poll_interval)
+                    poll_interval = min(
+                        poll_interval * 1.5,
+                        _MAX_MERGE_POLL_INTERVAL_SECONDS,
+                    )
+    except TimeoutError as error:
+        raise _merge_poll_timeout() from error
     return result
+
+
+def _merge_poll_timeout() -> CliError:
+    return CliError(
+        "GitHub's merge request is still pending after 10 minutes.",
+        hint=t"The request may still complete on GitHub. Do not rerun merge while it is "
+        t"pending; check the pull request on GitHub, then run {ui.cmd('jj-stack sync')} if "
+        t"it merges.",
+    )
 
 
 def _blocked_result(
