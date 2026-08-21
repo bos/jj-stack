@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Stacked GitHub review tooling for jj"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.14"
 keywords = ["jj", "jujutsu", "github", "pull-requests", "stacked-reviews"]
 classifiers = [
