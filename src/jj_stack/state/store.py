@@ -10,22 +10,19 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-from pydantic import JsonValue, ValidationError
+from pydantic import ValidationError
 
-from jj_stack.errors import CliError
+from jj_stack.errors import TrackingStateError
 from jj_stack.models.tracking import (
     PRIdentity,
     SubmittedBaseline,
     TrackingState,
 )
 from jj_stack.pr_branch_namespace import pr_branch_matches_change
+from jj_stack.state.migrations import migrate_tracking_state
 
 STATE_DIRNAME = "jj-stack"
 STATE_FILENAME = "state.json"
-
-
-class TrackingStateError(CliError):
-    """Raised when the tracking data is unreadable or invalid."""
 
 
 class TrackingStore:
@@ -94,9 +91,7 @@ class TrackingStore:
     ) -> TrackingState:
         """Atomically replace one complete pull request pair."""
 
-        return self.relink_prs(
-            replacements={change_id: (identity, baseline)},
-        )
+        return self.relink_prs(replacements={change_id: (identity, baseline)})
 
     def relink_prs(
         self,
@@ -109,10 +104,7 @@ class TrackingStore:
             _require_identity_matches_change(identity, change_id)
         return self._persist(_replace_prs(self._load_state(), replacements))
 
-    def retire_pr(
-        self,
-        change_id: str,
-    ) -> TrackingState:
+    def retire_pr(self, change_id: str) -> TrackingState:
         """Atomically remove one complete pull request pair."""
 
         state = self._load_state()
@@ -145,13 +137,8 @@ class TrackingStore:
             raise self._invalid_state_error(
                 f"Invalid jj-stack data in {self._path}: top level must be an object"
             )
-        version = raw.get("version")
-        if version != 5:
-            raise self._invalid_state_error(
-                f"Invalid jj-stack data in {self._path}: unsupported version {version!r}"
-            )
         try:
-            _require_nested_versions(raw)
+            raw = migrate_tracking_state(raw)
             state = TrackingState.model_validate(raw)
             for change_id, identity in state.pr_identities.items():
                 _require_identity_matches_change(identity, change_id)
@@ -206,19 +193,6 @@ def _replace_prs(
         identities[change_id] = identity
         baselines[change_id] = baseline
     return TrackingState(pr_identities=identities, submitted_baselines=baselines)
-
-
-def _require_nested_versions(raw: dict[str, JsonValue]) -> None:
-    for field_name, label in (
-        ("pr_identities", "PR identity"),
-        ("submitted_baselines", "submitted baseline"),
-    ):
-        records = raw.get(field_name)
-        if not isinstance(records, dict):
-            continue
-        for record in records.values():
-            if not isinstance(record, dict) or "version" not in record:
-                raise ValueError(f"Persisted {label} is missing its version.")
 
 
 def _require_identity_matches_change(identity: PRIdentity, change_id: str) -> None:

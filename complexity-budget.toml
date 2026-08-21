@@ -49,6 +49,7 @@ governed = [
   "src/jj_stack/commands/sync.py",
   "src/jj_stack/commands/sync_apply.py",
   "src/jj_stack/models/tracking.py",
+  "src/jj_stack/state/migrations.py",
   "src/jj_stack/state/store.py",
   "src/jj_stack/stack/trunk_evidence.py",
   "src/jj_stack/stack/convergence.py",

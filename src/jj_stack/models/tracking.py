@@ -15,7 +15,6 @@ class PRIdentity(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[3] = 3
     repo_owner: str
     repo_name: str
     pr_number: int
@@ -26,10 +25,7 @@ class PRIdentity(BaseModel):
     def repo_key(self) -> tuple[str, str]:
         """Return the case-insensitive nominal repo identity."""
 
-        return (
-            self.repo_owner.casefold(),
-            self.repo_name.casefold(),
-        )
+        return self.repo_owner.casefold(), self.repo_name.casefold()
 
     def matches_pr(self, pr: GithubPR) -> bool:
         """Whether live GitHub data is the exact pull request saved by this identity."""
@@ -46,7 +42,6 @@ class SubmittedBaseline(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[1] = 1
     commit_id: str
 
 
@@ -55,16 +50,14 @@ class TrackingState(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[5] = 5
+    version: Literal[6] = 6
     pr_identities: dict[str, PRIdentity] = Field(default_factory=dict)
     submitted_baselines: dict[str, SubmittedBaseline] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _require_complete_pairs(self) -> Self:
         if self.pr_identities.keys() != self.submitted_baselines.keys():
-            raise ValueError(
-                "Pull request identities and submitted baselines must have identical keys."
-            )
+            raise ValueError("Pull request identities and baselines must have identical keys.")
         return self
 
     def tracked_pr(self, change_id: str) -> TrackedPR | None:

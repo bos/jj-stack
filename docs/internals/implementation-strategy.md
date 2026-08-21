@@ -24,6 +24,10 @@ identity comes from the canonical `.jj/repo` storage path, not the workspace pat
 use atomic file replacement; the lock coordinates processes but does not make GitHub, Git, and
 local storage transactional.
 
+Released tracking schemas migrate forward in memory before validation. Read-only commands do not
+rewrite the state file; the next tracking mutation persists the current schema through the normal
+atomic write. The document's top-level version is the only migration key.
+
 ## Observation, planning, and mutation
 
 Commands keep five concerns separate:

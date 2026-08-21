@@ -73,4 +73,4 @@ def test_in_use_distinguishes_invalid_tracking_from_false(
     captured = capsys.readouterr()
 
     assert exit_code == EXIT_PROBE
-    assert "unsupported version 2" in captured.err
+    assert "unsupported tracking schema version 2" in captured.err
