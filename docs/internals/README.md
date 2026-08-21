@@ -19,6 +19,7 @@ If you are looking for how to use `jj-stack`, see the [user guide](../README.md)
   and docs, with emphasis on real regressions and unnecessary complexity.
 - **[property-testing.md](property-testing.md)** — the generated integration harness and how to
   run it.
+- **[releasing.md](releasing.md)** — release qualification and publication.
 Only [design.md](design.md) defines product behavior. The other documents explain implementation,
 testing, or review practice. Accepted plans guide their scoped work but do not change behavior
 until the design is updated.
