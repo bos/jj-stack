@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "jj-stack"
 version = "0.1.0"
-description = "Stacked GitHub review tooling for Jujutsu"
+description = "Stacked GitHub pull requests for Jujutsu"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.14"
-keywords = ["jj", "jujutsu", "github", "pull-requests", "stacked-reviews"]
+keywords = ["jj", "jujutsu", "github", "pull-requests", "stacked-pull-requests"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -28,7 +28,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/bos/jj-stack"
+Homepage = "https://www.serpentine.com/software/jj-stack/"
+Documentation = "https://www.serpentine.com/software/jj-stack/"
 Repository = "https://github.com/bos/jj-stack"
 Issues = "https://github.com/bos/jj-stack/issues"
 
@@ -40,10 +41,10 @@ dev = [
   "fastapi>=0.140.0,<0.141",
   "jsonschema>=4.25.1,<5",
   "pyrefly>=1.1.1,<1.2",
-  "pytest>=9.1.1,<10",
   "pytest-cov>=7.1.0,<8",
   "pytest-randomly>=4.1.0,<5",
   "pytest-xdist>=3.8.0,<4",
+  "pytest>=9.1.1,<10",
   "ruff>=0.16.0,<0.17",
 ]
 
