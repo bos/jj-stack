@@ -2,7 +2,7 @@
 
 A release is built from a `v<version>`-tagged commit on `main`. The tag workflow builds and tests
 both distributions, publishes them to PyPI, and creates the matching GitHub Release. A manual
-workflow run can publish to TestPyPI but cannot publish a production release.
+workflow run publishes to TestPyPI unless it names an existing release tag to retry.
 
 ## Qualify the candidate
 
