@@ -293,7 +293,7 @@ def test_sync_all_cleans_a_rewritten_merge_after_its_local_copy_is_gone(
     assert f"refs/heads/{pr_branch}" not in remote_refs(fake_repo.git_dir)
 
 
-def test_sync_all_stops_before_removing_a_change_checked_out_in_another_workspace(
+def test_sync_all_explains_how_to_forget_a_deleted_workspace_blocking_removal(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -309,6 +309,7 @@ def test_sync_all_stops_before_removing_a_change_checked_out_in_another_workspac
     other_workspace = tmp_path / "other-workspace"
     _add_other_workspace(repo, other_workspace, submitted.change_id)
     run_command(["jj", "edit", submitted.change_id], other_workspace)
+    other_workspace.rename(tmp_path / "deleted-workspace")
     _squash_merge_pr(fake_repo, 1)
     _squash_merge_pr(fake_repo, 2)
 
@@ -318,11 +319,12 @@ def test_sync_all_stops_before_removing_a_change_checked_out_in_another_workspac
     assert exit_code == 1, (captured.out, captured.err)
     assert submitted.change_id[:8] in captured.err
     assert "other" in captured.err
-    assert str(other_workspace) in captured.err
-    assert "jj new" in captured.err
-    assert "jj workspace forget" in captured.err
-    assert "trash" in captured.err
-    assert JjClient(other_workspace).resolve_commit("@").change_id == submitted.change_id
+    assert "jj no longer reports a directory" in captured.err
+    assert "jj workspace forget -- other" in captured.err
+    assert "If it still exists elsewhere" in captured.err
+    assert str(other_workspace) not in captured.err
+    merged_change = JjClient(repo).resolve_commit(submitted.change_id)
+    assert merged_change.working_copy_workspaces == ("other",)
     remaining = TrackingStore.for_repo(repo).load().pr_identities
     assert submitted.change_id in remaining
     assert independent.change_id not in remaining

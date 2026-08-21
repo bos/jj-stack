@@ -437,13 +437,17 @@ def _checked_out_workspace_hint(
     known = {workspace.name: workspace for workspace in context.jj_client.list_workspaces()}
     if not workspaces:
         workspaces = tuple(workspace.name for workspace in known.values() if workspace.current)
-    hint: list[Message] = ["Move off the merged change in each workspace:\n"]
+    hint: list[Message] = ["Resolve each workspace still on the merged change:\n"]
     disposable: list[tuple[str, str]] = []
     for name in workspaces:
         workspace = known.get(name)
         if workspace is None or (workspace.root is None and not workspace.current):
+            forget_command = _workspace_forget_command(name=name, platform=sys.platform)
             hint.append(
-                t"For {ui.code(name)}, run {ui.cmd("jj new 'trunk()'")} in that workspace.\n"
+                t"jj no longer reports a directory for {ui.code(name)}. If the workspace was "
+                t"deleted, forget it:\n  {ui.cmd(forget_command)}\n"
+                t"If it still exists elsewhere, run {ui.cmd("jj new 'trunk()'")} from its "
+                t"directory.\n"
             )
             continue
         root = str(workspace.root or context.repo_root)
@@ -477,18 +481,23 @@ def _workspace_move_command(*, root: str, platform: str) -> str:
 
 
 def _workspace_disposal_command(*, name: str, root: str, platform: str) -> str:
+    forget_command = _workspace_forget_command(name=name, platform=platform)
     if platform == "win32":
-        quoted_name = _powershell_quote(name)
         quoted = _powershell_quote(root)
         return (
-            f"jj workspace forget -- {quoted_name}; if ($LASTEXITCODE -eq 0) {{ "
+            f"{forget_command}; if ($LASTEXITCODE -eq 0) {{ "
             "Add-Type -AssemblyName Microsoft.VisualBasic; "
             "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory("
             f"{quoted}, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, "
             "[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin) }"
         )
     trash_command = "trash" if platform == "darwin" else "gio trash"
-    return f"(jj workspace forget -- {shlex.quote(name)} && {trash_command} {shlex.quote(root)})"
+    return f"({forget_command} && {trash_command} {shlex.quote(root)})"
+
+
+def _workspace_forget_command(*, name: str, platform: str) -> str:
+    quoted_name = _powershell_quote(name) if platform == "win32" else shlex.quote(name)
+    return f"jj workspace forget -- {quoted_name}"
 
 
 def _powershell_quote(value: str) -> str:
