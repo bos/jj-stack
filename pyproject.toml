@@ -38,9 +38,9 @@ jj-stack = "jj_stack.cli:main"
 
 [dependency-groups]
 dev = [
-  "fastapi>=0.140.0,<0.141",
+  "fastapi>=0.140.0,<0.142",
   "jsonschema>=4.25.1,<5",
-  "pyrefly>=1.1.1,<1.2",
+  "pyrefly>=1.1.1,<1.3",
   "pytest-cov>=7.1.0,<8",
   "pytest-randomly>=4.1.0,<5",
   "pytest-xdist>=3.8.0,<4",
