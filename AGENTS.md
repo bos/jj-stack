@@ -1,8 +1,3 @@
-# Work in progress
-
-This project is under heavy development. Do not make any attempt to write backwards
-compatibility code, migration code, or the like.
-
 ## Complexity control
 
 - A replacement is incomplete until it deletes the mechanism it supersedes in the same change.
