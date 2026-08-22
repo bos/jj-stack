@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
@@ -320,7 +321,8 @@ def test_sync_all_explains_how_to_forget_a_deleted_workspace_blocking_removal(
     assert submitted.change_id[:8] in captured.err
     assert "other" in captured.err
     assert "jj no longer reports a directory" in captured.err
-    assert "jj workspace forget -- other" in captured.err
+    workspace_argument = "'other'" if sys.platform == "win32" else "other"
+    assert f"jj workspace forget -- {workspace_argument}" in captured.err
     assert "If it still exists elsewhere" in captured.err
     assert str(other_workspace) not in captured.err
     merged_change = JjClient(repo).resolve_commit(submitted.change_id)
