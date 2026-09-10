@@ -43,7 +43,7 @@ from jj_stack.github.resolution import (
 from jj_stack.identifiers import short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubPR
-from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, TrackingState
+from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
 from jj_stack.pr_branch_namespace import pr_branch_matches_change
 from jj_stack.stack.change_state import (
     BranchDisagrees,
@@ -53,7 +53,7 @@ from jj_stack.stack.change_state import (
     classify,
     stop_error,
 )
-from jj_stack.stack.pr_facts import duplicate_pr_claim_change_ids
+from jj_stack.stack.pr_branches import require_unique_pr_claims
 from jj_stack.stack.selected import require_submittable_changes, select_stack_path
 from jj_stack.state.operation_lock import operation_lock
 
@@ -197,11 +197,9 @@ async def _run_relink_async(
             ),
             hint=moved.hint,
         )
-    _ensure_relinkable_cached_link(
-        change_id=change.change_id,
-        identity=identity,
-        pr_url=pr.html_url,
-        state=state,
+    require_unique_pr_claims(
+        saved={key: tracked.pr_identity for key, tracked in state.prs.items()},
+        replacements={change.change_id: identity},
     )
     context.state_store.relink_pr(
         change.change_id,
@@ -232,23 +230,3 @@ async def _load_exact_relink_pr(
             t"GitHub first. For a merged PR, run {ui.cmd('jj-stack sync')} for its local stack.",
         )
     return pr, require_managed_pr_head(pr=pr, repo=repo)
-
-
-def _ensure_relinkable_cached_link(
-    *,
-    change_id: str,
-    identity: PRIdentity,
-    pr_url: str,
-    state: TrackingState,
-) -> None:
-    identities = {key: tracked.pr_identity for key, tracked in state.prs.items()}
-    identities[change_id] = identity
-    if change_id in duplicate_pr_claim_change_ids(identities):
-        pr_label = format_pr_label(identity.pr_number, url=pr_url)
-        raise CliError(
-            t"{pr_label} or branch {ui.bookmark(identity.head_ref)} is already "
-            t"linked to another local change.",
-            hint=t"Run {ui.cmd('jj-stack list')} to find the linked change. To forget its "
-            t"stack's saved links, run {ui.cmd('jj-stack unstack --local <change-id>')}. "
-            t"For a closed or merged PR, use {ui.cmd('jj-stack cleanup --pull-request <pr>')}.",
-        )

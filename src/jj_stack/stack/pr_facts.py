@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -16,10 +15,7 @@ from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR, GithubRepo, GithubStack
-from jj_stack.models.tracking import (
-    PRIdentity,
-    TrackingState,
-)
+from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.change_state import UNOBSERVED, TrackedPRObservation
 from jj_stack.stack.observation import StackObservation, observe_change_copies
 from jj_stack.stack.trunk_evidence import CommitAncestry
@@ -38,21 +34,6 @@ class RepoFacts:
     prs: Mapping[str, TrackedPRObservation]
     # The jj config that lets rewrites touch the observed PR-branch commits.
     rewrite_args: JjCliArgs
-
-
-def duplicate_pr_claim_change_ids(
-    identities: Mapping[str, PRIdentity],
-) -> frozenset[str]:
-    """Return every change participating in a duplicate PR or head claim."""
-
-    values = identities.values()
-    pr_claims = Counter(item.pr_number for item in values)
-    head_claims = Counter(item.head_ref for item in values)
-    return frozenset(
-        change_id
-        for change_id, item in identities.items()
-        if pr_claims[item.pr_number] > 1 or head_claims[item.head_ref] > 1
-    )
 
 
 async def observe_prs(

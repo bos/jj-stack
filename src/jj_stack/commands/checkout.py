@@ -57,7 +57,8 @@ from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, T
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace, pr_branch_matches_change
 from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.observation import observe_pr_bookmarks
-from jj_stack.stack.pr_facts import duplicate_pr_claim_change_ids, observe_github_stacks
+from jj_stack.stack.pr_branches import require_unique_pr_claims
+from jj_stack.stack.pr_facts import observe_github_stacks
 from jj_stack.stack.preparation import stack_preparation_cli_error
 from jj_stack.stack.repo import observe_repo_paths
 from jj_stack.stack.selected import select_stack_path
@@ -460,8 +461,8 @@ def _save_checkout_tracking(
             ),
             submitted_baseline=SubmittedBaseline(commit_id=head_sha),
         )
-    _reject_duplicate_checkout_claims(
-        current={change_id: tracked.pr_identity for change_id, tracked in state.prs.items()},
+    require_unique_pr_claims(
+        saved={change_id: tracked.pr_identity for change_id, tracked in state.prs.items()},
         replacements={
             change_id: tracked.pr_identity for change_id, tracked in replacements.items()
         },
@@ -475,23 +476,6 @@ def _save_checkout_tracking(
         replacements=replacements,
     )
     return changed_count
-
-
-def _reject_duplicate_checkout_claims(
-    *,
-    current: dict[str, PRIdentity],
-    replacements: dict[str, PRIdentity],
-) -> None:
-    combined = dict(current)
-    combined.update(replacements)
-    if duplicate_pr_claim_change_ids(combined).intersection(replacements):
-        raise CliError(
-            "Another local change is already linked to one of those pull request numbers or "
-            "branches.",
-            hint=t"Run {ui.cmd('jj-stack list')} to find the linked change. To forget its "
-            t"stack's saved links, run {ui.cmd('jj-stack unstack --local <change-id>')}. "
-            t"For a closed or merged PR, use {ui.cmd('jj-stack cleanup --pull-request <pr>')}.",
-        )
 
 
 def _require_branch_matches_change(*, branch: str, change: LocalCommit) -> None:

@@ -5,15 +5,12 @@ from typing import cast
 
 import pytest
 
-from jj_stack.commands.relink import (
-    _ensure_relinkable_cached_link,
-    _load_exact_relink_pr,
-)
+from jj_stack.commands.relink import _load_exact_relink_pr
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, PRState
-from jj_stack.models.tracking import SubmittedBaseline, TrackedPR, TrackingState
+from jj_stack.stack.pr_branches import require_unique_pr_claims
 from tests.support.tracking import make_pr_identity
 
 
@@ -42,28 +39,13 @@ def test_relink_requires_open_same_repo_pr(
         )
 
 
-def test_relink_rejects_duplicate_saved_pr_or_branch_claim_in_same_repo() -> None:
-    identity = make_pr_identity(
-        head_ref="jj-stack/manual-feature-feature1",
-        pr_number=1,
-    )
-    state = TrackingState(
-        prs={
-            "other-change": TrackedPR(
-                pr_identity=make_pr_identity(
-                    head_ref="jj-stack/manual-feature-feature1", pr_number=2
-                ),
-                submitted_baseline=SubmittedBaseline(commit_id="other-commit"),
-            )
-        }
-    )
+def test_duplicate_saved_pr_or_branch_claim_is_refused() -> None:
+    branch = "jj-stack/manual-feature-feature1"
 
     with pytest.raises(CliError, match="already linked"):
-        _ensure_relinkable_cached_link(
-            change_id="feature1change",
-            identity=identity,
-            pr_url="https://github.test/octo-org/stacked-prs/pull/1",
-            state=state,
+        require_unique_pr_claims(
+            saved={"other-change": make_pr_identity(head_ref=branch, pr_number=2)},
+            replacements={"feature1change": make_pr_identity(head_ref=branch, pr_number=1)},
         )
 
 

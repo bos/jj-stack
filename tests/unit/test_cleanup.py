@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from jj_stack.stack.pr_facts import (
-    duplicate_pr_claim_change_ids,
-)
+from jj_stack.stack.pr_branches import duplicate_pr_claim_change_ids
 from tests.support.tracking import make_pr_identity
 
 BRANCH = "jj-stack/feature-aaaaaaaa"
