@@ -13,6 +13,12 @@ When the trunk branch uses a merge queue, the command adds the pull requests to 
 exits once GitHub accepts them. It does not wait for them to merge or update the local stack.
 After GitHub finishes, run `jj-stack sync <head-change-id>`.
 
+For a direct merge, `--method` chooses among the merge methods the repo allows. Without it, the
+command uses `jj-stack.merge_method` from your jj config, or the repo's only allowed method, and
+otherwise prefers rebase, then squash, then a merge commit. If several methods are allowed and the
+stack contains signed commits, choose one explicitly: merging can discard signatures. A merge
+queue chooses its own method and ignores `--method`.
+
 Common examples:
 
 - `jj-stack merge --dry-run` previews the merge without changing GitHub.
