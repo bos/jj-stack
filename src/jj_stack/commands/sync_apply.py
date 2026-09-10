@@ -97,7 +97,10 @@ async def _apply_pr_finish(
         await github.close_pr(pr_number=plan.pr.number)
     except GithubClientError as error:
         return PRFinishResult(
-            plan.change_id, candidate, "skipped", t"cannot close {pr_label}: {error}"
+            plan.change_id,
+            candidate,
+            "skipped",
+            t"cannot close {pr_label}: {error.user_facing_reason()}",
         )
     return PRFinishResult(plan.change_id, candidate, "finished")
 

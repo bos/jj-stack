@@ -81,7 +81,7 @@ async def close_pr_on_trunk(
         if pr.state == "open":
             await github_client.close_pr(pr_number=pr.number)
     except GithubClientError as error:
-        return t"cannot close {pr_label}: {error}"
+        return t"cannot close {pr_label}: {error.user_facing_reason()}"
     return None
 
 
