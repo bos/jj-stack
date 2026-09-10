@@ -39,7 +39,7 @@ Running `jj-stack` without a subcommand is equivalent to `jj-stack view` without
 | `doctor` | Check repo setup, GitHub access, and leftovers from interrupted commands. |
 | `in-use` | Silently check whether this repo has jj-stack tracking data. |
 
-## Separating stacks or closing pull requests
+## Separate a stack or close pull requests
 
 | Command | Use it to |
 |---|---|
