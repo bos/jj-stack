@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import jj_stack.console as console
 import jj_stack.ui as ui
-from jj_stack.commands.cleanup.shared import CleanupAction, CleanupActionStatus
+from jj_stack.commands.cleanup.shared import CleanupAction
 from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -110,54 +109,6 @@ async def apply_overview_comment_cleanup(
             status="planned" if dry_run else "applied",
         ),
     ), True
-
-
-def emit_action_row(
-    *,
-    kind: str,
-    status: CleanupActionStatus,
-    body: Message,
-) -> None:
-    prefix, prefix_style, body_style = _action_presentation(status)
-    message = body
-    if kind != "tracking":
-        message = (ui.semantic_text(kind, "prefix"), ": ", body)
-    console.output(
-        ui.prefixed_line(
-            f"{prefix} ",
-            message,
-            prefix_labels=prefix_style,
-            message_labels=body_style,
-        )
-    )
-
-
-def _action_presentation(
-    status: CleanupActionStatus,
-) -> tuple[str, tuple[str, ...], tuple[str, ...] | None]:
-    if status == "applied":
-        return (
-            "  ✓",
-            ("signature status good",),
-            None,
-        )
-    if status == "planned":
-        return (
-            "  ~",
-            ("hint heading",),
-            None,
-        )
-    if status == "blocked":
-        return (
-            "  ✗",
-            ("error heading",),
-            ("warning heading",),
-        )
-    return (
-        "  -",
-        ("hint heading",),
-        None,
-    )
 
 
 def plan_pr_cleanup(

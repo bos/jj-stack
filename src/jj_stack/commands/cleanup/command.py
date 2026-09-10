@@ -32,7 +32,6 @@ from jj_stack.commands._cleanup_actions import (
     apply_remote_branch_cleanup,
     check_tracked_pr,
     close_pr_on_trunk,
-    emit_action_row,
     github_stack_cleanup_blockers,
     plan_pr_cleanup,
 )
@@ -101,7 +100,11 @@ def _build_action_streamer(*, header: str) -> Callable[[CleanupAction], None]:
         if not header_printed:
             console.output(header)
             header_printed = True
-        emit_action_row(kind=action.kind, status=action.status, body=action.body)
+        console.action_row(
+            kind=None if action.kind == "tracking" else action.kind,
+            status=action.status,
+            body=action.body,
+        )
 
     return emit_action
 

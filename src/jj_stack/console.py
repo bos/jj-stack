@@ -44,6 +44,8 @@ import jj_stack
 import jj_stack.ui as ui
 from jj_stack.jj.colors import JjColorWhen, SemanticStyles, semantic_styles
 
+ActionStatus = Literal["applied", "blocked", "planned", "skipped"]
+
 SIMPLE = rich_box.SIMPLE
 
 ColorMode = Literal["auto", "always", "never"]
@@ -549,6 +551,25 @@ def warning(*objects: ConsoleObject, **kwargs) -> None:
     kwargs.setdefault("markup", False)
     kwargs.setdefault("style", semantic_style("warning heading") or "yellow")
     _STDERR_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
+
+
+def action_row(*, kind: str | None, status: ActionStatus, body: ui.Message) -> None:
+    """Print one action as a status glyph, an optional kind label, and its body."""
+
+    if status == "applied":
+        prefix, prefix_style, body_style = "  ✓", ("signature status good",), None
+    elif status == "planned":
+        prefix, prefix_style, body_style = "  ~", ("hint heading",), None
+    elif status == "blocked":
+        prefix, prefix_style, body_style = "  ✗", ("error heading",), ("warning heading",)
+    else:
+        prefix, prefix_style, body_style = "  -", ("hint heading",), None
+    message: ui.Message = body if kind is None else (ui.semantic_text(kind, "prefix"), ": ", body)
+    output(
+        ui.prefixed_line(
+            f"{prefix} ", message, prefix_labels=prefix_style, message_labels=body_style
+        )
+    )
 
 
 def note(*objects: ConsoleObject, **kwargs) -> None:
