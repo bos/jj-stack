@@ -775,19 +775,11 @@ class JjClient:
             subject=message.partition("\n")[0],
         )
 
-    def fetch_remote(
-        self,
-        *,
-        branches: Sequence[str] = (),
-        remote: str,
-    ) -> None:
+    def fetch_remote(self, *, remote: str) -> None:
         """Fetch ordinary repo state using its configured selection."""
 
         # Normal fetch also imports backing-Git ref changes in a colocated repo.
-        args = ["git", "fetch", "--remote", remote]
-        for branch in dict.fromkeys(branches):
-            args.extend(("--branch", branch))
-        self._run_jj(tuple(args), manage_working_copy=True)
+        self._run_jj(("git", "fetch", "--remote", remote), manage_working_copy=True)
 
     def mutate_remote_pr_branch_refs(
         self,

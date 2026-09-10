@@ -58,7 +58,6 @@ from jj_stack.identifiers import CommitId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import quote_revset_symbol
 from jj_stack.models.github import GithubRepo
-from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 from jj_stack.stack.convergence import (
     CheckedOutMergedChangeError,
     build_selected_convergence_plan,
@@ -151,16 +150,7 @@ async def _run_all_convergence(
     target: GithubTarget,
 ) -> int:
     with console.spinner(description="Fetching trunk") as progress:
-        previous_trunk = context.jj_client.resolve_commit("trunk()")
-        branches = tuple(
-            branch
-            for branch in context.jj_client.remote_bookmarks_at_commit(
-                remote=target.remote.name,
-                commit_id=previous_trunk.commit_id,
-            )
-            if not current_pr_branch_namespace().contains(branch)
-        )
-        context.jj_client.fetch_remote(branches=branches, remote=target.remote.name)
+        context.jj_client.fetch_remote(remote=target.remote.name)
         progress.update("Comparing pull requests with trunk")
         trunk = context.jj_client.resolve_commit("trunk()")
     exit_code, github_repo, change_ids, trunk_branch = await _run_global_plan(
