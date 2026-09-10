@@ -54,12 +54,7 @@ from jj_stack.stack.pr_branches import duplicate_pr_branch_claims
 from jj_stack.stack.preparation import PreparedLocalStack
 from jj_stack.stack.repo import observe_repo_paths
 from jj_stack.stack.reporting import report_change, status_label, submittable_edits
-from jj_stack.stack.status import (
-    StackStatusChange,
-    build_status_changes_for_prepared_stack,
-    observe_status,
-    status_is_incomplete,
-)
+from jj_stack.stack.status import StackStatusChange, build_status_result, observe_status
 
 HELP = "List the stacks jj-stack is tracking in this repo"
 
@@ -162,77 +157,54 @@ def _run_list(
         _build_orphan_row(orphan, repo=github_repo)
         for orphan in enumerate_orphaned_records(state, ordered)
     )
-    if not ordered:
-        if as_json:
-            console.machine_output(
-                json.dumps(
-                    _json_list_payload(orphan_rows=orphan_rows, rows=()),
-                    indent=2,
-                )
-            )
-            return 0
-        if not orphan_rows:
-            console.output("No stacks.")
-            return 0
-        jj_color = color_when(stdout_is_tty=sys.stdout.isatty())
-        with console.spinner(description="Rendering jj change IDs"):
-            rendered_change_ids = context.jj_client.render_short_change_ids(
-                tuple(row.change_id for row in orphan_rows),
-                color_when=jj_color,
-            )
-        console.output(
-            _stack_table(
-                orphan_rows=orphan_rows,
-                rendered_change_ids=rendered_change_ids,
-                rows=(),
-            )
-        )
-        _emit_orphan_hint(orphan_rows)
+    if not ordered and not orphan_rows and not as_json:
+        console.output("No stacks.")
         return 0
-    prepared_discovered = tuple(
-        _PreparedDiscoveredStack(
-            current=current_tracked_commit_id is not None
-            and any(change.commit_id == current_tracked_commit_id for change in stack.changes),
-            prepared=PreparedLocalStack(
-                client=context.jj_client,
-                github_target=github_target,
-                stack=stack,
-                state=state,
-            ),
+    rows: tuple[StackRow, ...] = ()
+    if ordered:
+        for branch, change_ids in sorted(duplicate_branches.items()):
+            console.warning(
+                t"PR branch {ui.bookmark(branch)} is saved for changes "
+                t"{ui.join(ui.change_id, change_ids)}. Live GitHub details for those changes "
+                t"were not inspected."
+            )
+        prepared_discovered = tuple(
+            _PreparedDiscoveredStack(
+                current=current_tracked_commit_id is not None
+                and any(
+                    change.commit_id == current_tracked_commit_id for change in stack.changes
+                ),
+                prepared=PreparedLocalStack(
+                    client=context.jj_client,
+                    github_target=github_target,
+                    stack=stack,
+                    state=state,
+                ),
+            )
+            for stack in ordered
         )
-        for stack in ordered
-    )
-    for branch, change_ids in sorted(duplicate_branches.items()):
-        console.warning(
-            t"PR branch {ui.bookmark(branch)} is saved for changes "
-            t"{ui.join(ui.change_id, change_ids)}. Live GitHub details for those changes "
-            t"were not inspected."
-        )
-    with console.spinner(description="Inspecting GitHub"):
-        lookups = observe_status(
-            prepared=tuple(item.prepared for item in prepared_discovered),
-            exclude_branches=duplicate_branch_names,
-        )
-    github_error = error_message(lookups) if isinstance(lookups, CliError) else None
-    pr_lookups = {} if isinstance(lookups, CliError) else lookups
-    github_repo_error = github_target.github_repo_error or github_error
-    for message in remote_and_github_unavailable_messages(
-        github_error=github_repo_error,
-        github_repo=github_repo,
-        remote=github_target.remote,
-        remote_error=github_target.remote_error,
-    ):
-        console.warning(message, soft_wrap=False)
-    rows = tuple(
-        _build_row(
-            github_error=github_repo_error,
+        with console.spinner(description="Inspecting GitHub"):
+            lookups = observe_status(
+                prepared=tuple(item.prepared for item in prepared_discovered),
+                exclude_branches=duplicate_branch_names,
+            )
+        github_error = error_message(lookups) if isinstance(lookups, CliError) else None
+        for message in remote_and_github_unavailable_messages(
+            github_error=github_target.github_repo_error or github_error,
             github_repo=github_repo,
-            is_current=item.current,
-            prepared_stack=item.prepared,
-            pr_lookups=pr_lookups,
+            remote=github_target.remote,
+            remote_error=github_target.remote_error,
+        ):
+            console.warning(message, soft_wrap=False)
+        rows = tuple(
+            _build_row(
+                github_repo=github_repo,
+                is_current=item.current,
+                prepared_stack=item.prepared,
+                pr_lookups=lookups,
+            )
+            for item in prepared_discovered
         )
-        for item in prepared_discovered
-    )
     incomplete = bool(duplicate_branches) or any(row.incomplete for row in rows)
     if as_json:
         console.machine_output(
@@ -243,12 +215,9 @@ def _run_list(
         )
         return EXIT_INCOMPLETE if incomplete else 0
     jj_color = color_when(stdout_is_tty=sys.stdout.isatty())
-    head_change_ids_to_render = tuple(row.head_change_id for row in rows) + tuple(
-        row.change_id for row in orphan_rows
-    )
     with console.spinner(description="Rendering jj change IDs"):
         rendered_change_ids = context.jj_client.render_short_change_ids(
-            head_change_ids_to_render,
+            (*(row.head_change_id for row in rows), *(row.change_id for row in orphan_rows)),
             color_when=jj_color,
         )
     console.output(
@@ -376,27 +345,23 @@ def _emit_stale_stacks_advisory(rows: tuple[StackRow, ...]) -> None:
 
 def _build_row(
     *,
-    github_error: ErrorMessage | None,
     github_repo: GithubRepoAddress | None,
     is_current: bool,
     prepared_stack: PreparedLocalStack,
-    pr_lookups: dict[str, ChangeObservation],
+    pr_lookups: dict[str, ChangeObservation] | CliError,
 ) -> StackRow:
     stack = prepared_stack.stack
-    changes = build_status_changes_for_prepared_stack(
-        prepared_stack,
-        pr_lookups=pr_lookups,
-    )
-    states = tuple(change.state for change in changes)
-    prs = _format_pr_summary(changes, repo=github_repo)
+    result = build_status_result(prepared=prepared_stack, pr_lookups=pr_lookups)
+    # The JSON contract lists a row's changes from the bottom up.
+    changes = result.changes[::-1]
     local_fragments: list[ui.Message] = []
     if any(change.conflict for change in stack.changes):
         local_fragments.append(ui.semantic_text("conflicted", "error", "heading"))
     state = _state_from_status(
-        github_error=github_error,
+        github_error=result.github_error,
         local_fragments=tuple(local_fragments),
-        remote_error=prepared_stack.github_target.remote_error,
-        states=states,
+        remote_error=result.remote_error,
+        states=tuple(change.state for change in changes),
     )
     return StackRow(
         changes=changes,
@@ -405,8 +370,8 @@ def _build_row(
             change.change_id for change in stack.changes if change.current_working_copy
         ),
         head_change_id=stack.head.change_id,
-        incomplete=status_is_incomplete(changes),
-        prs=prs,
+        incomplete=result.incomplete,
+        prs=_format_pr_summary(changes, repo=github_repo),
         size=len(stack.changes),
         state=state,
         subject=stack.head.subject,

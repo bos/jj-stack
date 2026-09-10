@@ -79,18 +79,6 @@ class StatusResult:
     selected_revset: str
 
 
-@dataclass(frozen=True, slots=True)
-class PreparedChange:
-    """Local stack change with its saved tracking, if any."""
-
-    change: LocalCommit
-    tracked: TrackedPR | None
-
-    @property
-    def branch(self) -> str | None:
-        return self.tracked.pr_identity.head_ref if self.tracked is not None else None
-
-
 def observe_status(
     *,
     prepared: tuple[PreparedLocalStack, ...],
@@ -103,17 +91,17 @@ def observe_status(
     target = prepared[0].github_target
     if not isinstance(target, GithubTarget):
         return {}
-    changes = tuple(
-        change
-        for stack in prepared
-        for change in prepare_status_changes(stack)
-        if change.tracked is not None and change.branch not in exclude_branches
-    )
-    if not changes:
+    observations: dict[str, ChangeObservation] = {}
+    for stack in prepared:
+        for change in stack.stack.changes:
+            observation = _local_observation(stack, change)
+            if (branch := observation.branch) is not None and branch not in exclude_branches:
+                observations[branch] = observation
+    if not observations:
         return {}
     try:
         return asyncio.run(
-            lookup_pr_lookups_async(github_repo=target.repo, prepared_changes=changes)
+            lookup_pr_lookups_async(github_repo=target.repo, observations=observations)
         )
     except CliError as error:
         logger.debug("status github inspection failed: %s", error_message(error))
@@ -134,122 +122,53 @@ def build_status_result(
         change.change_id in prepared.state.prs for change in prepared.stack.changes
     ):
         github_error = error_message(pr_lookups)
-    changes = tuple(
-        reversed(
-            build_status_changes_for_prepared_stack(
-                prepared,
-                pr_lookups={} if isinstance(pr_lookups, CliError) else pr_lookups,
+    lookups = {} if isinstance(pr_lookups, CliError) else pr_lookups
+    changes: list[StackStatusChange] = []
+    for change in reversed(prepared.stack.changes):
+        observation = _local_observation(prepared, change)
+        lookup = lookups.get(branch) if (branch := observation.branch) is not None else None
+        if lookup is not None:
+            observation = replace(
+                observation, pr=lookup.pr, open_prs_on_branch=lookup.open_prs_on_branch
+            )
+        changes.append(
+            StackStatusChange(
+                change=change, tracked=observation.tracked, state=classify(observation)
             )
         )
-    )
     return StatusResult(
         github_error=github_error,
         github_repo=github_repo,
-        incomplete=status_is_incomplete(changes),
+        incomplete=any(report_incomplete(change.state) for change in changes),
         remote=target.remote,
         remote_error=target.remote_error,
-        changes=changes,
+        changes=tuple(changes),
         selected_revset=prepared.stack.selected_revset,
     )
 
 
-def prepare_status_changes(prepared: PreparedLocalStack) -> tuple[PreparedChange, ...]:
-    """Pair local changes with saved links when preparing a report."""
-
-    return tuple(
-        PreparedChange(change=change, tracked=prepared.state.prs.get(change.change_id))
-        for change in prepared.stack.changes
-    )
-
-
-def build_status_changes_for_prepared_stack(
-    prepared: PreparedLocalStack,
-    *,
-    pr_lookups: dict[str, ChangeObservation] | None = None,
-) -> tuple[StackStatusChange, ...]:
-    """Classify every prepared change, using the GitHub lookups the caller has."""
-
+def _local_observation(prepared: PreparedLocalStack, change: LocalCommit) -> ChangeObservation:
+    tracked = prepared.state.prs.get(change.change_id)
     remote = prepared.github_target.remote
-    remote_name = remote.name if remote is not None else None
-    return tuple(
-        _status_change(
-            change,
-            lookup=(
-                pr_lookups.get(change.branch)
-                if pr_lookups is not None and change.branch is not None
-                else None
-            ),
-            remote_name=remote_name,
-        )
-        for change in prepare_status_changes(prepared)
-    )
-
-
-def _status_change(
-    prepared_change: PreparedChange,
-    *,
-    lookup: ChangeObservation | None,
-    remote_name: str | None,
-) -> StackStatusChange:
-    change = prepared_change.change
-    observation = (
-        replace(
-            lookup,
-            change_id=change.change_id,
-            tracked=prepared_change.tracked,
-            branch=prepared_change.branch,
-            remote_name=remote_name,
-            local=(change,),
-            selected=change,
-        )
-        if lookup is not None
-        else _prepared_observation(prepared_change, remote_name=remote_name)
-    )
-    return StackStatusChange(
-        change=change,
-        tracked=prepared_change.tracked,
-        state=classify(observation),
-    )
-
-
-def _prepared_observation(
-    prepared_change: PreparedChange, *, remote_name: str | None
-) -> ChangeObservation:
-    change = prepared_change.change
     return ChangeObservation(
         change_id=change.change_id,
-        tracked=prepared_change.tracked,
-        branch=prepared_change.branch,
-        remote_name=remote_name,
+        tracked=tracked,
+        branch=tracked.pr_identity.head_ref if tracked is not None else None,
+        remote_name=remote.name if remote is not None else None,
         local=(change,),
         selected=change,
     )
 
 
-def status_is_incomplete(changes: tuple[StackStatusChange, ...]) -> bool:
-    """Whether any change stops a report from describing the stack completely."""
-
-    return any(report_incomplete(change.state) for change in changes)
-
-
 async def lookup_pr_lookups_async(
     *,
     github_repo: GithubRepoAddress,
-    prepared_changes: tuple[PreparedChange, ...],
+    observations: Mapping[str, ChangeObservation],
 ) -> dict[str, ChangeObservation]:
-    """Return pull-request lookups for saved branches."""
+    """Look up the saved PR on each branch with a client for this repository."""
 
     async with build_github_client(repo=github_repo) as github_client:
-        return await discover_pr_lookups(
-            github_client=github_client,
-            observations={
-                change.tracked.pr_identity.head_ref: _prepared_observation(
-                    change, remote_name=None
-                )
-                for change in prepared_changes
-                if change.tracked is not None
-            },
-        )
+        return await discover_pr_lookups(github_client=github_client, observations=observations)
 
 
 async def discover_pr_lookups(

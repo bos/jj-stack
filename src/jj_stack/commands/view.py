@@ -23,6 +23,7 @@ In terminals with hyperlink support, click a PR label to open it on GitHub. The 
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -112,37 +113,13 @@ def _run_status(
     selectors: tuple[ViewSelector, ...],
     verbose: bool,
 ) -> int:
-    if not selectors:
-        prepared_status = _prepare_status_with_spinner(
-            context=context,
-            revset=None,
-        )
-        with console.spinner(description="Inspecting GitHub"):
-            pr_lookups = observe_status(prepared=(prepared_status,))
-        result = build_status_result(prepared=prepared_status, pr_lookups=pr_lookups)
-        for warning in _local_history_warnings(prepared_status):
-            console.warning(warning)
-        if as_json:
-            _warn_about_unavailable_github(result)
-            rendered = _json_status_result(
-                prepared_status=prepared_status,
-                result=result,
-                selector=None,
-            )
-            console.machine_output(json.dumps({"stacks": [rendered]}, indent=2))
-            return EXIT_INCOMPLETE if result.incomplete else 0
-        _render_prepared_status(
-            prepared_status=prepared_status,
-            result=result,
-            verbose=verbose,
-        )
-        return EXIT_INCOMPLETE if result.incomplete else 0
-
-    exit_code = 0
-    multi_selector = len(selectors) > 1
-    json_stacks: list[dict[str, object]] = []
-    printed_blocks = 0
-    selections = _prepare_status_selections(context=context, selectors=selectors)
+    selections: Sequence[
+        tuple[ViewSelector | None, PreparedLocalStack | CliError, tuple[ui.Message, ...]]
+    ]
+    if selectors:
+        selections = _prepare_status_selections(context=context, selectors=selectors)
+    else:
+        selections = ((None, _prepare_status_with_spinner(context=context, revset=None), ()),)
     with console.spinner(description="Inspecting GitHub"):
         pr_lookups = observe_status(
             prepared=tuple(
@@ -151,13 +128,15 @@ def _run_status(
                 if isinstance(prepared, PreparedLocalStack)
             )
         )
-    for selector, prepared_status, notes in selections:
+    exit_code = 0
+    multi_selector = len(selectors) > 1
+    json_stacks: list[dict[str, object]] = []
+    for index, (selector, prepared_status, notes) in enumerate(selections):
         if not as_json:
-            if printed_blocks:
+            if index:
                 console.output("")
-            if multi_selector:
+            if multi_selector and selector is not None:
                 console.output(_status_heading(selector))
-            printed_blocks += 1
         if isinstance(prepared_status, CliError):
             console.warning(ui.prefixed_line("Error: ", error_message(prepared_status)))
             hint = prepared_status.hint

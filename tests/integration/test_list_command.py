@@ -128,6 +128,13 @@ def test_list_surfaces_orphaned_pr_when_no_live_stacks_remain(
     assert "orphan" in captured.out
     assert "No stacks." not in captured.out
 
+    json_exit_code = run_main(repo, config_path, "list", "--json")
+    payload = json.loads(capsys.readouterr().out)
+
+    assert json_exit_code == 0
+    assert_json_output_matches_schema(payload, "list")
+    assert [row["type"] for row in payload["rows"]] == ["orphan"]
+
 
 def test_list_warns_when_tracked_stack_was_rewritten_without_moving(
     tmp_path,

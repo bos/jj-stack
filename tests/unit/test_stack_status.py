@@ -13,11 +13,7 @@ from jj_stack.models.tracking import SubmittedBaseline, TrackedPR, TrackingState
 from jj_stack.stack import status as status_module
 from jj_stack.stack.change_state import ChangeObservation
 from jj_stack.stack.preparation import PreparedLocalStack
-from jj_stack.stack.status import (
-    PreparedChange,
-    build_status_result,
-    observe_status,
-)
+from jj_stack.stack.status import build_status_result, observe_status
 from tests.support.change_helpers import make_change
 from tests.support.contexts import fake_command_context
 from tests.support.tracking import make_pr_identity
@@ -99,12 +95,10 @@ def test_pr_lookup_reports_the_saved_pr_when_another_open_pr_uses_its_branch() -
             assert pr_numbers == (155,)
             return {155: pr_payload(155, "closed")}
 
-    prepared_change = PreparedChange(
-        change=make_change(change_id="change", commit_id="commit", description="feature\n"),
-        tracked=TrackedPR(
-            pr_identity=make_pr_identity(head_ref="jj-stack/branch", pr_number=155),
-            submitted_baseline=SubmittedBaseline(commit_id="commit"),
-        ),
+    change = make_change(change_id="change", commit_id="commit", description="feature\n")
+    tracked = TrackedPR(
+        pr_identity=make_pr_identity(head_ref="jj-stack/branch", pr_number=155),
+        submitted_baseline=SubmittedBaseline(commit_id="commit"),
     )
 
     lookup = asyncio.run(
@@ -112,10 +106,10 @@ def test_pr_lookup_reports_the_saved_pr_when_another_open_pr_uses_its_branch() -
             github_client=cast(GithubClient, FakeGithubClient()),
             observations={
                 "jj-stack/branch": ChangeObservation(
-                    change_id=prepared_change.change.change_id,
-                    tracked=prepared_change.tracked,
-                    branch=prepared_change.branch,
-                    local=(prepared_change.change,),
+                    change_id=change.change_id,
+                    tracked=tracked,
+                    branch="jj-stack/branch",
+                    local=(change,),
                 )
             },
         )
