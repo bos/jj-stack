@@ -129,9 +129,10 @@ async def _sync_async(
             )
         containing_change_id = None
         if pr is not None:
-            _, containing_change_id, _ = resolve_linked_change_for_pr(
+            containing_change_id, note = resolve_linked_change_for_pr(
                 jj_client=context.jj_client, pr_reference=pr, revset=None
             )
+            console.note(note)
         return await converge_selected_stack(
             context=context,
             github=github,

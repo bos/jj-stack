@@ -206,7 +206,7 @@ def _prepare_status_selector(
     selector: ViewSelector,
 ) -> tuple[PreparedLocalStack, tuple[ui.Message, ...]]:
     if selector.kind == "pr":
-        pr_number, resolved_revset, repo = resolve_linked_change_for_pr(
+        resolved_revset, note = resolve_linked_change_for_pr(
             jj_client=context.jj_client,
             pr_reference=selector.value,
             revset=None,
@@ -216,10 +216,7 @@ def _prepare_status_selector(
             containing_change_id=resolved_revset,
             revset=None,
         )
-        return prepared, (
-            t"Using {format_pr_label(pr_number, repo=repo)} for change "
-            t"{ui.change_id(resolved_revset)}",
-        )
+        return prepared, (note,)
     resolved_revset = selector.value
     containing_change_id = _change_id_selector(
         context=context,

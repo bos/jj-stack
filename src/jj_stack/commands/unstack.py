@@ -22,7 +22,6 @@ from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._cleanup_actions import check_tracked_pr
 from jj_stack.commands.cleanup.shared import CleanupAction
 from jj_stack.errors import CliError, UsageError
-from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
 from jj_stack.github.resolution import GithubTarget, resolve_github_target
@@ -288,15 +287,12 @@ def _resolve_local_revset(
     revset: str | None,
 ) -> str | None:
     if pr is not None:
-        pr_number, resolved_revset, repo = resolve_linked_change_for_pr(
+        resolved_revset, note = resolve_linked_change_for_pr(
             jj_client=context.jj_client,
             pr_reference=pr,
             revset=revset,
         )
-        console.note(
-            t"Using {format_pr_label(pr_number, repo=repo)} for change "
-            t"{ui.change_id(resolved_revset)}"
-        )
+        console.note(note)
         return resolved_revset
     return revset
 

@@ -43,7 +43,6 @@ from jj_stack.commands.sync import converge_selected_stack
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError, error_hint
-from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import observe_github_repo, read_or_stop
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
@@ -187,15 +186,12 @@ def _resolve_merge_target(
     revset: str | None,
 ) -> tuple[str | None, str | None]:
     if pr is not None:
-        pr_number, resolved_revset, repo = resolve_linked_change_for_pr(
+        resolved_revset, note = resolve_linked_change_for_pr(
             jj_client=context.jj_client,
             pr_reference=pr,
             revset=revset,
         )
-        console.note(
-            t"Using {format_pr_label(pr_number, repo=repo)} for change "
-            t"{ui.change_id(resolved_revset)}"
-        )
+        console.note(note)
         return None, resolved_revset
     return revset, None
 

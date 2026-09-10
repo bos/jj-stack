@@ -19,8 +19,8 @@ def resolve_linked_change_for_pr(
     jj_client: JjClient,
     pr_reference: str,
     revset: str | None,
-) -> tuple[int, str, GithubRepoAddress | None]:
-    """Resolve `--pull-request` to one linked visible local change ID."""
+) -> tuple[str, ui.Message]:
+    """Resolve `--pull-request` to one linked local change ID, with the note that says so."""
 
     if revset is not None:
         raise UsageError(
@@ -55,7 +55,8 @@ def resolve_linked_change_for_pr(
             t"then link the intended change with {ui.cmd('jj-stack relink PR CHANGE')}.",
         )
 
-    return pr_number, matching_change_ids[0], repo
+    change_id = matching_change_ids[0]
+    return change_id, t"Using {pr_label} for change {ui.change_id(change_id)}"
 
 
 def resolve_pr_reference(
