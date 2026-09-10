@@ -52,7 +52,6 @@ from jj_stack.github.error_messages import require_github_target
 from jj_stack.github.resolution import (
     GithubTarget,
     resolve_github_target,
-    resolve_trunk_branch,
 )
 from jj_stack.identifiers import CommitId
 from jj_stack.jj.cli_args import JjCliArgs
@@ -82,6 +81,7 @@ from jj_stack.stack.preparation import (
     stack_preparation_cli_error,
 )
 from jj_stack.stack.selection import resolve_linked_change_for_pr
+from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock
 from jj_stack.ui import Message
 
@@ -215,11 +215,8 @@ async def _run_global_plan(
     trunk_branch = None
     if plan.sync_change_ids:
         repo_state = facts.pr_facts.github_repo
-        trunk_branch, _targets = resolve_trunk_branch(
-            branches_at_trunk=context.jj_client.remote_bookmarks_at_commit(
-                remote=target.remote.name,
-                commit_id=trunk_commit_id,
-            ),
+        trunk_branch, _targets = observe_trunk_branch(
+            jj_client=context.jj_client,
             github_repo_state=repo_state,
             remote=target.remote,
             trunk_commit_id=trunk_commit_id,
@@ -350,11 +347,8 @@ async def _run_selected_convergence(
     with console.spinner(description="Planning local sync"):
         repo_state = observation.github_repo
         if trunk_branch is None:
-            trunk_branch, _trunk_targets = resolve_trunk_branch(
-                branches_at_trunk=context.jj_client.remote_bookmarks_at_commit(
-                    remote=target.remote.name,
-                    commit_id=prepared.stack.trunk.commit_id,
-                ),
+            trunk_branch, _trunk_targets = observe_trunk_branch(
+                jj_client=context.jj_client,
                 github_repo_state=repo_state,
                 remote=target.remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,

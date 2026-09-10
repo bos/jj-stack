@@ -35,7 +35,6 @@ from jj_stack.github.client import build_github_client
 from jj_stack.github.error_messages import observe_github_repo, read_or_stop
 from jj_stack.github.resolution import (
     require_github_repo,
-    resolve_trunk_branch,
 )
 from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
@@ -54,6 +53,7 @@ from jj_stack.stack.pr_branches import (
 )
 from jj_stack.stack.pr_facts import observe_github_stacks
 from jj_stack.stack.status import discover_pr_lookups
+from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock
 
 from .changes import prepare_submit_changes, require_published_base
@@ -482,11 +482,8 @@ async def run_submit_async(
                 )
             github_repo_state = repo_task.result()
             observed_stacks = stacks_task.result()
-            trunk_branch, trunk_targets = resolve_trunk_branch(
-                branches_at_trunk=client.remote_bookmarks_at_commit(
-                    remote=remote.name,
-                    commit_id=stack.trunk.commit_id,
-                ),
+            trunk_branch, trunk_targets = observe_trunk_branch(
+                jj_client=client,
                 github_repo_state=github_repo_state,
                 remote=remote,
                 trunk_commit_id=stack.trunk.commit_id,

@@ -49,11 +49,10 @@ from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.github.resolution import (
     GithubTarget,
     resolve_github_target,
-    resolve_trunk_branch,
 )
 from jj_stack.identifiers import short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import JjClient, PRRefUpdate
+from jj_stack.jj.client import PRRefUpdate
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubIssueComment, GithubPR, GithubStack
 from jj_stack.models.tracking import TrackedPR, TrackingState
@@ -66,6 +65,7 @@ from jj_stack.stack.pr_facts import (
 from jj_stack.stack.repo import observe_repo_paths
 from jj_stack.stack.selected import select_stack_path
 from jj_stack.stack.selection import resolve_pr_reference
+from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock
 from jj_stack.ui import plain_text
 
@@ -422,10 +422,13 @@ async def _run_tracked_pr_cleanup_pass(
         if isinstance(preflight, PRCleanup) and preflight.pr.state == "open"
     }
     if open_plans:
-        trunk_branch = _observe_trunk_branch(
-            jj_client=prepared_cleanup.context.jj_client,
-            observation=observation,
+        jj_client = prepared_cleanup.context.jj_client
+        trunk_commit_id = jj_client.resolve_commit("trunk()").commit_id
+        trunk_branch, _targets = observe_trunk_branch(
+            jj_client=jj_client,
+            github_repo_state=observation.github_repo,
             remote=remote,
+            trunk_commit_id=trunk_commit_id,
         )
         preflights.update(
             (change_id, replace(plan, close_to=trunk_branch))
@@ -453,27 +456,6 @@ async def _run_tracked_pr_cleanup_pass(
         )
         if stop_after_failure:
             break
-
-
-def _observe_trunk_branch(
-    *,
-    jj_client: JjClient,
-    observation: RepoFacts,
-    remote: GitRemote,
-) -> str:
-    """Resolve the branch an open PR is retargeted to before explicit closure."""
-
-    trunk_commit_id = jj_client.resolve_commit("trunk()").commit_id
-    trunk_branch, _targets = resolve_trunk_branch(
-        branches_at_trunk=jj_client.remote_bookmarks_at_commit(
-            remote=remote.name,
-            commit_id=trunk_commit_id,
-        ),
-        github_repo_state=observation.github_repo,
-        remote=remote,
-        trunk_commit_id=trunk_commit_id,
-    )
-    return trunk_branch
 
 
 async def _observe_cleanup_secondary_facts(

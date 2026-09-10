@@ -49,7 +49,7 @@ from jj_stack.github.error_messages import (
     read_or_stop,
     require_github_target,
 )
-from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
+from jj_stack.github.resolution import GithubTarget
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepo
 from jj_stack.models.stack import LocalCommit, LocalStack
@@ -59,6 +59,7 @@ from jj_stack.stack.preparation import prepare_local_stack
 from jj_stack.stack.selection import (
     resolve_linked_change_for_pr,
 )
+from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock
 
 from .github_stack import build_async_merge_plan, execute_async_merge
@@ -235,11 +236,8 @@ async def _stream_merge_async(
 
     with console.spinner(description="Inspecting remotes"):
         github_repo_state = await observe_github_repo(github_client, hint=_RERUN_HINT)
-        trunk_branch, _trunk_targets = resolve_trunk_branch(
-            branches_at_trunk=prepared_merge.context.jj_client.remote_bookmarks_at_commit(
-                remote=remote.name,
-                commit_id=stack.trunk.commit_id,
-            ),
+        trunk_branch, _trunk_targets = observe_trunk_branch(
+            jj_client=prepared_merge.context.jj_client,
             github_repo_state=github_repo_state,
             remote=remote,
             trunk_commit_id=stack.trunk.commit_id,
