@@ -81,7 +81,7 @@ def test_atomic_relink_failure_preserves_original_pair(
     store = TrackingStore(tmp_path / "state.json")
     identity = _identity()
     baseline = SubmittedBaseline(commit_id="abc123")
-    original = store.create_pr(CHANGE_ID, identity=identity, baseline=baseline)
+    original = store.relink_pr(CHANGE_ID, identity=identity, baseline=baseline)
 
     def fail_replace(_source: Path, _target: Path) -> None:
         raise OSError(errno.EIO, "simulated replace failure")
@@ -191,6 +191,6 @@ def test_store_shares_tracking_across_workspaces_for_same_repo(
     identity = _identity()
     baseline = SubmittedBaseline(commit_id="abc123")
 
-    primary_store.create_pr(CHANGE_ID, identity=identity, baseline=baseline)
+    primary_store.relink_pr(CHANGE_ID, identity=identity, baseline=baseline)
 
     assert secondary_store.load() == primary_store.load()

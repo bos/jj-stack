@@ -30,7 +30,7 @@ def test_in_use_tracks_presence_of_valid_local_state(
     assert not state_home.exists()
 
     store = TrackingStore.for_repo(repo)
-    store.create_pr(
+    store.relink_pr(
         CHANGE_ID,
         identity=PRIdentity(
             pr_number=17,

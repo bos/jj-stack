@@ -14,12 +14,12 @@ from jj_stack.models.tracking import (
     PRIdentity,
     SubmittedBaseline,
 )
+from jj_stack.state.store import TrackingStore
 from jj_stack.ui import Message
 
 from .models import (
     PRDraftAction,
     PRSyncPlan,
-    SubmitMutationRun,
 )
 
 
@@ -58,7 +58,7 @@ async def sync_prs(
     *,
     github_client: GithubClient,
     plans: tuple[PRSyncPlan, ...],
-    run: SubmitMutationRun,
+    state_store: TrackingStore,
     on_progress: Callable[[], None],
 ) -> tuple[tuple[PRSyncPlan, GithubPR], ...]:
     submitted_changes = await run_bounded_tasks(
@@ -67,7 +67,7 @@ async def sync_prs(
         run_item=lambda plan: _sync_pr(
             github_client=github_client,
             plan=plan,
-            run=run,
+            state_store=state_store,
         ),
         on_success=on_progress,
     )
@@ -78,7 +78,7 @@ async def _sync_pr(
     *,
     github_client: GithubClient,
     plan: PRSyncPlan,
-    run: SubmitMutationRun,
+    state_store: TrackingStore,
 ) -> tuple[PRSyncPlan, GithubPR]:
     prepared_change = plan.prepared
     branch = prepared_change.branch
@@ -113,11 +113,9 @@ async def _sync_pr(
     # branch. Draft state, labels and reviewers can be observed and rewritten on a
     # rerun, but a pull request submit created and never recorded leaves the change
     # untracked, and every retry then demands an explicit relink.
-    run.record_submission(
-        baseline=SubmittedBaseline(commit_id=prepared_change.change.commit_id),
-        change_id=change_id,
-        identity=PRIdentity(pr_number=pr.number, head_ref=branch),
-    )
+    baseline = SubmittedBaseline(commit_id=prepared_change.change.commit_id)
+    identity = PRIdentity(pr_number=pr.number, head_ref=branch)
+    state_store.relink_pr(change_id, identity=identity, baseline=baseline)
     pr = await _apply_draft_action(
         action=plan.draft_action,
         github_client=github_client,

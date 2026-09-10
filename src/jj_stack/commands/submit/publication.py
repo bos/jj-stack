@@ -32,7 +32,6 @@ from .models import (
     PRMetadataAction,
     PRSyncPlan,
     PublicationInputs,
-    SubmitMutationRun,
 )
 from .overview_comments import plan_stack_overview, sync_stack_overview_comments
 from .prs import sync_prs
@@ -231,7 +230,7 @@ async def publish_prepared(
             github_client=github_client,
             on_progress=progress.advance,
             plans=pr_plans,
-            run=SubmitMutationRun(state=state, state_store=context.state_store),
+            state_store=context.state_store,
         )
     pr_numbers = tuple(pr.number for _, pr in submitted)
     submitted_force_pushes_by_pr = {

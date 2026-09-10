@@ -11,8 +11,7 @@ from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR
 from jj_stack.models.stack import LocalCommit, LocalStack
-from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackingState
-from jj_stack.state.store import TrackingStore
+from jj_stack.models.tracking import TrackingState
 
 PRAction = Literal["created", "unchanged", "updated"]
 PRDraftAction = Literal["draft", "ready"]
@@ -128,37 +127,6 @@ class PublicationInputs:
     stack: LocalStack
     state: TrackingState
     submitted_commits: dict[str, LocalCommit]
-
-
-@dataclass(slots=True)
-class SubmitMutationRun:
-    """Mutable submit state shared by mutation phases."""
-
-    state: TrackingState
-    state_store: TrackingStore
-
-    def record_submission(
-        self,
-        *,
-        baseline: SubmittedBaseline,
-        change_id: str,
-        identity: PRIdentity,
-    ) -> None:
-        """Save one GitHub-acknowledged PR snapshot."""
-
-        current = self.state.prs.get(change_id)
-        if current is None:
-            self.state = self.state_store.create_pr(
-                change_id,
-                identity=identity,
-                baseline=baseline,
-            )
-            return
-        self.state = self.state_store.relink_pr(
-            change_id,
-            identity=current.pr_identity,
-            baseline=baseline,
-        )
 
 
 class PrivateCommitFinder(Protocol):

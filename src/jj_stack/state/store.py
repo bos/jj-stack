@@ -69,26 +69,6 @@ class TrackingStore:
         self._load_state()
         return True
 
-    def create_pr(
-        self,
-        change_id: str,
-        *,
-        identity: PRIdentity,
-        baseline: SubmittedBaseline,
-    ) -> TrackingState:
-        """Atomically create a complete record for an untracked change."""
-
-        _require_identity_matches_change(identity, change_id)
-        state = self._load_state()
-        if change_id in state.prs:
-            raise TrackingStateError(f"Tracking data already exists for {change_id}.")
-        return self._persist(
-            TrackingState(
-                prs=state.prs
-                | {change_id: TrackedPR(pr_identity=identity, submitted_baseline=baseline)}
-            )
-        )
-
     def relink_pr(
         self,
         change_id: str,
