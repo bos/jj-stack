@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jj_stack.errors import CliError
+from jj_stack.errors import EXIT_GITHUB, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
@@ -23,6 +23,7 @@ from ..support.integration_helpers import (
     sign_commit,
     update_remote_ref,
 )
+from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
     configure_submit_environment,
     issue_comments,
@@ -137,7 +138,7 @@ def test_signed_changes_require_a_method_even_when_they_are_not_being_merged_yet
     assert fake_repo.prs[2].state == "open"
 
 
-def test_merge_queue_lookup_failure_falls_back_to_direct_merge(
+def test_merge_queue_lookup_failure_stops_before_requesting_a_merge(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -161,9 +162,10 @@ def test_merge_queue_lookup_failure_falls_back_to_direct_merge(
     exit_code = run_main(repo, config_path, "merge")
     captured = capsys.readouterr()
 
-    assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.stack_merge_requests[0][2] == "direct_merge"
-    assert fake_repo.prs[1].merged_at is not None
+    assert exit_code == EXIT_GITHUB, (captured.out, captured.err)
+    assert fake_repo.stack_merge_requests == []
+    assert fake_repo.prs[1].merged_at is None
+    assert_output_contains(captured.err, "uses a merge queue", "could not inspect main")
 
 
 def test_merge_draft_blocks_the_candidate_prefix(

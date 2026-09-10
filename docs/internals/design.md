@@ -364,9 +364,9 @@ PR or several. A multi-PR request acts on the matching GitHub stack. Every reque
 expected head commit of the top selected PR.
 
 Before the request, `merge` asks whether the trunk branch has a merge queue, using GitHub's merge
-queue object or a `MERGE_QUEUE` branch rule. If that lookup fails, `merge` follows the ordinary
-direct-merge path and lets the merge request report any policy rejection. It sends the explicit
-action `merge_queue` when a queue is found and `direct_merge` otherwise.
+queue object or a `MERGE_QUEUE` branch rule. If that lookup fails, `merge` stops with the GitHub
+error before requesting anything. It sends the explicit action `merge_queue` when a queue is
+found and `direct_merge` otherwise.
 
 A `merged` result means a direct merge completed; `merge` then fetches and syncs the whole
 selected stack before returning, including changes above the last merged PR and commits GitHub
