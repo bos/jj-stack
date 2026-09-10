@@ -83,8 +83,8 @@ async def refresh_selected_prs(
     descriptions = preserve_external_pr_text(
         descriptions=inputs.generated_pr_descriptions,
         prs=actions.remaining_prs,
-        repo_root=context.repo_root,
         submitted_commits=inputs.submitted_commits,
+        template=inputs.pr_template,
     )
     plans = plan_pr_updates(
         bottom_base_branch=trunk_branch,

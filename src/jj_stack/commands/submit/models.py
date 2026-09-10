@@ -136,6 +136,7 @@ class PublicationInputs:
     generated_pr_descriptions: dict[str, GeneratedDescription]
     generated_stack_description: GeneratedDescription | None
     is_maximal_path: bool
+    pr_template: str
     remote: GitRemote
     stack: LocalStack
     state: TrackingState

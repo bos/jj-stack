@@ -15,7 +15,7 @@ from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.observation import observe_change_copies
 from jj_stack.stack.selected import require_submittable_changes, select_stack_path
 
-from .descriptions import resolve_generated_descriptions
+from .descriptions import read_pr_template, resolve_generated_descriptions
 from .github_stack import GithubStackPRSnapshot, github_stack_pr_snapshot
 from .models import (
     ExplicitBase,
@@ -105,6 +105,7 @@ def prepare_publication_inputs(
     require_submittable_changes(stack.changes)
     preflight_conflicted_changes(stack.changes)
     preflight_private_commits(client, stack.changes)
+    template = read_pr_template(client.repo_root)
     (
         generated_pr_descriptions,
         generated_stack_description,
@@ -114,6 +115,7 @@ def prepare_publication_inputs(
         jj_client=client,
         selected_revset=stack.selected_revset,
         changes=stack.changes,
+        template=template,
     )
     submitted_commits = client.query_commits_by_ids(
         tuple(
@@ -128,6 +130,7 @@ def prepare_publication_inputs(
         generated_pr_descriptions=generated_pr_descriptions,
         generated_stack_description=generated_stack_description,
         is_maximal_path=is_maximal_path,
+        pr_template=template,
         remote=remote,
         stack=stack,
         state=state,

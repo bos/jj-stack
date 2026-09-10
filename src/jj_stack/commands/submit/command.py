@@ -57,7 +57,8 @@ from jj_stack.stack.status import discover_pr_lookups
 from jj_stack.state.operation_lock import operation_lock
 
 from .changes import prepare_submit_changes, require_published_base
-from .descriptions import edit_prs_in_editor, preserve_external_pr_text, resume_edit_hint
+from .descriptions import preserve_external_pr_text
+from .editor import edit_prs_in_editor, resume_edit_hint
 from .inputs import prepare_submit_inputs
 from .models import (
     PRMetadataAction,
@@ -529,8 +530,8 @@ async def run_submit_async(
         generated_descriptions = preserve_external_pr_text(
             descriptions=generated_descriptions,
             prs={prepared.change.change_id: prepared.pr for prepared in prepared_changes},
-            repo_root=client.repo_root,
             submitted_commits=prepared_inputs.submitted_commits,
+            template=prepared_inputs.pr_template,
         )
         if options.edit:
             generated_descriptions, drafts, edit_path = edit_prs_in_editor(
