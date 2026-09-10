@@ -48,9 +48,9 @@ from jj_stack.errors import (
 )
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.error_messages import require_github_target
 from jj_stack.github.resolution import (
     GithubTarget,
-    UnresolvedGithubTarget,
     resolve_github_target,
     resolve_trunk_branch,
 )
@@ -121,7 +121,7 @@ async def _sync_async(
     pr: str | None,
     revset: str | None,
 ) -> int:
-    target = _require_github_target(resolve_github_target(context.jj_client.list_git_remotes()))
+    target = require_github_target(resolve_github_target(context.jj_client.list_git_remotes()))
     async with build_github_client(repo=target.repo) as github:
         if all_:
             return await _run_all_convergence(
@@ -300,7 +300,7 @@ async def _run_selected_convergence(
     prepared: PreparedLocalStack,
     trunk_branch: str | None,
 ) -> int:
-    target = _require_github_target(prepared.github_target)
+    target = require_github_target(prepared.github_target)
     selected = prepared.stack.changes
     if not selected:
         console.output("Nothing to sync: the selected change is already on trunk.")
@@ -385,18 +385,6 @@ async def _run_selected_convergence(
         target=target,
         trunk_commit_id=prepared.stack.trunk.commit_id,
     )
-
-
-def _require_github_target(
-    target: GithubTarget | UnresolvedGithubTarget,
-) -> GithubTarget:
-    if not isinstance(target, GithubTarget):
-        raise CliError(
-            target.github_repo_error or "Could not resolve GitHub target.",
-            hint=t"Point jj-stack at a GitHub remote, then rerun. "
-            t"{ui.cmd('jj-stack doctor')} reports what it found.",
-        )
-    return target
 
 
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:

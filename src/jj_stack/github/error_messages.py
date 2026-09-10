@@ -13,7 +13,7 @@ from jj_stack.github.resolution import (
 )
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepo
-from jj_stack.ui import Message, code
+from jj_stack.ui import Message, cmd, code
 
 
 def github_action_error_message(*, action: str, error: GithubClientError) -> str:
@@ -120,3 +120,15 @@ def remote_and_github_unavailable_messages(
     if github_message is not None:
         messages.append(github_message)
     return tuple(messages)
+
+
+def require_github_target(target: GithubTarget | UnresolvedGithubTarget) -> GithubTarget:
+    """Stop with the resolution error when the repo has no usable GitHub remote."""
+
+    if isinstance(target, GithubTarget):
+        return target
+    raise CliError(
+        target.remote_error or target.github_repo_error or "No Git remote is configured.",
+        hint=t"Configure one GitHub remote, then rerun. "
+        t"{cmd('jj-stack doctor')} reports what it found.",
+    )

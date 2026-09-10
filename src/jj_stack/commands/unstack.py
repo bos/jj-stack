@@ -23,8 +23,8 @@ from jj_stack.commands._cleanup_actions import check_tracked_pr
 from jj_stack.commands.cleanup.shared import CleanupAction
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
-from jj_stack.github.error_messages import github_target_unavailable_messages
-from jj_stack.github.resolution import GithubTarget, resolve_github_target
+from jj_stack.github.error_messages import require_github_target
+from jj_stack.github.resolution import resolve_github_target
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalStack
@@ -121,11 +121,9 @@ async def _run_github_unstack(
     revset: str | None,
     stack_number: int | None,
 ) -> int:
-    github_target = resolve_github_target(context.jj_client.list_git_remotes())
-    if not isinstance(github_target, GithubTarget):
-        for message in github_target_unavailable_messages(github_target):
-            console.warning(message)
-        return 1
+    github_target = require_github_target(
+        resolve_github_target(context.jj_client.list_git_remotes())
+    )
 
     async with build_github_client(repo=github_target.repo) as github_client:
         if stack_number is not None:

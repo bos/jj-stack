@@ -44,7 +44,11 @@ from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError, error_hint
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
-from jj_stack.github.error_messages import observe_github_repo, read_or_stop
+from jj_stack.github.error_messages import (
+    observe_github_repo,
+    read_or_stop,
+    require_github_target,
+)
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepo
@@ -210,22 +214,7 @@ def _prepare_merge(
         fetch_remote_state=True,
         revset=revset,
     )
-    target = prepared.github_target
-    if target.remote is None:
-        message = target.remote_error or t"Could not determine which Git remote to use."
-        raise CliError(
-            message,
-            hint=t"Configure one GitHub remote, then rerun. "
-            t"{ui.cmd('jj-stack doctor')} reports what it found.",
-        )
-    if not isinstance(target, GithubTarget):
-        message = target.github_repo_error or t"Could not resolve GitHub target."
-        raise CliError(
-            message,
-            hint=t"Point jj-stack at a GitHub remote, then rerun. "
-            t"{ui.cmd('jj-stack doctor')} reports what it found.",
-        )
-
+    target = require_github_target(prepared.github_target)
     return PreparedMerge(
         context=context,
         dry_run=dry_run,
