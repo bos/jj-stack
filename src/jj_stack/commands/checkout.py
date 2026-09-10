@@ -29,6 +29,7 @@ import asyncio
 import shlex
 import sys
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,6 +50,7 @@ from jj_stack.github.resolution import (
 from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR, GithubStack
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, TrackingState
@@ -96,24 +98,12 @@ def checkout(
     """CLI entrypoint for `checkout`."""
 
     context = bootstrap_context(repo=repo, cli_args=cli_args, debug=debug)
-    if pick:
-        choice = asyncio.run(_pick_stack(context))
-        pr = choice.pr
-        revset = choice.revset
-    with operation_lock(context.state_store, command="checkout"):
-        context.jj_client.clear_pr_branch_temp_artifacts()
-        result = asyncio.run(
-            _run_checkout_async(
-                context=context,
-                pr_reference=pr,
-                revset=revset,
-            )
+    if pr is not None and revset is not None:
+        raise UsageError(
+            t"{ui.cmd('jj-stack checkout')} accepts at most one selector: "
+            t"{ui.cmd('--pull-request')} or {ui.cmd('--revset')}."
         )
-        if result.stack.changes:
-            edit_args, _snapshots = observe_pr_bookmarks(
-                jj_client=context.jj_client, state=context.state_store.load()
-            )
-            context.jj_client.edit_commit(result.stack.head.commit_id, cli_args=edit_args)
+    result = asyncio.run(_checkout_async(context=context, pick=pick, pr=pr, revset=revset))
     if result.fetched_tip_commit is not None:
         console.output(ui.prefixed_line("Fetched PR head commit: ", result.fetched_tip_commit))
     if result.adopted_count:
@@ -133,27 +123,54 @@ def checkout(
     return 0
 
 
-async def _run_checkout_async(
+async def _checkout_async(
     *,
     context: CommandContext,
-    pr_reference: str | None,
+    pick: bool,
+    pr: str | None,
     revset: str | None,
 ) -> CheckoutResult:
-    if pr_reference is not None and revset is not None:
-        raise UsageError(
-            t"{ui.cmd('jj-stack checkout')} accepts at most one selector: "
-            t"{ui.cmd('--pull-request')} or {ui.cmd('--revset')}."
+    if not pick and pr is None:
+        return await _adopt_under_lock(context, lambda: _checkout_saved_stack(context, revset))
+    remote = select_submit_remote(context.jj_client.list_git_remotes())
+    repo = require_github_repo(remote)
+    async with build_github_client(repo=repo) as github_client:
+        if pick:
+            choice = await _pick_stack(context, github_client=github_client, repo=repo)
+            pr, revset = choice.pr, choice.revset
+        if pr is None:
+            return await _adopt_under_lock(
+                context, lambda: _checkout_saved_stack(context, revset)
+            )
+        pr_reference = pr
+        return await _adopt_under_lock(
+            context,
+            lambda: _checkout_pr_stack(
+                context=context,
+                github_client=github_client,
+                remote=remote,
+                repo=repo,
+                pr_reference=pr_reference,
+            ),
         )
-    if pr_reference is None:
-        return _checkout_saved_stack(context=context, revset=revset)
-    return await _checkout_pr_stack(
-        context=context,
-        pr_reference=pr_reference,
-    )
 
 
-def _checkout_saved_stack(
-    *,
+async def _adopt_under_lock(
+    context: CommandContext,
+    adopt: Callable[[], Awaitable[CheckoutResult]],
+) -> CheckoutResult:
+    with operation_lock(context.state_store, command="checkout"):
+        context.jj_client.clear_pr_branch_temp_artifacts()
+        result = await adopt()
+        if result.stack.changes:
+            edit_args, _snapshots = observe_pr_bookmarks(
+                jj_client=context.jj_client, state=context.state_store.load()
+            )
+            context.jj_client.edit_commit(result.stack.head.commit_id, cli_args=edit_args)
+    return result
+
+
+async def _checkout_saved_stack(
     context: CommandContext,
     revset: str | None,
 ) -> CheckoutResult:
@@ -181,80 +198,80 @@ def _checkout_saved_stack(
 async def _checkout_pr_stack(
     *,
     context: CommandContext,
+    github_client: GithubClient,
+    remote: GitRemote,
+    repo: GithubRepoAddress,
     pr_reference: str,
 ) -> CheckoutResult:
     client = context.jj_client
     state = context.state_store.load()
-    remote = select_submit_remote(client.list_git_remotes())
-    repo = require_github_repo(remote)
     pr_number = parse_repo_pr_reference(
         reference=pr_reference,
         github_repo=repo,
     )
-    async with build_github_client(repo=repo) as github_client:
-        top_pr = await load_pr(
+    top_pr = await load_pr(
+        github_client=github_client,
+        pr_number=pr_number,
+    )
+    top_head_sha = require_managed_pr_head(
+        pr=top_pr,
+        repo=repo,
+    )
+    targets_task = asyncio.create_task(
+        github_client.get_branch_targets(branches=(top_pr.head.ref,))
+    )
+    chain_task = asyncio.create_task(
+        _load_pr_chain(
             github_client=github_client,
-            pr_number=pr_number,
-        )
-        top_head_sha = require_managed_pr_head(
-            pr=top_pr,
             repo=repo,
+            top=top_pr,
+        ),
+    )
+    await wait_for_read_tasks(targets_task, chain_task)
+    observed_top_targets = targets_task.result()
+    prs = chain_task.result()
+    observed_top = observed_top_targets.get(top_pr.head.ref)
+    if observed_top != top_head_sha:
+        pr_label = format_pr_label(top_pr.number, url=top_pr.html_url)
+        raise CliError(
+            t"{pr_label} and remote branch "
+            t"{ui.bookmark(top_pr.head.ref)} no longer identify the same commit."
         )
-        targets_task = asyncio.create_task(
-            github_client.get_branch_targets(branches=(top_pr.head.ref,))
-        )
-        chain_task = asyncio.create_task(
-            _load_pr_chain(
-                github_client=github_client,
-                repo=repo,
-                top=top_pr,
-            ),
-        )
-        await wait_for_read_tasks(targets_task, chain_task)
-        observed_top_targets = targets_task.result()
-        prs = chain_task.result()
-        observed_top = observed_top_targets.get(top_pr.head.ref)
-        if observed_top != top_head_sha:
-            pr_label = format_pr_label(top_pr.number, url=top_pr.html_url)
-            raise CliError(
-                t"{pr_label} and remote branch "
-                t"{ui.bookmark(top_pr.head.ref)} no longer identify the same commit."
-            )
 
-        # A hidden local copy of the head still needs the import so it becomes visible again.
-        fetched = not any(
-            not commit.hidden for commit in client.query_commits_by_ids((top_head_sha,))
-        )
-        if fetched:
-            client.fetch_remote(remote=remote.name)
-            with client.import_remote_pr_branch_ref(
-                remote=remote.name,
-                branch=top_pr.head.ref,
-                expected_target=top_head_sha,
-            ):
-                stack = _discover_checkout_stack(
-                    client=client,
-                    commit_id=top_head_sha,
-                    state=state,
-                )
-        else:
+    # A hidden local copy of the head still needs the import so it becomes visible again.
+    fetched = not any(
+        not commit.hidden for commit in client.query_commits_by_ids((top_head_sha,))
+    )
+    if fetched:
+        client.fetch_remote(remote=remote.name)
+        with client.import_remote_pr_branch_ref(
+            remote=remote.name,
+            branch=top_pr.head.ref,
+            expected_target=top_head_sha,
+        ):
             stack = _discover_checkout_stack(
                 client=client,
                 commit_id=top_head_sha,
                 state=state,
             )
-
-        remote_targets = await github_client.get_branch_targets(
-            branches=tuple(pr.head.ref for pr in prs),
-        )
-        adopted_count = _save_checkout_tracking(
-            context=context,
-            prs=prs,
-            remote_targets=remote_targets,
-            repo=repo,
-            stack=stack,
+    else:
+        stack = _discover_checkout_stack(
+            client=client,
+            commit_id=top_head_sha,
             state=state,
         )
+
+    remote_targets = await github_client.get_branch_targets(
+        branches=tuple(pr.head.ref for pr in prs),
+    )
+    adopted_count = _save_checkout_tracking(
+        context=context,
+        prs=prs,
+        remote_targets=remote_targets,
+        repo=repo,
+        stack=stack,
+        state=state,
+    )
     tracked = stack.changes[: len(prs)]
     return CheckoutResult(
         adopted_count=adopted_count,
@@ -485,7 +502,12 @@ def _require_branch_matches_change(*, branch: str, change: LocalCommit) -> None:
         )
 
 
-async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
+async def _pick_stack(
+    context: CommandContext,
+    *,
+    github_client: GithubClient,
+    repo: GithubRepoAddress,
+) -> CheckoutPickerChoice:
     """Prompt for one local or GitHub stack without holding the operation lock."""
 
     state = context.state_store.load()
@@ -500,29 +522,24 @@ async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
             (path.stack for path in repo_paths.paths if path.tracked_change_ids),
             key=lambda stack: stack.head.change_id,
         )
-    remote = select_submit_remote(context.jj_client.list_git_remotes())
-    repo = require_github_repo(remote)
-    async with build_github_client(repo=repo) as github_client:
-        repo_result, stacks_result = await asyncio.gather(
-            github_client.get_repo(),
-            observe_github_stacks(github=github_client),
-            return_exceptions=True,
+    repo_result, stacks_result = await asyncio.gather(
+        github_client.get_repo(),
+        observe_github_stacks(github=github_client),
+        return_exceptions=True,
+    )
+    if isinstance(repo_result, GithubClientError):
+        raise repo_lookup_error(repo_result, repo=repo.full_name) from repo_result
+    if isinstance(repo_result, BaseException):
+        raise repo_result
+    if isinstance(stacks_result, BaseException):
+        raise stacks_result
+    github_stacks = stacks_result
+    try:
+        prs = await github_client.get_prs_by_numbers(
+            pr_numbers=tuple(member.number for stack in github_stacks for member in stack.prs),
         )
-        if isinstance(repo_result, GithubClientError):
-            raise repo_lookup_error(repo_result, repo=repo.full_name) from repo_result
-        if isinstance(repo_result, BaseException):
-            raise repo_result
-        if isinstance(stacks_result, BaseException):
-            raise stacks_result
-        github_stacks = stacks_result
-        try:
-            prs = await github_client.get_prs_by_numbers(
-                pr_numbers=tuple(
-                    member.number for stack in github_stacks for member in stack.prs
-                ),
-            )
-        except GithubClientError as error:
-            raise CliError("Could not list GitHub stacks for checkout.") from error
+    except GithubClientError as error:
+        raise CliError("Could not list GitHub stacks for checkout.") from error
     choices = _picker_choices(
         github_stacks=github_stacks,
         local_stacks=local_stacks,

@@ -61,7 +61,7 @@ def fake_github_client_wiring(
     in-process fake GitHub app.
     """
 
-    def build_github_client(*, repo: GithubRepoAddress) -> GithubClient:
+    def build_github_client(*, repo: GithubRepoAddress, token: str | None = None) -> GithubClient:
         return client_type(
             httpx2.AsyncClient(
                 base_url="https://api.github.test",

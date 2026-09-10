@@ -38,11 +38,11 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands.sync import run_stack_convergence
+from jj_stack.commands.sync import converge_selected_stack
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError, error_hint
 from jj_stack.formatting import format_pr_label
-from jj_stack.github.client import GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import repo_lookup_error
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
@@ -83,16 +83,18 @@ def merge(
         command="merge",
         mutating=not dry_run,
     ):
-        return _run_merge(
-            context=context,
-            dry_run=dry_run,
-            merge_method=merge_method,
-            pr=pr,
-            revset=revset,
+        return asyncio.run(
+            _run_merge(
+                context=context,
+                dry_run=dry_run,
+                merge_method=merge_method,
+                pr=pr,
+                revset=revset,
+            )
         )
 
 
-def _run_merge(
+async def _run_merge(
     *,
     context: CommandContext,
     dry_run: bool,
@@ -113,35 +115,38 @@ def _run_merge(
             revset=selected_revset,
             target_change_id=target_change_id,
         )
-    result = asyncio.run(_stream_merge_async(prepared_merge=prepared_merge))
-    print_merge_result(result)
-    if result.blocked:
-        return 1
-    if result.enqueued or not result.applied:
-        return 0
-    sync_change_id = prepared_merge.stack.head.change_id
-    console.output("Updating the local stack after the completed merge:")
-    try:
-        exit_code = run_stack_convergence(
-            context=context,
-            dry_run=False,
-            fetch_remote_state=True,
-            revset=sync_change_id,
-        )
-    except BaseException as error:
-        _warn_incomplete_post_merge_sync(
-            sync_change_id, has_recovery_hint=error_hint(error) is not None
-        )
-        if isinstance(error, GithubClientError):
-            raise CliError(
-                "Could not update the local stack after the completed merge.",
-                hint=t"Resolve the GitHub error, then run "
-                t"{ui.cmd('jj-stack sync')} {ui.change_id(sync_change_id)}",
-            ) from error
-        raise
-    if exit_code:
-        _warn_incomplete_post_merge_sync(sync_change_id, has_recovery_hint=True)
-    return exit_code
+    async with build_github_client(repo=prepared_merge.target.repo) as github_client:
+        result, github_repo_state = await _stream_merge_async(prepared_merge, github_client)
+        print_merge_result(result)
+        if result.blocked:
+            return 1
+        if result.enqueued or not result.applied:
+            return 0
+        sync_change_id = prepared_merge.stack.head.change_id
+        console.output("Updating the local stack after the completed merge:")
+        try:
+            exit_code = await converge_selected_stack(
+                context=context,
+                github=github_client,
+                github_repo=github_repo_state,
+                dry_run=False,
+                fetch_remote_state=True,
+                revset=sync_change_id,
+            )
+        except BaseException as error:
+            _warn_incomplete_post_merge_sync(
+                sync_change_id, has_recovery_hint=error_hint(error) is not None
+            )
+            if isinstance(error, GithubClientError):
+                raise CliError(
+                    "Could not update the local stack after the completed merge.",
+                    hint=t"Resolve the GitHub error, then run "
+                    t"{ui.cmd('jj-stack sync')} {ui.change_id(sync_change_id)}",
+                ) from error
+            raise
+        if exit_code:
+            _warn_incomplete_post_merge_sync(sync_change_id, has_recovery_hint=True)
+        return exit_code
 
 
 def _warn_incomplete_post_merge_sync(
@@ -222,119 +227,117 @@ def _prepare_merge(
 
 
 async def _stream_merge_async(
-    *,
-    prepared_merge: PreparedMerge,
-) -> MergeResult:
+    prepared_merge: PreparedMerge, github_client: GithubClient
+) -> tuple[MergeResult, GithubRepo]:
     stack = prepared_merge.stack
     github_repo = prepared_merge.target.repo
     remote = prepared_merge.target.remote
 
-    async with build_github_client(repo=github_repo) as github_client:
-        with console.spinner(description="Inspecting remotes"):
-            try:
-                github_repo_state = await github_client.get_repo()
-            except GithubClientError as error:
-                raise repo_lookup_error(
-                    error,
-                    repo=github_repo.full_name,
-                    hint="Resolve the GitHub error above, then rerun jj-stack merge.",
-                ) from error
-            trunk_branch, _trunk_targets = resolve_trunk_branch(
-                branches_at_trunk=prepared_merge.context.jj_client.remote_bookmarks_at_commit(
-                    remote=remote.name,
-                    commit_id=stack.trunk.commit_id,
-                ),
-                github_repo_state=github_repo_state,
-                remote=remote,
-                trunk_commit_id=stack.trunk.commit_id,
-            )
-        queue_task = asyncio.create_task(
-            github_client.base_branch_uses_merge_queue(branch=trunk_branch)
-        )
-        prs_task = asyncio.create_task(
-            observe_prs(
-                change_ids=tuple(change.change_id for change in stack.changes),
-                context=prepared_merge.context,
-                github_client=github_client,
-                github_repo_snapshot=github_repo_state,
-                remote_name=remote.name,
-            )
-        )
-        stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))
-        await asyncio.gather(queue_task, prs_task, stacks_task, return_exceptions=True)
+    with console.spinner(description="Inspecting remotes"):
         try:
-            uses_merge_queue = await queue_task
+            github_repo_state = await github_client.get_repo()
         except GithubClientError as error:
-            raise CliError(
-                t"Could not check whether {ui.bookmark(trunk_branch)} uses a merge queue.",
+            raise repo_lookup_error(
+                error,
+                repo=github_repo.full_name,
                 hint="Resolve the GitHub error above, then rerun jj-stack merge.",
             ) from error
-        if uses_merge_queue:
-            if prepared_merge.merge_method is not None:
-                console.warning(
-                    t"The base branch {ui.bookmark(trunk_branch)} uses a merge queue; ignoring "
-                    t"{ui.cmd('--method')}."
-                )
-            merge_action = "merge_queue"
-            resolved_merge_method = None
-        else:
-            merge_action = "direct_merge"
-            resolved_merge_method = _resolve_merge_method(
-                changes=stack.changes,
-                configured=prepared_merge.context.config.merge_method,
-                merge_method=prepared_merge.merge_method,
-                repo_state=github_repo_state,
-            )
-        try:
-            observation = await prs_task
-        except GithubClientError as error:
-            raise CliError(
-                "Could not inspect GitHub state for merge.",
-                hint="Resolve the GitHub error above, then rerun jj-stack merge.",
-            ) from error
-        plan = build_merge_plan(
-            observation=observation,
+        trunk_branch, _trunk_targets = resolve_trunk_branch(
+            branches_at_trunk=prepared_merge.context.jj_client.remote_bookmarks_at_commit(
+                remote=remote.name,
+                commit_id=stack.trunk.commit_id,
+            ),
+            github_repo_state=github_repo_state,
+            remote=remote,
+            trunk_commit_id=stack.trunk.commit_id,
+        )
+    queue_task = asyncio.create_task(
+        github_client.base_branch_uses_merge_queue(branch=trunk_branch)
+    )
+    prs_task = asyncio.create_task(
+        observe_prs(
+            change_ids=tuple(change.change_id for change in stack.changes),
+            context=prepared_merge.context,
+            github_client=github_client,
+            github_repo_snapshot=github_repo_state,
             remote_name=remote.name,
-            repo=github_repo,
-            changes=stack.changes,
-            state=prepared_merge.state,
-            target_change_id=prepared_merge.target_change_id,
-            trunk_branch=trunk_branch,
         )
-        stacks = await stacks_task
-        execution = MergeExecutionInputs(
-            repo=github_client.repo,
-            selected_revset=stack.selected_revset,
-            trunk_branch=trunk_branch,
-            trunk_subject=stack.trunk.subject,
-        )
-        async_merge = build_async_merge_plan(plan, stacks, execution)
-        if prepared_merge.dry_run:
-            if async_merge.planned:
-                action = async_merge.action(
-                    merge_action=merge_action,
-                    method=resolved_merge_method,
-                    repo=execution.repo,
-                    trunk_branch=trunk_branch,
-                )
-                actions = (
-                    (action, async_merge.boundary_action)
-                    if async_merge.boundary_action is not None
-                    else (action,)
-                )
-                return execution.result(actions=actions)
-            return execution.result(
-                actions=(
-                    () if async_merge.boundary_action is None else (async_merge.boundary_action,)
-                )
+    )
+    stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))
+    await asyncio.gather(queue_task, prs_task, stacks_task, return_exceptions=True)
+    try:
+        uses_merge_queue = await queue_task
+    except GithubClientError as error:
+        raise CliError(
+            t"Could not check whether {ui.bookmark(trunk_branch)} uses a merge queue.",
+            hint="Resolve the GitHub error above, then rerun jj-stack merge.",
+        ) from error
+    if uses_merge_queue:
+        if prepared_merge.merge_method is not None:
+            console.warning(
+                t"The base branch {ui.bookmark(trunk_branch)} uses a merge queue; ignoring "
+                t"{ui.cmd('--method')}."
             )
-        return await execute_async_merge(
-            execution=execution,
-            github=github_client,
-            merge_action=merge_action,
-            merge_method=resolved_merge_method,
-            merge=async_merge,
+        merge_action = "merge_queue"
+        resolved_merge_method = None
+    else:
+        merge_action = "direct_merge"
+        resolved_merge_method = _resolve_merge_method(
+            changes=stack.changes,
+            configured=prepared_merge.context.config.merge_method,
+            merge_method=prepared_merge.merge_method,
+            repo_state=github_repo_state,
         )
+    try:
+        observation = await prs_task
+    except GithubClientError as error:
+        raise CliError(
+            "Could not inspect GitHub state for merge.",
+            hint="Resolve the GitHub error above, then rerun jj-stack merge.",
+        ) from error
+    plan = build_merge_plan(
+        observation=observation,
+        remote_name=remote.name,
+        repo=github_repo,
+        changes=stack.changes,
+        state=prepared_merge.state,
+        target_change_id=prepared_merge.target_change_id,
+        trunk_branch=trunk_branch,
+    )
+    stacks = await stacks_task
+    execution = MergeExecutionInputs(
+        repo=github_client.repo,
+        selected_revset=stack.selected_revset,
+        trunk_branch=trunk_branch,
+        trunk_subject=stack.trunk.subject,
+    )
+    async_merge = build_async_merge_plan(plan, stacks, execution)
+    if prepared_merge.dry_run:
+        if async_merge.planned:
+            action = async_merge.action(
+                merge_action=merge_action,
+                method=resolved_merge_method,
+                repo=execution.repo,
+                trunk_branch=trunk_branch,
+            )
+            actions = (
+                (action, async_merge.boundary_action)
+                if async_merge.boundary_action is not None
+                else (action,)
+            )
+            return execution.result(actions=actions), github_repo_state
+        return execution.result(
+            actions=(
+                () if async_merge.boundary_action is None else (async_merge.boundary_action,)
+            )
+        ), github_repo_state
+    return await execute_async_merge(
+        execution=execution,
+        github=github_client,
+        merge_action=merge_action,
+        merge_method=resolved_merge_method,
+        merge=async_merge,
+    ), github_repo_state
 
 
 def _resolve_merge_method(

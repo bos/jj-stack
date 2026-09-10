@@ -1483,12 +1483,14 @@ def _branch_target(ref: _GraphqlRef) -> tuple[str, CommitId]:
     return qualified.removeprefix("refs/heads/"), ref.target.oid
 
 
-def build_github_client(*, repo: GithubRepoAddress) -> GithubClient:
+def build_github_client(*, repo: GithubRepoAddress, token: str | None = None) -> GithubClient:
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "jj-stack/dev",
     }
-    if token := github_token():
+    if token is None:
+        token = github_token()
+    if token:
         headers["Authorization"] = f"Bearer {token}"
 
     return GithubClient(

@@ -134,7 +134,7 @@ async def _run_checks(
         return results
 
     # Checks 4-7: connectivity, push access, Stacks API availability, and trunk branch
-    results.extend(await _check_github_access(parsed_repo=parsed_repo))
+    results.extend(await _check_github_access(parsed_repo=parsed_repo, token=token))
     return results
 
 
@@ -297,10 +297,12 @@ def _check_github_auth() -> tuple[CheckResult, str | None]:
     )
 
 
-async def _check_github_access(*, parsed_repo: GithubRepoAddress) -> list[CheckResult]:
+async def _check_github_access(
+    *, parsed_repo: GithubRepoAddress, token: str
+) -> list[CheckResult]:
     """Run the checks that need the GitHub API, sharing one client."""
 
-    async with build_github_client(repo=parsed_repo) as client:
+    async with build_github_client(repo=parsed_repo, token=token) as client:
         try:
             github_repo = await client.get_repo()
         except GithubClientError as error:

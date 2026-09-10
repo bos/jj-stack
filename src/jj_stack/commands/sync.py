@@ -47,7 +47,7 @@ from jj_stack.errors import (
     resolve_exit_code,
 )
 from jj_stack.formatting import format_pr_label
-from jj_stack.github.client import GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.resolution import (
     GithubTarget,
     UnresolvedGithubTarget,
@@ -57,7 +57,7 @@ from jj_stack.github.resolution import (
 from jj_stack.identifiers import CommitId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import quote_revset_symbol
-from jj_stack.models.github import GithubStack
+from jj_stack.models.github import GithubRepo, GithubStack
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 from jj_stack.stack.convergence import (
     CheckedOutMergedChangeError,
@@ -109,15 +109,33 @@ def sync(
     ):
         if not dry_run:
             context.jj_client.clear_pr_branch_temp_artifacts()
+        return asyncio.run(
+            _sync_async(context=context, all_=all_, dry_run=dry_run, pr=pr, revset=revset)
+        )
+
+
+async def _sync_async(
+    *,
+    context: CommandContext,
+    all_: bool,
+    dry_run: bool,
+    pr: str | None,
+    revset: str | None,
+) -> int:
+    target = _require_github_target(resolve_github_target(context.jj_client.list_git_remotes()))
+    async with build_github_client(repo=target.repo) as github:
         if all_:
-            return _run_all_convergence(context=context, dry_run=dry_run)
+            return await _run_all_convergence(
+                context=context, dry_run=dry_run, github=github, target=target
+            )
         containing_change_id = None
         if pr is not None:
             _, containing_change_id, _ = resolve_linked_change_for_pr(
                 jj_client=context.jj_client, pr_reference=pr, revset=None
             )
-        return run_stack_convergence(
+        return await converge_selected_stack(
             context=context,
+            github=github,
             containing_change_id=containing_change_id,
             dry_run=dry_run,
             print_selected=revset is None,
@@ -125,8 +143,13 @@ def sync(
         )
 
 
-def _run_all_convergence(*, context: CommandContext, dry_run: bool) -> int:
-    target = _require_github_target(resolve_github_target(context.jj_client.list_git_remotes()))
+async def _run_all_convergence(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    github: GithubClient,
+    target: GithubTarget,
+) -> int:
     with console.spinner(description="Fetching trunk") as progress:
         previous_trunk = context.jj_client.resolve_commit("trunk()")
         branches = tuple(
@@ -140,19 +163,20 @@ def _run_all_convergence(*, context: CommandContext, dry_run: bool) -> int:
         context.jj_client.fetch_remote(branches=branches, remote=target.remote.name)
         progress.update("Comparing pull requests with trunk")
         trunk = context.jj_client.resolve_commit("trunk()")
-    exit_code, change_ids, trunk_branch = asyncio.run(
-        _run_global_plan(
-            context=context,
-            dry_run=dry_run,
-            target=target,
-            trunk_commit_id=trunk.commit_id,
-        )
+    exit_code, github_repo, change_ids, trunk_branch = await _run_global_plan(
+        context=context,
+        dry_run=dry_run,
+        github=github,
+        target=target,
+        trunk_commit_id=trunk.commit_id,
     )
     for change_id in change_ids:
         console.output(t"Syncing local stack {ui.change_id(change_id)}:")
         try:
-            stack_exit_code = run_stack_convergence(
+            stack_exit_code = await converge_selected_stack(
                 context=context,
+                github=github,
+                github_repo=github_repo,
                 dry_run=dry_run,
                 fetch_remote_state=False,
                 revset=change_id,
@@ -179,71 +203,71 @@ async def _run_global_plan(
     *,
     context: CommandContext,
     dry_run: bool,
+    github: GithubClient,
     target: GithubTarget,
     trunk_commit_id: CommitId,
-) -> tuple[int, tuple[str, ...], str | None]:
-    async with build_github_client(repo=target.repo) as github:
-        with console.spinner(description="Inspecting tracked pull requests"):
-            try:
-                facts = await observe_global_sync(
-                    context=context,
-                    github=github,
-                    remote_name=target.remote.name,
-                    trunk_commit_id=trunk_commit_id,
-                )
-            except GithubClientError as error:
-                raise CliError("Could not inspect pull requests") from error
-            state = context.state_store.load()
-            plan = build_global_convergence_plan(
-                facts=facts,
-                state=state,
-            )
-        for change_id, candidate, reason in plan.blocked:
-            pr_label = format_pr_label(candidate.pr_identity.pr_number, repo=facts.pr_facts.repo)
-            console.warning(t"Skipped {pr_label} for {ui.change_id(change_id)}: {reason}.")
-        trunk_branch = None
-        if plan.sync_change_ids:
-            repo_state = facts.pr_facts.github_repo
-            trunk_branch, _targets = resolve_trunk_branch(
-                branches_at_trunk=context.jj_client.remote_bookmarks_at_commit(
-                    remote=target.remote.name,
-                    commit_id=trunk_commit_id,
-                ),
-                github_repo_state=repo_state,
-                remote=target.remote,
+) -> tuple[int, GithubRepo, tuple[str, ...], str | None]:
+    with console.spinner(description="Inspecting tracked pull requests"):
+        try:
+            facts = await observe_global_sync(
+                context=context,
+                github=github,
+                remote_name=target.remote.name,
                 trunk_commit_id=trunk_commit_id,
             )
-        results = await apply_pr_finishes(
-            plans=plan.finishes,
-            dry_run=dry_run,
-            github=github,
+        except GithubClientError as error:
+            raise CliError("Could not inspect pull requests") from error
+        state = context.state_store.load()
+        plan = build_global_convergence_plan(
+            facts=facts,
+            state=state,
         )
-        cleanup = await cleanup_tracked_prs(
-            change_ids=tuple(
-                result.change_id for result in results if result.outcome != "skipped"
+    for change_id, candidate, reason in plan.blocked:
+        pr_label = format_pr_label(candidate.pr_identity.pr_number, repo=facts.pr_facts.repo)
+        console.warning(t"Skipped {pr_label} for {ui.change_id(change_id)}: {reason}.")
+    trunk_branch = None
+    if plan.sync_change_ids:
+        repo_state = facts.pr_facts.github_repo
+        trunk_branch, _targets = resolve_trunk_branch(
+            branches_at_trunk=context.jj_client.remote_bookmarks_at_commit(
+                remote=target.remote.name,
+                commit_id=trunk_commit_id,
             ),
-            context=context,
-            dry_run=dry_run,
-            github_client=github,
-            github_target=target,
-            planned_detached_dependents=frozenset(
-                result.candidate.pr_identity.pr_number for result in results
-            ),
+            github_repo_state=repo_state,
+            remote=target.remote,
+            trunk_commit_id=trunk_commit_id,
         )
+    results = await apply_pr_finishes(
+        plans=plan.finishes,
+        dry_run=dry_run,
+        github=github,
+    )
+    cleanup = await cleanup_tracked_prs(
+        change_ids=tuple(result.change_id for result in results if result.outcome != "skipped"),
+        context=context,
+        dry_run=dry_run,
+        github_client=github,
+        github_target=target,
+        planned_detached_dependents=frozenset(
+            result.candidate.pr_identity.pr_number for result in results
+        ),
+    )
     blocked = (
         bool(plan.blocked)
         or any(result.outcome == "skipped" for result in results)
         or any(action.status == "blocked" for action in cleanup.actions)
     )
-    return 1 if blocked else 0, plan.sync_change_ids, trunk_branch
+    return 1 if blocked else 0, facts.pr_facts.github_repo, plan.sync_change_ids, trunk_branch
 
 
-def run_stack_convergence(
+async def converge_selected_stack(
     *,
     context: CommandContext,
+    github: GithubClient,
     containing_change_id: str | None = None,
     dry_run: bool,
     fetch_remote_state: bool = True,
+    github_repo: GithubRepo | None = None,
     print_selected: bool = False,
     revset: str | None,
     trunk_branch: str | None = None,
@@ -262,13 +286,13 @@ def run_stack_convergence(
         head = prepared.stack.head
         print_selected_line(head.change_id, head.subject)
     try:
-        return asyncio.run(
-            _run_selected_convergence(
-                context=context,
-                dry_run=dry_run,
-                prepared=prepared,
-                trunk_branch=trunk_branch,
-            )
+        return await _run_selected_convergence(
+            context=context,
+            dry_run=dry_run,
+            github=github,
+            github_repo=github_repo,
+            prepared=prepared,
+            trunk_branch=trunk_branch,
         )
     except CheckedOutMergedChangeError as error:
         raise CliError(
@@ -284,6 +308,8 @@ async def _run_selected_convergence(
     *,
     context: CommandContext,
     dry_run: bool,
+    github: GithubClient,
+    github_repo: GithubRepo | None,
     prepared: PreparedLocalStack,
     trunk_branch: str | None,
 ) -> int:
@@ -294,84 +320,84 @@ async def _run_selected_convergence(
         return 0
     complete = False
     github_stacks: tuple[GithubStack, ...] = ()
-    async with build_github_client(repo=target.repo) as github:
-        with console.spinner(description="Inspecting pull requests") as progress:
-            prs_task = asyncio.create_task(
-                observe_prs(
-                    change_ids=tuple(change.change_id for change in selected),
-                    context=context,
-                    github_client=github,
-                    include_remote_targets=False,
-                    remote_name=target.remote.name,
-                )
-            )
-            stacks_task = asyncio.create_task(observe_github_stacks(github=github))
-            await wait_for_read_tasks(prs_task, stacks_task)
-            observation = prs_task.result()
-            observed_stacks = stacks_task.result()
-            queued = queued_pr_numbers(observation, selected)
-            if not queued:
-                progress.update("Checking PR branches")
-                observation, github_stacks, complete = await complete_sync_observation(
-                    context=context,
-                    github=github,
-                    initial=observation,
-                    remote_name=target.remote.name,
-                    selected=selected,
-                    stacks=observed_stacks,
-                )
-                queued = queued_pr_numbers(observation, selected)
-        if queued:
-            labels = ui.join(
-                lambda number: format_pr_label(number, repo=observation.repo),
-                queued,
-            )
-            console.output(
-                t"Stack unchanged because the merge queue still contains {labels}. Run "
-                t"{ui.cmd('jj-stack sync')} again after GitHub finishes."
-            )
-            return 0
-        if not complete:
-            console.output("No completed merges or GitHub stack rebases to sync.")
-            return 0
-        with console.spinner(description="Planning local sync"):
-            repo_state = observation.github_repo
-            if trunk_branch is None:
-                trunk_branch, _trunk_targets = resolve_trunk_branch(
-                    branches_at_trunk=context.jj_client.remote_bookmarks_at_commit(
-                        remote=target.remote.name,
-                        commit_id=prepared.stack.trunk.commit_id,
-                    ),
-                    github_repo_state=repo_state,
-                    remote=target.remote,
-                    trunk_commit_id=prepared.stack.trunk.commit_id,
-                )
-            ancestries = classify_observed_commit_ancestries(
+    with console.spinner(description="Inspecting pull requests") as progress:
+        prs_task = asyncio.create_task(
+            observe_prs(
+                change_ids=tuple(change.change_id for change in selected),
                 context=context,
-                observation=observation,
+                github_client=github,
+                github_repo_snapshot=github_repo,
+                include_remote_targets=False,
+                remote_name=target.remote.name,
+            )
+        )
+        stacks_task = asyncio.create_task(observe_github_stacks(github=github))
+        await wait_for_read_tasks(prs_task, stacks_task)
+        observation = prs_task.result()
+        observed_stacks = stacks_task.result()
+        queued = queued_pr_numbers(observation, selected)
+        if not queued:
+            progress.update("Checking PR branches")
+            observation, github_stacks, complete = await complete_sync_observation(
+                context=context,
+                github=github,
+                initial=observation,
+                remote_name=target.remote.name,
+                selected=selected,
+                stacks=observed_stacks,
+            )
+            queued = queued_pr_numbers(observation, selected)
+    if queued:
+        labels = ui.join(
+            lambda number: format_pr_label(number, repo=observation.repo),
+            queued,
+        )
+        console.output(
+            t"Stack unchanged because the merge queue still contains {labels}. Run "
+            t"{ui.cmd('jj-stack sync')} again after GitHub finishes."
+        )
+        return 0
+    if not complete:
+        console.output("No completed merges or GitHub stack rebases to sync.")
+        return 0
+    with console.spinner(description="Planning local sync"):
+        repo_state = observation.github_repo
+        if trunk_branch is None:
+            trunk_branch, _trunk_targets = resolve_trunk_branch(
+                branches_at_trunk=context.jj_client.remote_bookmarks_at_commit(
+                    remote=target.remote.name,
+                    commit_id=prepared.stack.trunk.commit_id,
+                ),
+                github_repo_state=repo_state,
+                remote=target.remote,
                 trunk_commit_id=prepared.stack.trunk.commit_id,
             )
-            plan = build_selected_convergence_plan(
-                ancestries=ancestries,
-                github_stacks=github_stacks,
-                head_children=context.jj_client.query_commits(
-                    f"children({quote_revset_symbol(selected[-1].commit_id)})"
-                ),
-                observation=observation,
-                prepared=prepared,
-                trunk_branch=trunk_branch,
-            )
-        _render_selected_plan(dry_run=dry_run, plan=plan)
-        return await apply_selected_convergence(
+        ancestries = classify_observed_commit_ancestries(
             context=context,
-            dry_run=dry_run,
-            github=github,
-            plan=plan,
-            github_stacks=observed_stacks,
-            trunk_branch=trunk_branch,
-            target=target,
+            observation=observation,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
+        plan = build_selected_convergence_plan(
+            ancestries=ancestries,
+            github_stacks=github_stacks,
+            head_children=context.jj_client.query_commits(
+                f"children({quote_revset_symbol(selected[-1].commit_id)})"
+            ),
+            observation=observation,
+            prepared=prepared,
+            trunk_branch=trunk_branch,
+        )
+    _render_selected_plan(dry_run=dry_run, plan=plan)
+    return await apply_selected_convergence(
+        context=context,
+        dry_run=dry_run,
+        github=github,
+        plan=plan,
+        github_stacks=observed_stacks,
+        trunk_branch=trunk_branch,
+        target=target,
+        trunk_commit_id=prepared.stack.trunk.commit_id,
+    )
 
 
 def _require_github_target(
