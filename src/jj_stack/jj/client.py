@@ -350,13 +350,10 @@ class JjClient:
 
         memberships: dict[str, bool] = {}
         for chunk in batched(tuple(dict.fromkeys(commit_ids)), QUERY_BATCH_SIZE, strict=False):
-            try:
-                commits = self._query_commits_with_membership(
-                    _present_symbols_revset(chunk),
-                    membership_revsets=(f"::{quote_revset_symbol(descendant_commit_id)}",),
-                )
-            except JjCommandError:
-                continue
+            commits = self._query_commits_with_membership(
+                _present_symbols_revset(chunk),
+                membership_revsets=(f"::{quote_revset_symbol(descendant_commit_id)}",),
+            )
             for commit, (is_ancestor,) in commits:
                 memberships[commit.commit_id] = is_ancestor
         return memberships
