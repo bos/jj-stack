@@ -110,14 +110,14 @@ _TOP_LEVEL_HELP_GROUPS: tuple[tuple[str, tuple[HelpCommand, ...]], ...] = (
             HelpCommand("view", view_command.HELP),
             HelpCommand("list", list_command.HELP),
             HelpCommand("merge", merge_command.HELP),
-            HelpCommand("unstack", unstack_command.HELP),
+            HelpCommand("sync", sync_command.HELP),
         ),
     ),
     (
         "Support commands",
         (
+            HelpCommand("unstack", unstack_command.HELP),
             HelpCommand("cleanup", cleanup_command.HELP),
-            HelpCommand("sync", sync_command.HELP),
             HelpCommand("checkout", checkout_command.HELP),
             HelpCommand("doctor", doctor_command.HELP),
             HelpCommand("in-use", in_use_command.HELP),
