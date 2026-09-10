@@ -4,27 +4,22 @@
 remaining changes, updates their existing pull requests, and cleans up unused PR branches,
 stack overview comments, and saved links. It never creates pull requests.
 
-Run it after a merge queue finishes or someone merges the PRs through another client. When
-GitHub merges immediately, `jj-stack merge` performs this update itself. While a selected PR is
-still queued, sync leaves the stack unchanged.
+Run it after a merge queue finishes, after someone merges the PRs through another client, or
+after GitHub's Rebase stack action rewrites the PR branches. When GitHub merges immediately,
+`jj-stack merge` performs this update itself. While a selected PR is still queued, sync leaves
+the stack unchanged.
 
-After GitHub's Rebase stack action, run `jj-stack sync <head-change-id>`. It checks that the PR
-order and contents match, rebases your original changes, and updates the PR branches with commits
-that retain their jj change IDs. It stops if local edits or different contents on GitHub prevent
-a match.
+After a Rebase stack action, sync checks that the PR order and contents match, rebases your
+original changes, and updates the PR branches with commits that retain their jj change IDs.
 
 Sync stops if it would discard local edits or cannot determine which local changes and PRs to
 update. The error explains what needs attention. If a rebase produces conflicts, the local rebase
 stays in place but the affected PRs are not updated. Resolve the conflicts with `jj`, then run
 `jj-stack submit <head-change-id>`.
 
-Rebasing also moves local descendants, but sync updates PRs only for the selected stack. If
-another stack still depends on an obsolete merged change, sync keeps it and names the other stack
-to sync next.
-
 `jj-stack sync --all` updates every local stack affected by a completed merge and cleans up merged
 PRs whose local changes are gone. A blocked stack does not prevent it from syncing independent
-stacks. After GitHub's Rebase stack action, use `jj-stack sync <head-change-id>` instead.
+stacks. It does not handle Rebase stack actions; use `jj-stack sync <head-change-id>` for those.
 
 Use plain `jj rebase` when trunk merely advanced and GitHub did not rewrite the commits.
 """
