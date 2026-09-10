@@ -46,7 +46,6 @@ from jj_stack.stack.change_state import (
     ChangeObservation,
     ChangeState,
     OrphanedRecord,
-    WithPR,
     enumerate_orphaned_records,
 )
 from jj_stack.stack.divergence import divergence_recovery_hint
@@ -425,20 +424,13 @@ def _status_fragments(
                 label = t"1 {label}"
             fragments.append(label)
 
-    open_prs = tuple(
-        state.pr
-        for state, report in zip(states, reports, strict=True)
-        if isinstance(state, WithPR) and report.problem is None and state.pr.state == "open"
-    )
-    check_rollup_statuses = {
-        pr.check_rollup_status for pr in open_prs if pr.check_rollup_status is not None
-    }
+    check_statuses = {report.checks for report in reports if report.problem is None}
     for rollup_status, labels in (
         ("failed", ("warning", "heading")),
         ("pending", ("hint", "heading")),
         ("passed", ("hint", "heading")),
     ):
-        if rollup_status in check_rollup_statuses:
+        if rollup_status in check_statuses:
             fragments.append(ui.semantic_text(f"checks {rollup_status}", *labels))
             break
     return tuple(fragments)

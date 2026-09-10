@@ -758,8 +758,8 @@ def _format_status_summary(
             summary = t"{pr_label} merged"
         else:
             summary = t"{pr_label} {status_label(report.lifecycle)}"
-        if pr.state == "open" and pr.check_rollup_status is not None:
-            summary = t"{summary}, checks {pr.check_rollup_status}"
+        if report.checks is not None:
+            summary = t"{summary}, checks {report.checks}"
     elif change.tracked is not None:
         summary = format_pr_label(
             change.tracked.pr_identity.pr_number, prefix="saved ", repo=repo

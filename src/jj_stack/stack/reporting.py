@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jj_stack.ui as ui
-from jj_stack.models.github import GithubPR
+from jj_stack.models.github import CheckRollupStatus, GithubPR
 from jj_stack.stack.change_state import (
     BranchClaimed,
     BranchDisagrees,
@@ -30,6 +30,7 @@ from jj_stack.stack.change_state import (
     Stop,
     Unpublished,
     UntrackedPRExists,
+    WithPR,
 )
 
 type ReportStatus = Literal[
@@ -58,6 +59,7 @@ class ChangeReport:
     divergent: bool
     needs_sync: bool
     needs_submit: bool
+    checks: CheckRollupStatus | None
     reason: ui.Message | None
     repair: ui.Message | None
 
@@ -115,6 +117,11 @@ def report_change(state: ChangeState) -> ChangeReport:
             isinstance(state, (Edited, PushedUnrecorded))
             and state.has_local_edits
             and not divergent
+        ),
+        checks=(
+            state.pr.check_rollup_status
+            if isinstance(state, WithPR) and state.pr.state == "open"
+            else None
         ),
         reason=state.reason if isinstance(state, Stop) else None,
         repair=state.repair if isinstance(state, Stop) else None,
