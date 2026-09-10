@@ -304,8 +304,6 @@ async def _check_github_access(*, parsed_repo: GithubRepoAddress) -> list[CheckR
             github_repo = await client.get_repo()
         except GithubClientError as error:
             reason = error.user_facing_reason()
-        except Exception as error:
-            reason = f"request failed ({error})"
         else:
             return [
                 CheckResult("connectivity", "ok", f"reached {parsed_repo.full_name}"),
