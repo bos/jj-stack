@@ -402,7 +402,6 @@ def test_view_preserves_saved_identity_when_github_lookup_fails(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.stack.status",),
         client_type=FailingPRLookupClient,
     )
 
@@ -443,7 +442,6 @@ def test_view_stays_local_when_github_is_unavailable_and_no_cache_exists(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.stack.status",),
         client_type=OfflineGithubClient,
     )
 

@@ -128,7 +128,6 @@ def test_unstack_locked_stack_stops_without_closing_or_forgetting(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.unstack",),
         client_type=LockedStackClient,
     )
 

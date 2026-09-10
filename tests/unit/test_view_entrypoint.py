@@ -106,7 +106,7 @@ def test_view_shares_pr_observation_without_losing_selector_order(
     github.get_prs_by_numbers.return_value = {1: prs[0]}
     monkeypatch.setattr(view_module, "bootstrap_context", lambda **_kwargs: context)
     monkeypatch.setattr(view_module, "prepare_local_stack", prepare_stack)
-    monkeypatch.setattr("jj_stack.stack.status.build_github_client", lambda **_kwargs: github)
+    monkeypatch.setattr("jj_stack.bootstrap.build_github_client", lambda **_kwargs: github)
 
     stdout = StringIO()
     stderr = StringIO()

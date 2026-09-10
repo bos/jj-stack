@@ -45,7 +45,7 @@ from jj_stack.errors import (
     error_message,
 )
 from jj_stack.formatting import format_pr_label
-from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.error_messages import github_target_unavailable_messages
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.github.resolution import GithubTarget, UnresolvedGithubTarget, resolve_github_target
@@ -358,7 +358,9 @@ async def _run_cleanup_async(
                 remote=github_target.remote,
             )
         else:
-            async with build_github_client(repo=github_target.repo) as client:
+            async with prepared_cleanup.context.open_github_client(
+                repo=github_target.repo
+            ) as client:
                 await _run_tracked_pr_cleanup_pass(
                     github_client=client,
                     candidates=candidates,

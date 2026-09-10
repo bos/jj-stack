@@ -33,7 +33,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.errors import CliError, UsageError
 from jj_stack.formatting import format_pr_label, format_pr_number
-from jj_stack.github.client import GithubClient, build_github_client
+from jj_stack.github.client import GithubClient
 from jj_stack.github.pr_refs import load_pr, parse_repo_pr_reference, require_managed_pr_head
 from jj_stack.github.resolution import (
     GithubRepoAddress,
@@ -130,7 +130,7 @@ async def _run_relink_async(
         ),
         wrong_repo_message=(f"{pr_reference} does not belong to {repo.full_name}."),
     )
-    async with build_github_client(repo=repo) as github_client:
+    async with context.open_github_client(repo=repo) as github_client:
         pr, head_sha = await _load_exact_relink_pr(
             github_client=github_client,
             pr_number=pr_number,

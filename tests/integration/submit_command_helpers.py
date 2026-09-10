@@ -19,16 +19,6 @@ def configure_submit_environment(
     extra_config_lines: list[str] | None = None,
 ) -> Path:
     return configure_fake_github_environment(
-        command_modules=(
-            "jj_stack.commands.submit.command",
-            "jj_stack.commands.relink",
-            "jj_stack.commands.unstack",
-            "jj_stack.commands.cleanup.command",
-            "jj_stack.commands.merge.command",
-            "jj_stack.commands.sync",
-            "jj_stack.commands.list_",
-            "jj_stack.stack.status",
-        ),
         fake_repo=fake_repo,
         extra_config_lines=extra_config_lines,
         monkeypatch=monkeypatch,

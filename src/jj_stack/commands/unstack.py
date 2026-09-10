@@ -21,7 +21,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands.cleanup.actions import CleanupAction, check_tracked_pr
 from jj_stack.errors import CliError, UsageError
-from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.error_messages import require_github_target
 from jj_stack.github.resolution import resolve_github_target
 from jj_stack.jj.cli_args import JjCliArgs
@@ -124,7 +124,7 @@ async def _run_github_unstack(
         resolve_github_target(context.jj_client.list_git_remotes())
     )
 
-    async with build_github_client(repo=github_target.repo) as github_client:
+    async with context.open_github_client(repo=github_target.repo) as github_client:
         if stack_number is not None:
             github_stack = await _get_github_stack(
                 github_client=github_client,

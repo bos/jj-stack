@@ -27,11 +27,7 @@ def _configure_doctor_environment(
     *,
     client_type: type[GithubClient] = GithubClient,
 ) -> Path:
-    """Set up a fake GitHub environment for doctor integration tests.
-
-    Patches build_github_client and parse_github_repo in the doctor module so that
-    connectivity checks go to the fake GitHub server instead of the real API.
-    """
+    """Set up a fake GitHub environment for doctor integration tests."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state-home"))
     # Provide a fake token so the auth check passes without a real gh CLI or env var.
     monkeypatch.setenv("GITHUB_TOKEN", "fake-token-for-tests")
@@ -40,7 +36,6 @@ def _configure_doctor_environment(
         monkeypatch,
         app=create_app(FakeGithubState.single_repo(fake_repo)),
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.doctor",),
         client_type=client_type,
     )
 

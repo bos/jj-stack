@@ -56,7 +56,7 @@ def test_shared_github_failure_leaves_untracked_stack_complete(monkeypatch) -> N
         abort_github_inspection,
     )
 
-    observation = observe_status(prepared=(prepared, local))
+    observation = observe_status(context=fake_command_context(), prepared=(prepared, local))
     result = build_status_result(prepared=prepared, pr_lookups=observation)
     local_result = build_status_result(prepared=local, pr_lookups=observation)
 

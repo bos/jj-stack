@@ -43,7 +43,7 @@ from jj_stack.commands.sync import converge_selected_stack
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError, error_hint
-from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.error_messages import (
     observe_github_repo,
     read_or_stop,
@@ -134,7 +134,7 @@ async def _run_merge(
             revset=selected_revset,
             target_change_id=target_change_id,
         )
-    async with build_github_client(repo=prepared_merge.target.repo) as github_client:
+    async with context.open_github_client(repo=prepared_merge.target.repo) as github_client:
         result, github_repo_state = await _stream_merge_async(prepared_merge, github_client)
         _print_merge_result(result)
         if result.blocked:

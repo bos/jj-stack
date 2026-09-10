@@ -65,7 +65,6 @@ def install_submit_fault(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
         client_type=FaultingGithubClient,
     )
 

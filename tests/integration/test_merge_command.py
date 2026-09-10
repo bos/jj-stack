@@ -155,7 +155,6 @@ def test_merge_queue_lookup_failure_stops_before_requesting_a_merge(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.merge.command",),
         client_type=QueueLookupFailureClient,
     )
 
@@ -376,7 +375,6 @@ def test_stack_merge_recovers_with_sync_after_a_lost_response(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.merge.command",),
         client_type=LostResponseClient,
     )
     assert run_main(repo, config_path, "merge") != 0
@@ -387,7 +385,6 @@ def test_stack_merge_recovers_with_sync_after_a_lost_response(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.merge.command",),
     )
     assert run_main(repo, config_path, "merge") == 1
     pending = capsys.readouterr()
@@ -591,7 +588,6 @@ def test_merge_expected_head_guard_rejects_a_race(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.merge.command",),
         client_type=HeadRaceClient,
     )
 

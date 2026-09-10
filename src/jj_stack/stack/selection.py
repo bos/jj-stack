@@ -5,11 +5,12 @@ from __future__ import annotations
 import jj_stack.ui as ui
 from jj_stack.errors import AmbiguousSelectionError, CliError, UsageError
 from jj_stack.formatting import format_pr_label
+from jj_stack.github import resolution
 from jj_stack.github.pr_refs import (
     parse_pr_number,
     parse_repo_pr_reference,
 )
-from jj_stack.github.resolution import GithubRepoAddress, parse_github_repo, select_submit_remote
+from jj_stack.github.resolution import GithubRepoAddress, select_submit_remote
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import TrackingStore
 
@@ -78,7 +79,7 @@ def resolve_pr_reference(
             t"use a pull request number or fix the selected remote.",
             hint=error.hint,
         ) from error
-    github_repo = parse_github_repo(remote)
+    github_repo = resolution.parse_github_repo(remote)
     if github_repo is None:
         if pr_number is not None:
             return pr_number, None

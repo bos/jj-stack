@@ -184,6 +184,7 @@ def _run_list(
         )
         with console.spinner(description="Inspecting GitHub"):
             lookups = observe_status(
+                context=context,
                 prepared=tuple(item.prepared for item in prepared_discovered),
                 exclude_branches=duplicate_branch_names,
             )

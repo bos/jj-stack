@@ -409,7 +409,6 @@ def test_list_falls_back_when_github_unavailable(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.list_", "jj_stack.stack.status"),
         client_type=OfflineGithubClient,
     )
 

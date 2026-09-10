@@ -433,11 +433,6 @@ def _configure_checkout_environment(
     fake_repo: FakeGithubRepo,
 ) -> Path:
     return configure_fake_github_environment(
-        command_modules=(
-            "jj_stack.commands.submit.command",
-            "jj_stack.stack.status",
-            "jj_stack.commands.checkout",
-        ),
         fake_repo=fake_repo,
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,

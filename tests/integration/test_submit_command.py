@@ -586,7 +586,6 @@ def test_submit_github_stack_recovers_lost_create_and_retries_blocked_append(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
         client_type=LoseFirstCreateResponseClient,
     )
     state_store = TrackingStore.for_repo(repo)
@@ -777,7 +776,6 @@ def test_submit_stack_preflight_failures_recover_without_persisted_phase(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
         client_type=PreflightFailureClient,
     )
     state_before = TrackingStore.for_repo(repo).load()
@@ -1784,7 +1782,6 @@ def test_submit_reports_published_prs_when_the_overview_update_needs_retrying(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
         client_type=FailingCommentUpdateClient,
     )
 
@@ -2278,7 +2275,6 @@ def test_submit_retry_keeps_a_pr_created_while_another_request_failed(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
         client_type=FailSpecificPRClient,
     )
 
@@ -2305,7 +2301,6 @@ def test_submit_retry_keeps_a_pr_created_while_another_request_failed(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
     )
     assert run_main(repo, config_path, "submit") == 0
     retried = capsys.readouterr()
@@ -2354,7 +2349,6 @@ def test_submit_rerun_converges_pr_metadata_after_partial_create_failure(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
         client_type=FlakyMetadataClient,
     )
 
@@ -2407,7 +2401,6 @@ def test_submit_unchanged_rerun_skips_pr_metadata_writes(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
     )
 
     assert run_main(repo, config_path, "submit") == 0
@@ -2436,7 +2429,6 @@ def test_submit_unchanged_rerun_skips_pr_metadata_writes(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
         client_type=NoMetadataWritesClient,
     )
 
@@ -2513,7 +2505,6 @@ def test_submit_re_request_observes_reviews_before_mutation_and_retries(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=("jj_stack.commands.submit.command",),
         client_type=FailingReviewLoadClient,
     )
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import atexit
 import contextlib
-import importlib
 import io
 import os
 import pickle
@@ -15,6 +14,8 @@ from pathlib import Path
 
 import httpx2
 
+import jj_stack.bootstrap
+import jj_stack.github.resolution
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import short_change_id
@@ -38,14 +39,6 @@ _TEST_JJ_IDENTITY = {
 }
 _SHARED_TEMPLATE_ROOT: Path | None = None
 _TEMPLATE_MEMO: dict[str, Path] = {}
-_SUBMIT_CONFIG_MODULES = (
-    "jj_stack.commands.submit.command",
-    "jj_stack.commands.relink",
-    "jj_stack.commands.unstack",
-    "jj_stack.commands.cleanup.command",
-    "jj_stack.commands.merge.command",
-    "jj_stack.stack.status",
-)
 
 
 def fake_github_client_wiring(
@@ -54,12 +47,7 @@ def fake_github_client_wiring(
     *,
     client_type: type[GithubClient] = GithubClient,
 ) -> tuple[Callable[..., GithubClient], Callable[..., GithubRepoAddress]]:
-    """Return the client builder and repo-address stubs for a fake server.
-
-    Every wiring site patches `build_github_client`, `parse_github_repo`,
-    and `require_github_repo` with these two callables over the same
-    in-process fake GitHub app.
-    """
+    """Return the client builder and repo-address stubs for a fake server."""
 
     def build_github_client(*, repo: GithubRepoAddress, token: str | None = None) -> GithubClient:
         return client_type(
@@ -84,28 +72,17 @@ def patch_github_client_builders(
     *,
     app,
     fake_repo: FakeGithubRepo,
-    modules: tuple[str, ...],
     client_type: type[GithubClient] = GithubClient,
 ) -> None:
+    """Point every command at the fake GitHub app through the two production seams."""
+
     build_github_client, parse_github_repo = fake_github_client_wiring(
         fake_repo,
         app,
         client_type=client_type,
     )
-    resolution_module = importlib.import_module("jj_stack.github.resolution")
-    monkeypatch.setattr(resolution_module, "parse_github_repo", parse_github_repo)
-    for module in modules:
-        module_object = importlib.import_module(module)
-        monkeypatch.setattr(
-            module_object,
-            "build_github_client",
-            build_github_client,
-            raising=False,
-        )
-        monkeypatch.setattr(module_object, "parse_github_repo", parse_github_repo, raising=False)
-        monkeypatch.setattr(
-            module_object, "require_github_repo", parse_github_repo, raising=False
-        )
+    monkeypatch.setattr("jj_stack.bootstrap.build_github_client", build_github_client)
+    monkeypatch.setattr("jj_stack.github.resolution.parse_github_repo", parse_github_repo)
 
 
 class OfflineGithubClient(GithubClient):
@@ -117,7 +94,6 @@ class OfflineGithubClient(GithubClient):
 
 def configure_fake_github_environment(
     *,
-    command_modules: tuple[str, ...],
     fake_repo: FakeGithubRepo,
     monkeypatch,
     tmp_path: Path,
@@ -133,7 +109,6 @@ def configure_fake_github_environment(
         monkeypatch,
         app=app,
         fake_repo=fake_repo,
-        modules=command_modules,
     )
     return config_path
 
@@ -271,16 +246,12 @@ def _build_submitted_stack_template(template_root: Path, size: int) -> None:
         app = create_app(FakeGithubState.single_repo(fake_repo))
         build_github_client, parse_github_repo = fake_github_client_wiring(fake_repo, app)
 
-        for mod_name in _SUBMIT_CONFIG_MODULES:
-            mod = importlib.import_module(mod_name)
-            for attr, new in (
-                ("build_github_client", build_github_client),
-                ("parse_github_repo", parse_github_repo),
-                ("require_github_repo", parse_github_repo),
-            ):
-                if hasattr(mod, attr):
-                    saved_attrs.append((mod, attr, getattr(mod, attr)))
-                    setattr(mod, attr, new)
+        for module, attr, new in (
+            (jj_stack.bootstrap, "build_github_client", build_github_client),
+            (jj_stack.github.resolution, "parse_github_repo", parse_github_repo),
+        ):
+            saved_attrs.append((module, attr, getattr(module, attr)))
+            setattr(module, attr, new)
 
         config_path = write_fake_github_config(template_root)
         # The template is built lazily inside the first test that calls the

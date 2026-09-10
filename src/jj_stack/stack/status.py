@@ -8,11 +8,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 import jj_stack.ui as ui
+from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.github.client import (
     GithubClient,
     GithubClientError,
-    build_github_client,
 )
 from jj_stack.github.error_messages import github_action_error_message
 from jj_stack.github.resolution import (
@@ -81,6 +81,7 @@ class StatusResult:
 
 def observe_status(
     *,
+    context: CommandContext,
     prepared: tuple[PreparedLocalStack, ...],
     exclude_branches: frozenset[str] = frozenset(),
 ) -> dict[str, ChangeObservation] | CliError:
@@ -101,7 +102,9 @@ def observe_status(
         return {}
     try:
         return asyncio.run(
-            lookup_pr_lookups_async(github_repo=target.repo, observations=observations)
+            lookup_pr_lookups_async(
+                context=context, github_repo=target.repo, observations=observations
+            )
         )
     except CliError as error:
         logger.debug("status github inspection failed: %s", error_message(error))
@@ -162,12 +165,13 @@ def _local_observation(prepared: PreparedLocalStack, change: LocalCommit) -> Cha
 
 async def lookup_pr_lookups_async(
     *,
+    context: CommandContext,
     github_repo: GithubRepoAddress,
     observations: Mapping[str, ChangeObservation],
 ) -> dict[str, ChangeObservation]:
     """Look up the saved PR on each branch with a client for this repository."""
 
-    async with build_github_client(repo=github_repo) as github_client:
+    async with context.open_github_client(repo=github_repo) as github_client:
         return await discover_pr_lookups(github_client=github_client, observations=observations)
 
 

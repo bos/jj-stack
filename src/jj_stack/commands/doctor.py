@@ -24,16 +24,15 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.errors import CliError, error_message
+from jj_stack.github import resolution
 from jj_stack.github.auth import github_token, github_token_from_env
 from jj_stack.github.client import (
     GithubClient,
     GithubClientError,
-    build_github_client,
 )
 from jj_stack.github.error_messages import repo_lookup_reason
 from jj_stack.github.resolution import (
     GithubRepoAddress,
-    parse_github_repo,
     select_submit_remote,
 )
 from jj_stack.github.stack_availability import github_stacks_unavailable_error
@@ -134,7 +133,9 @@ async def _run_checks(
         return results
 
     # Checks 4-7: connectivity, push access, Stacks API availability, and trunk branch
-    results.extend(await _check_github_access(parsed_repo=parsed_repo, token=token))
+    results.extend(
+        await _check_github_access(context=context, parsed_repo=parsed_repo, token=token)
+    )
     return results
 
 
@@ -169,7 +170,7 @@ def _check_git_remote(*, context: CommandContext) -> tuple[CheckResult, GitRemot
 
 
 def _check_github_remote(remote: GitRemote) -> tuple[CheckResult, GithubRepoAddress | None]:
-    parsed = parse_github_repo(remote)
+    parsed = resolution.parse_github_repo(remote)
     if parsed is None:
         return (
             CheckResult(
@@ -298,11 +299,11 @@ def _check_github_auth() -> tuple[CheckResult, str | None]:
 
 
 async def _check_github_access(
-    *, parsed_repo: GithubRepoAddress, token: str
+    *, context: CommandContext, parsed_repo: GithubRepoAddress, token: str
 ) -> list[CheckResult]:
     """Run the checks that need the GitHub API, sharing one client."""
 
-    async with build_github_client(repo=parsed_repo, token=token) as client:
+    async with context.open_github_client(repo=parsed_repo, token=token) as client:
         try:
             github_repo = await client.get_repo()
         except GithubClientError as error:

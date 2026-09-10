@@ -118,11 +118,12 @@ def _run_status(
         selections = ((None, _prepare_status_with_spinner(context=context, revset=None), ()),)
     with console.spinner(description="Inspecting GitHub"):
         pr_lookups = observe_status(
+            context=context,
             prepared=tuple(
                 prepared
                 for _, prepared, _ in selections
                 if isinstance(prepared, PreparedLocalStack)
-            )
+            ),
         )
     exit_code = 0
     multi_selector = len(selectors) > 1

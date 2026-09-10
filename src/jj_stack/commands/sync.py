@@ -46,7 +46,7 @@ from jj_stack.errors import (
     resolve_exit_code,
 )
 from jj_stack.formatting import format_pr_label
-from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.error_messages import require_github_target
 from jj_stack.github.resolution import (
     GithubTarget,
@@ -120,7 +120,7 @@ async def _sync_async(
     revset: str | None,
 ) -> int:
     target = require_github_target(resolve_github_target(context.jj_client.list_git_remotes()))
-    async with build_github_client(repo=target.repo) as github:
+    async with context.open_github_client(repo=target.repo) as github:
         if all_:
             return await _run_all_convergence(
                 context=context, dry_run=dry_run, github=github, target=target

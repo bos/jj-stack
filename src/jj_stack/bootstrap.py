@@ -13,6 +13,8 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.config import AppConfig, load_config
 from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient, build_github_client
+from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
 from jj_stack.jj.settings import read_jj_settings
@@ -44,6 +46,11 @@ class CommandContext:
     jj_client: JjClient
     repo_root: Path
     state_store: TrackingStore
+
+    def open_github_client(
+        self, *, repo: GithubRepoAddress, token: str | None = None
+    ) -> GithubClient:
+        return build_github_client(repo=repo, token=token)
 
 
 def bootstrap_context(

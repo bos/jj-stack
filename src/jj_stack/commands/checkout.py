@@ -39,7 +39,7 @@ from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import CliError, UsageError
 from jj_stack.formatting import format_pr_label
-from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.error_messages import observe_github_repo
 from jj_stack.github.pr_refs import load_pr, parse_repo_pr_reference, require_managed_pr_head
 from jj_stack.github.resolution import (
@@ -134,7 +134,7 @@ async def _checkout_async(
         return await _adopt_under_lock(context, lambda: _checkout_saved_stack(context, revset))
     remote = select_submit_remote(context.jj_client.list_git_remotes())
     repo = require_github_repo(remote)
-    async with build_github_client(repo=repo) as github_client:
+    async with context.open_github_client(repo=repo) as github_client:
         if pick:
             choice = await _pick_stack(context, github_client=github_client, repo=repo)
             pr, revset = choice.pr, choice.revset

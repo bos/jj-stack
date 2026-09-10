@@ -31,7 +31,6 @@ from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.config import parse_comma_separated_flag_values
 from jj_stack.errors import CliError
-from jj_stack.github.client import build_github_client
 from jj_stack.github.error_messages import observe_github_repo, read_or_stop
 from jj_stack.github.resolution import (
     require_github_repo,
@@ -409,7 +408,7 @@ async def run_submit_async(
         }
 
     generated_edit_path: Path | None = None
-    async with build_github_client(repo=github_repo) as github_client:
+    async with context.open_github_client(repo=github_repo) as github_client:
         generated_descriptions = prepared_inputs.generated_pr_descriptions
         with console.spinner(description="Inspecting remotes"):
             exact_targets_task = asyncio.create_task(
