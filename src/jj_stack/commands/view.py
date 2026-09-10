@@ -51,11 +51,7 @@ from jj_stack.jj.client import (
     divergent_change_id_from_error,
 )
 from jj_stack.stack.divergence import divergence_recovery_hint
-from jj_stack.stack.preparation import (
-    PreparedLocalStack,
-    prepare_local_stack,
-    stack_preparation_cli_error,
-)
+from jj_stack.stack.preparation import PreparedLocalStack, prepare_local_stack
 from jj_stack.stack.reporting import report_change, status_label, submittable_edits
 from jj_stack.stack.selected import is_change_id_prefix
 from jj_stack.stack.selection import resolve_linked_change_for_pr
@@ -263,17 +259,13 @@ def _prepare_status_with_spinner(
     revset: str | None,
 ) -> PreparedLocalStack:
     with console.spinner(description="Inspecting jj stack"):
-        try:
-            prepared_status = prepare_local_stack(
-                context=context,
-                containing_change_id=containing_change_id,
-                fetch_remote_state=False,
-                inspection_mode=True,
-                revset=revset,
-            )
-        except UnsupportedStackError as error:
-            raise stack_preparation_cli_error(error) from error
-    return prepared_status
+        return prepare_local_stack(
+            context=context,
+            containing_change_id=containing_change_id,
+            fetch_remote_state=False,
+            inspection_mode=True,
+            revset=revset,
+        )
 
 
 def _local_history_warnings(prepared_status: PreparedLocalStack) -> tuple[ui.Message, ...]:

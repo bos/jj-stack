@@ -37,7 +37,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.concurrency import wait_for_read_tasks
-from jj_stack.errors import CliError, UnsupportedStackError, UsageError
+from jj_stack.errors import CliError, UsageError
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import observe_github_repo
@@ -59,7 +59,6 @@ from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.observation import observe_pr_bookmarks
 from jj_stack.stack.pr_branches import require_unique_pr_claims
 from jj_stack.stack.pr_facts import observe_github_stacks
-from jj_stack.stack.preparation import stack_preparation_cli_error
 from jj_stack.stack.repo import observe_repo_paths
 from jj_stack.stack.selected import select_stack_path
 from jj_stack.state.operation_lock import operation_lock
@@ -250,17 +249,9 @@ async def _checkout_pr_stack(
             branch=top_pr.head.ref,
             expected_target=top_head_sha,
         ):
-            stack = _discover_checkout_stack(
-                client=client,
-                commit_id=top_head_sha,
-                state=state,
-            )
+            stack = select_stack_path(jj_client=client, revset=top_head_sha, state=state).stack
     else:
-        stack = _discover_checkout_stack(
-            client=client,
-            commit_id=top_head_sha,
-            state=state,
-        )
+        stack = select_stack_path(jj_client=client, revset=top_head_sha, state=state).stack
 
     remote_targets = await github_client.get_branch_targets(
         branches=tuple(pr.head.ref for pr in prs),
@@ -352,24 +343,6 @@ def _added_commit_warnings(
 def _describe_added_commit(client: JjClient, remote: str, commit: LocalCommit) -> ui.Message:
     author = client.read_remote_git_commit(remote=remote, commit_id=commit.commit_id).author
     return t"{ui.change_id(commit.change_id)} ({author}: {commit.subject})"
-
-
-def _discover_checkout_stack(
-    *,
-    client: JjClient,
-    commit_id: str,
-    state: TrackingState,
-) -> LocalStack:
-    """Resolve the PR stack, translating shape failures into repair guidance."""
-
-    try:
-        return select_stack_path(
-            jj_client=client,
-            revset=commit_id,
-            state=state,
-        ).stack
-    except UnsupportedStackError as error:
-        raise stack_preparation_cli_error(error) from error
 
 
 async def _load_pr_chain(

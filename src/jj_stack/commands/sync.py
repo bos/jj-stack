@@ -40,7 +40,6 @@ from jj_stack.commands.sync_apply import apply_pr_finishes, apply_selected_conve
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import (
     CliError,
-    UnsupportedStackError,
     UsageError,
     error_hint,
     error_message,
@@ -78,7 +77,6 @@ from jj_stack.stack.pr_facts import (
 from jj_stack.stack.preparation import (
     PreparedLocalStack,
     prepare_local_stack,
-    stack_preparation_cli_error,
 )
 from jj_stack.stack.selection import resolve_linked_change_for_pr
 from jj_stack.stack.trunk import observe_trunk_branch
@@ -257,15 +255,12 @@ async def converge_selected_stack(
     trunk_branch: str | None = None,
 ) -> int:
     with console.spinner(description="Inspecting local stack"):
-        try:
-            prepared = prepare_local_stack(
-                containing_change_id=containing_change_id,
-                context=context,
-                fetch_remote_state=fetch_remote_state,
-                revset=revset,
-            )
-        except UnsupportedStackError as error:
-            raise stack_preparation_cli_error(error) from error
+        prepared = prepare_local_stack(
+            containing_change_id=containing_change_id,
+            context=context,
+            fetch_remote_state=fetch_remote_state,
+            revset=revset,
+        )
     if print_selected and prepared.stack.changes:
         head = prepared.stack.head
         print_selected_line(head.change_id, head.subject)

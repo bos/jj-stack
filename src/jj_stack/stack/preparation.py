@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
-from jj_stack.errors import CliError, UnsupportedStackError, error_message
+from jj_stack.errors import UnsupportedStackError
 from jj_stack.github.resolution import GithubTarget, UnresolvedGithubTarget, resolve_github_target
 from jj_stack.jj.client import JjClient
 from jj_stack.models.stack import LocalStack
@@ -25,16 +25,6 @@ class PreparedLocalStack:
     github_target: GithubTarget | UnresolvedGithubTarget
     stack: LocalStack
     state: TrackingState
-
-
-def stack_preparation_cli_error(error: UnsupportedStackError) -> CliError:
-    """Translate stack-shape preparation failures into a user-facing CLI error."""
-
-    if error.hint is not None:
-        # An error that names its own recovery step already explains itself; prefixing it with
-        # a shape summary would bury the hint inside the message.
-        return CliError(error_message(error), hint=error.hint)
-    return CliError(t"Local history does not form a linear stack. {error}")
 
 
 def prepare_local_stack(
