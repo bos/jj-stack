@@ -46,7 +46,6 @@ from jj_stack.github.resolution import (
     require_github_repo,
     select_submit_remote,
 )
-from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
@@ -56,7 +55,7 @@ from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, T
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace, pr_branch_matches_change
 from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.observation import observe_pr_bookmarks
-from jj_stack.stack.pr_facts import duplicate_pr_claim_change_ids
+from jj_stack.stack.pr_facts import duplicate_pr_claim_change_ids, observe_github_stacks
 from jj_stack.stack.preparation import stack_preparation_cli_error
 from jj_stack.stack.repo import observe_repo_paths
 from jj_stack.stack.selected import select_stack_path
@@ -506,21 +505,13 @@ async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
     async with build_github_client(repo=repo) as github_client:
         repo_result, stacks_result = await asyncio.gather(
             github_client.get_repo(),
-            github_client.list_stacks(),
+            observe_github_stacks(github=github_client),
             return_exceptions=True,
         )
         if isinstance(repo_result, GithubClientError):
             raise repo_lookup_error(repo_result, repo=repo.full_name) from repo_result
         if isinstance(repo_result, BaseException):
             raise repo_result
-        if isinstance(stacks_result, GithubClientError):
-            unavailable = github_stacks_unavailable_error(
-                error=stacks_result,
-                repo=repo.full_name,
-            )
-            if unavailable is not None:
-                raise unavailable from None
-            raise CliError("Could not list GitHub stacks for checkout.") from stacks_result
         if isinstance(stacks_result, BaseException):
             raise stacks_result
         github_stacks = stacks_result

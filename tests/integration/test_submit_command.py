@@ -797,7 +797,7 @@ def test_submit_stack_preflight_failures_recover_without_persisted_phase(
 
     failure = "membership"
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
-    assert "Could not inspect GitHub repo" in capsys.readouterr().err
+    assert "Could not inspect GitHub stack membership" in capsys.readouterr().err
     assert TrackingStore.for_repo(repo).load() == state_before
     assert remote_refs(fake_repo.git_dir) == remote_before
     assert fake_repo.github_stacks == stacks_before

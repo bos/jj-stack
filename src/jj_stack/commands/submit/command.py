@@ -37,7 +37,6 @@ from jj_stack.github.resolution import (
     require_github_repo,
     resolve_trunk_branch,
 )
-from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
@@ -53,6 +52,7 @@ from jj_stack.stack.pr_branches import (
     ensure_unique_pr_branches,
     resolve_pr_branches,
 )
+from jj_stack.stack.pr_facts import observe_github_stacks
 from jj_stack.stack.status import discover_pr_lookups
 from jj_stack.state.operation_lock import operation_lock
 
@@ -244,13 +244,6 @@ def _github_inspection_results(
     for kind, result in (("repo", repo), ("stacks", stacks), ("prs", lookups)):
         if not isinstance(result, BaseException):
             continue
-        if kind == "stacks" and isinstance(result, GithubClientError):
-            unavailable = github_stacks_unavailable_error(
-                error=result,
-                repo=repo_name,
-            )
-            if unavailable is not None:
-                raise unavailable from None
         if isinstance(result, GithubClientError):
             if kind == "repo":
                 raise repo_lookup_error(result, repo=repo_name) from result
@@ -458,7 +451,7 @@ async def run_submit_async(
                     github_client=github_client,
                     observations=observations_by_branch(branch_resolutions),
                 ),
-                github_client.list_stacks(),
+                observe_github_stacks(github=github_client),
                 return_exceptions=True,
             )
             if isinstance(exact_remote_targets_result, BaseException):

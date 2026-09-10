@@ -12,6 +12,7 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR, GithubRepo, GithubStack
 from jj_stack.models.stack import LocalCommit
@@ -198,9 +199,14 @@ def classify_observed_commit_ancestries(
 
 
 async def observe_github_stacks(*, github: GithubClient) -> tuple[GithubStack, ...]:
+    """List the repo's GitHub stacks, explaining a repo that cannot use the Stacks API."""
+
     try:
         return await github.list_stacks()
     except GithubClientError as error:
+        unavailable = github_stacks_unavailable_error(error=error, repo=github.repo.full_name)
+        if unavailable is not None:
+            raise unavailable from None
         raise CliError(
             "Could not inspect GitHub stack membership.",
             hint="Resolve the GitHub error above, then rerun the command.",
