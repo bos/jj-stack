@@ -52,7 +52,6 @@ Running `jj-stack` without a subcommand is equivalent to `jj-stack view` without
 |---|---|
 | `completion` | Generate shell completion for `jj-stack` or a `jj stack` alias. |
 | `help --all` | Include advanced commands and global options in top-level help. |
-| `help --all-in-one` | Print the help for every command as one Markdown document. |
 
 ## Choose a stack
 

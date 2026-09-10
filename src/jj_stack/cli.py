@@ -49,7 +49,7 @@ from jj_stack.cli_help import (
     emit_command_help,
     emit_top_level_help,
     normalized_help_text,
-    render_all_in_one_markdown,
+    render_website_reference,
 )
 from jj_stack.completion import emit_shell_completion, validate_jj_alias
 from jj_stack.console import RequestedColorMode, configured_console, rich_color_mode
@@ -98,8 +98,7 @@ Omit `--jj-alias` if you only use the standalone `jj-stack` command.
 """
 _HELP_DESCRIPTION = """
 Show top-level help or the detailed help for one command. Use `--all` to show every command and
-global option in top-level help. Use `--all-in-one` to generate one Markdown reference containing
-every command and option.
+global option in top-level help.
 """
 
 
@@ -664,12 +663,7 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Show every command and global option in top-level help",
     )
-    add_help_argument(
-        help_scope,
-        "--all-in-one",
-        action="store_true",
-        help="Generate one Markdown reference containing every command and option",
-    )
+    help_scope.add_argument("--website-reference", action="store_true", help=SUPPRESS)
     help_parser.add_argument(
         "command",
         nargs="?",
@@ -680,11 +674,11 @@ def build_parser() -> ArgumentParser:
 
 def _help_handler(args: Namespace) -> int:
     parser = build_parser()
-    if args.all_in_one:
+    if args.website_reference:
         if args.command is not None:
-            raise UsageError("help --all-in-one cannot be combined with a command")
+            raise UsageError("help --website-reference cannot be combined with a command")
         console.output(
-            render_all_in_one_markdown(
+            render_website_reference(
                 parser,
                 groups=_TOP_LEVEL_HELP_GROUPS,
                 aliases=_COMMAND_ALIASES,

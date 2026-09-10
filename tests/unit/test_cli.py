@@ -86,10 +86,10 @@ def test_command_usage_preserves_semantics_without_ansi(monkeypatch) -> None:
         assert label in labels[token]
 
 
-def test_help_all_in_one_marks_cli_tokens_for_styling(monkeypatch, capsys) -> None:
+def test_help_website_reference_marks_cli_tokens_for_styling(monkeypatch, capsys) -> None:
     monkeypatch.setenv("PYTHON_COLORS", "1")
 
-    exit_code = main(["help", "--all-in-one"])
+    exit_code = main(["help", "--website-reference"])
     captured = capsys.readouterr()
 
     assert exit_code == 0

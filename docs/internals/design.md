@@ -721,7 +721,8 @@ refresh by comparing each submitted baseline with the current local commit and n
 ## CLI contract
 
 `help --all` adds advanced commands and hidden global options to ordinary top-level help.
-`help --all-in-one` emits the complete command reference as Markdown.
+The hidden `help --website-reference` option emits the complete command reference as the Markdown
+and HTML body of the website's CLI reference page.
 
 Running the executable without a subcommand is equivalent to `view` without arguments.
 
