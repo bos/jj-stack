@@ -57,7 +57,7 @@ from jj_stack.github.resolution import (
 from jj_stack.identifiers import CommitId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import quote_revset_symbol
-from jj_stack.models.github import GithubRepo, GithubStack
+from jj_stack.models.github import GithubRepo
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 from jj_stack.stack.convergence import (
     CheckedOutMergedChangeError,
@@ -315,7 +315,6 @@ async def _run_selected_convergence(
         console.output("Nothing to sync: the selected change is already on trunk.")
         return 0
     complete = False
-    github_stacks: tuple[GithubStack, ...] = ()
     with console.spinner(description="Inspecting pull requests") as progress:
         prs_task = asyncio.create_task(
             observe_prs(
@@ -335,7 +334,7 @@ async def _run_selected_convergence(
         queued = queued_pr_numbers(observation, selected)
         if not queued:
             progress.update("Checking PR branches")
-            observation, github_stacks, complete = await complete_sync_observation(
+            observation, complete = await complete_sync_observation(
                 context=context,
                 github=github,
                 initial=observation,
@@ -344,7 +343,6 @@ async def _run_selected_convergence(
                 stacks=observed_stacks,
                 state=prepared.state,
             )
-            queued = queued_pr_numbers(observation, selected)
     if queued:
         labels = ui.join(
             lambda number: format_pr_label(number, repo=observation.repo),
@@ -377,7 +375,7 @@ async def _run_selected_convergence(
         )
         plan = build_selected_convergence_plan(
             ancestries=ancestries,
-            github_stacks=github_stacks,
+            github_stacks=observed_stacks,
             head_children=context.jj_client.query_commits(
                 f"children({quote_revset_symbol(selected[-1].commit_id)})"
             ),

@@ -28,7 +28,7 @@ async def complete_sync_observation(
     selected: tuple[LocalCommit, ...],
     stacks: tuple[GithubStack, ...],
     state: TrackingState,
-) -> tuple[RepoFacts, tuple[GithubStack, ...], bool]:
+) -> tuple[RepoFacts, bool]:
     selected_prs = {
         tracked.pr_identity.pr_number
         for change in selected
@@ -42,7 +42,7 @@ async def complete_sync_observation(
         for change in selected
         if (observed := initial.prs.get(change.change_id)) is not None
     ) and (resource_prs & tracked_prs).issubset(selected_prs):
-        return initial, (), False
+        return initial, False
     change_ids = tuple(
         change_id
         for change_id, tracked in state.prs.items()
@@ -84,7 +84,7 @@ async def complete_sync_observation(
         },
     )
     changed = any(_pr_changed(item) for item in observation.prs.values())
-    return observation, stacks if changed else (), changed
+    return observation, changed
 
 
 def queued_pr_numbers(
