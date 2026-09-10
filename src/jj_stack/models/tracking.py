@@ -42,13 +42,6 @@ class TrackedPR(BaseModel):
     pr_identity: PRIdentity
     submitted_baseline: SubmittedBaseline
 
-    def matches_snapshot(self, pr: GithubPR) -> bool:
-        """Whether the PR matches the saved link and points to the submitted commit."""
-
-        return (
-            self.pr_identity.matches_pr(pr) and pr.head.sha == self.submitted_baseline.commit_id
-        )
-
 
 class TrackingState(BaseModel):
     """Complete pull request records keyed by their owning change IDs."""

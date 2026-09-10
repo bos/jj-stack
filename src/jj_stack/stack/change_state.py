@@ -499,7 +499,7 @@ def classify(
         o = replace(o, selected=selected)
     if ancestries is not None and o.tracked is not None and isinstance(o.pr, GithubPR):
         evidence, reason = classify_trunk_evidence(
-            ancestries=ancestries, candidate=o.tracked, change_id=o.change_id, pr=o.pr
+            ancestries=ancestries, candidate=o.tracked, pr=o.pr
         )
         o = replace(o, trunk_evidence=evidence, trunk_evidence_reason=reason)
     common = _Common(
@@ -532,6 +532,8 @@ def _classify_pr(
     pr: GithubPR,
     tracked: TrackedPR,
 ) -> LinkedPRState:
+    if pr.head.ref != tracked.pr_identity.head_ref:
+        return PRIdentityMismatch(**common, tracked=tracked, pr=pr, remote_target=o.remote_target)
     evidence = o.trunk_evidence
     with_pr = _WithPRCommon(
         **common,
@@ -544,8 +546,6 @@ def _classify_pr(
             else None
         ),
     )
-    if pr.head.ref != tracked.pr_identity.head_ref:
-        return PRIdentityMismatch(**with_pr)
     competitors = tuple(candidate for candidate in open_prs if candidate.number != pr.number)
     if competitors:
         return CompetingOpenPR(**with_pr, competitors=competitors)

@@ -5,7 +5,7 @@ import pytest
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
-from jj_stack.stack.trunk_evidence import classify_exact_snapshot, classify_rewritten_result
+from jj_stack.stack.trunk_evidence import CommitAncestry, classify_trunk_evidence
 from tests.support.change_helpers import make_change
 
 
@@ -33,104 +33,37 @@ def _pr(**updates: object) -> GithubPR:
     return pr.model_copy(update=updates)
 
 
-@pytest.mark.merge_recovery
-def test_exact_snapshot_evidence_is_identity_and_ancestry_bound() -> None:
-    rows = (
-        ("on_trunk", _pr(), True),
-        ("not_on_trunk", _pr(), False),
-        ("unresolved", _pr(), False),
-        (
-            "on_trunk",
-            _pr(head=GithubPRHead(ref="other", sha="submitted-1")),
-            False,
-        ),
-        (
-            "on_trunk",
-            _pr(
-                head=GithubPRHead(
-                    label="octo-org:jj-stack/change-1",
-                    ref="jj-stack/change-1",
-                    sha="other",
-                )
-            ),
-            False,
-        ),
+def _moved_head() -> GithubPR:
+    return _pr(
+        head=GithubPRHead(label="octo-org:jj-stack/change-1", ref="jj-stack/change-1", sha="x")
     )
 
-    for ancestry, pr, on_trunk in rows:
-        result = classify_exact_snapshot(
-            ancestry=ancestry,
-            candidate=_candidate(),
-            change_id="abcdefghijkl",
-            pr=pr,
+
+@pytest.mark.merge_recovery
+def test_trunk_evidence_needs_the_pr_head_at_the_submitted_commit_and_a_result_on_trunk() -> None:
+    merged = _pr(state="merged", merge_commit_sha="merge-1")
+    rows: tuple[tuple[GithubPR, CommitAncestry, CommitAncestry | None, str | None], ...] = (
+        (_pr(), "on_trunk", None, "exact"),
+        (_pr(), "not_on_trunk", None, None),
+        (_pr(), "unresolved", None, None),
+        (_moved_head(), "on_trunk", None, None),
+        (_pr(state="merged"), "not_on_trunk", None, None),
+        (merged, "not_on_trunk", "unresolved", None),
+        (merged, "not_on_trunk", "not_on_trunk", None),
+        (merged, "not_on_trunk", "on_trunk", "rewritten"),
+    )
+
+    for pr, submitted_ancestry, merge_ancestry, expected in rows:
+        ancestries: dict[str, CommitAncestry] = {"submitted-1": submitted_ancestry}
+        if merge_ancestry is not None:
+            ancestries["merge-1"] = merge_ancestry
+        kind, reason = classify_trunk_evidence(
+            ancestries=ancestries, candidate=_candidate(), pr=pr
         )
 
-        assert result.on_trunk is on_trunk
+        assert kind == expected
         # An unsuccessful check includes a reason for the caller to report.
-        assert on_trunk or result.reason is not None
-
-
-@pytest.mark.merge_recovery
-def test_rewritten_result_requires_a_reachable_concrete_merge_result() -> None:
-    rows = (
-        (
-            _pr(head=GithubPRHead(ref="other", sha="submitted-1")),
-            None,
-            False,
-        ),
-        (
-            _pr(
-                head=GithubPRHead(
-                    label="octo-org:jj-stack/change-1",
-                    ref="jj-stack/change-1",
-                    sha="other",
-                )
-            ),
-            None,
-            False,
-        ),
-        (_pr(), None, False),
-        (
-            _pr(state="merged"),
-            None,
-            False,
-        ),
-        (
-            _pr(
-                state="merged",
-                merge_commit_sha="merge-1",
-            ),
-            "unresolved",
-            False,
-        ),
-        (
-            _pr(
-                state="merged",
-                merge_commit_sha="merge-1",
-            ),
-            "not_on_trunk",
-            False,
-        ),
-        (
-            _pr(
-                state="merged",
-                merge_commit_sha="merge-1",
-            ),
-            "on_trunk",
-            True,
-        ),
-    )
-
-    for pr, ancestry, on_trunk in rows:
-        result = classify_rewritten_result(
-            candidate=_candidate(),
-            change_id="abcdefghijkl",
-            merge_result_ancestry=ancestry,
-            pr=pr,
-        )
-
-        assert result.on_trunk is on_trunk
-        assert on_trunk or result.reason is not None
+        assert (kind is not None) or reason
 
 
 def _change(*, commit_id: str, empty: bool = False, immutable: bool = False) -> LocalCommit:
