@@ -217,21 +217,11 @@ async def _checkout_pr_stack(
         pr=top_pr,
         repo=repo,
     )
-    targets_task = asyncio.create_task(
-        github_client.get_branch_targets(branches=(top_pr.head.ref,))
+    prs = await _load_pr_chain(github_client=github_client, repo=repo, top=top_pr)
+    remote_targets = await github_client.get_branch_targets(
+        branches=tuple(pr.head.ref for pr in prs),
     )
-    chain_task = asyncio.create_task(
-        _load_pr_chain(
-            github_client=github_client,
-            repo=repo,
-            top=top_pr,
-        ),
-    )
-    await wait_for_read_tasks(targets_task, chain_task)
-    observed_top_targets = targets_task.result()
-    prs = chain_task.result()
-    observed_top = observed_top_targets.get(top_pr.head.ref)
-    if observed_top != top_head_sha:
+    if remote_targets.get(top_pr.head.ref) != top_head_sha:
         pr_label = format_pr_label(top_pr.number, url=top_pr.html_url)
         raise CliError(
             t"{pr_label} and remote branch "
@@ -253,9 +243,6 @@ async def _checkout_pr_stack(
     else:
         stack = select_stack_path(jj_client=client, revset=top_head_sha, state=state).stack
 
-    remote_targets = await github_client.get_branch_targets(
-        branches=tuple(pr.head.ref for pr in prs),
-    )
     adopted_count = _save_checkout_tracking(
         context=context,
         prs=prs,
