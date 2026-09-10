@@ -73,7 +73,6 @@ async def observe_global_sync(
     observed = observe_change_copies(
         jj_client=context.jj_client, state=state, change_ids=change_ids
     )
-    all_copies = observed.copies(change_ids)
     local_copies = observed.copies(change_ids, off_trunk=True)
     anchors = tuple(commit.commit_id for commits in local_copies.values() for commit in commits)
     paths = (
@@ -91,7 +90,7 @@ async def observe_global_sync(
             context=context,
             github_client=github,
             include_remote_targets=False,
-            local_commits_snapshot=all_copies,
+            local_commits=observed,
             remote_name=remote_name,
             state=state,
         )

@@ -8,6 +8,7 @@ from jj_stack.commands.merge.preconditions import merge_precondition_error
 from jj_stack.errors import CliError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import ChangeId, CommitId
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, GithubRepo
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
@@ -131,6 +132,7 @@ def test_merge_preconditions_reject_repo_drift() -> None:
             allow_squash_merge=True,
         ),
         prs_by_base={},
+        rewrite_args=JjCliArgs(),
         remote=GitRemote(
             name="origin",
             fetch_url="https://github.test/acme/widgets.git",
@@ -185,6 +187,7 @@ def test_merge_preconditions_name_a_closed_pull_request() -> None:
             allow_merge_commit=False, allow_rebase_merge=False, allow_squash_merge=True
         ),
         prs_by_base={},
+        rewrite_args=JjCliArgs(),
         remote=remote,
         repo=repo,
         prs={

@@ -497,6 +497,37 @@ def test_sync_rejects_unselected_mutable_copy_after_github_rewrite(
     assert fake_repo.prs == prs_before
 
 
+def test_sync_refuses_to_rebase_an_edited_survivor_beside_its_github_rewrite(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = TrackingStore.for_repo(repo)
+    _merged, survivor = selected_stack(repo).changes
+    _simulate_stack_partial_merge(fake_repo)
+    survivor_branch = state_store.load().prs[survivor.change_id].pr_identity.head_ref
+    run_command(
+        ["jj", "git", "fetch", "--remote", "origin", "--branch", survivor_branch],
+        repo,
+    )
+    run_command(["jj", "describe", "-r", survivor.commit_id, "-m", "survivor edit"], repo)
+    state_before = state_store.load()
+    refs_before = remote_refs(fake_repo.git_dir)
+    prs_before = deepcopy(fake_repo.prs)
+
+    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "multiple visible commits" in captured.err
+    assert "jj converge -r" in captured.err
+    assert state_store.load() == state_before
+    assert remote_refs(fake_repo.git_dir) == refs_before
+    assert fake_repo.prs == prs_before
+
+
 def test_sync_noop_after_partial_merge_does_not_read_pr_branch_targets_or_submit(
     tmp_path: Path,
     monkeypatch,

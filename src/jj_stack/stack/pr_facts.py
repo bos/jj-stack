@@ -13,15 +13,15 @@ from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_availability import github_stacks_unavailable_error
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR, GithubRepo, GithubStack
-from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import (
     PRIdentity,
     TrackingState,
 )
 from jj_stack.stack.change_state import UNOBSERVED, TrackedPRObservation
-from jj_stack.stack.observation import observe_change_copies
+from jj_stack.stack.observation import StackObservation, observe_change_copies
 from jj_stack.stack.trunk_evidence import CommitAncestry
 
 
@@ -36,6 +36,8 @@ class RepoFacts:
     remote: GitRemote | None
     repo: github_resolution.GithubRepoAddress
     prs: Mapping[str, TrackedPRObservation]
+    # The jj config that lets rewrites touch the observed PR-branch commits.
+    rewrite_args: JjCliArgs
 
 
 def duplicate_pr_claim_change_ids(
@@ -64,7 +66,7 @@ async def observe_prs(
     include_open_head_prs: bool = False,
     include_remote_targets: bool = True,
     github_repo_snapshot: GithubRepo | None = None,
-    local_commits_snapshot: Mapping[str, tuple[LocalCommit, ...]] | None = None,
+    local_commits: StackObservation | None = None,
 ) -> RepoFacts:
     """Read PR state, optionally skipping branch target lookups."""
 
@@ -79,16 +81,16 @@ async def observe_prs(
     known_identities = tuple(tracked.pr_identity for tracked in tracked_prs.values())
     head_refs = tuple(dict.fromkeys(identity.head_ref for identity in known_identities))
     pr_numbers = tuple(dict.fromkeys(identity.pr_number for identity in known_identities))
-    if local_commits_snapshot is None:
+    if local_commits is None:
 
-        def observe_local_commits() -> dict[str, tuple[LocalCommit, ...]]:
+        def observe_local_commits() -> StackObservation:
             return observe_change_copies(
                 jj_client=context.jj_client, state=state, change_ids=tuple(tracked_prs)
-            ).copies(tuple(tracked_prs))
+            )
 
         local_task = asyncio.create_task(asyncio.to_thread(observe_local_commits))
     else:
-        local_task = asyncio.create_task(asyncio.sleep(0, result=local_commits_snapshot))
+        local_task = asyncio.create_task(asyncio.sleep(0, result=local_commits))
     if include_open_head_prs:
         open_heads_request = github_client.get_open_prs_by_head_refs(head_refs=head_refs)
     else:
@@ -116,7 +118,7 @@ async def observe_prs(
         await wait_for_read_tasks(
             numbered_task, open_heads_task, by_base_task, repo_task, remote_targets_task
         )
-        local_commits = await asyncio.shield(local_task)
+        observed_locally = await asyncio.shield(local_task)
     except BaseException:
         # Cancelling to_thread cannot stop the worker or its jj subprocess. Join it before
         # the caller closes its resources and releases the repo operation lock.
@@ -127,6 +129,7 @@ async def observe_prs(
     by_base = by_base_task.result()
     github_repo = repo_task.result()
     remote_targets = remote_targets_task.result()
+    local_copies = observed_locally.copies(tuple(tracked_prs))
     prs = {
         change_id: TrackedPRObservation(
             change_id=change_id,
@@ -146,7 +149,7 @@ async def observe_prs(
         )
         for change_id, tracked in tracked_prs.items()
         for identity in (tracked.pr_identity,)
-        for matches in (local_commits.get(change_id, ()),)
+        for matches in (local_copies.get(change_id, ()),)
     }
 
     return RepoFacts(
@@ -156,6 +159,7 @@ async def observe_prs(
         remote=remote,
         repo=repo,
         prs=prs,
+        rewrite_args=observed_locally.cli_args,
     )
 
 

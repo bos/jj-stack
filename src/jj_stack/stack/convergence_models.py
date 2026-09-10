@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from jj_stack.identifiers import CommitId
+from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubPR
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR
@@ -27,6 +28,7 @@ class ConvergenceActions:
     remaining_prs: dict[str, GithubPR]
     remaining_changes: tuple[LocalCommit, ...]
     working_copy_children: tuple[LocalCommit, ...]
+    rewrite_args: JjCliArgs
 
 
 @dataclass(frozen=True, slots=True)

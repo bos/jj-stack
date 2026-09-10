@@ -165,8 +165,10 @@ def build_selected_convergence_plan(
         remaining_prs=submitted,
         remaining_changes=tuple(remaining_changes),
         working_copy_children=working_copy_children,
+        rewrite_args=observation.rewrite_args,
     )
-    _require_no_divergent_remaining_changes(actions, adopted=adopted)
+    adopting = isinstance(effect, _GithubStackMerge) and all_at_baseline(adopted)
+    _require_no_divergent_remaining_changes(actions, adopted=adopted if adopting else ())
     if isinstance(effect, _GithubStackRebase):
         return GithubStackRebasePlan(actions=actions, rewritten_changes=adopted)
     if isinstance(effect, _GithubStackMerge):
@@ -256,10 +258,17 @@ def _require_no_divergent_remaining_changes(
     *,
     adopted: tuple[RewrittenPRChange, ...],
 ) -> None:
-    expected_remote_copies = {item.change_id for item in adopted}
-    for change in actions.remaining_changes:
-        if change.divergent and change.change_id not in expected_remote_copies:
+    adopted_ids = {item.change_id for item in adopted}
+    for change in (*actions.remaining_changes, *actions.working_copy_children):
+        if change.divergent and change.change_id not in adopted_ids:
             raise divergent_change_error(change.change_id)
+
+
+def all_at_baseline(items: tuple[RewrittenPRChange, ...]) -> bool:
+    return all(
+        item.local_change.commit_id == item.candidate.submitted_baseline.commit_id
+        for item in items
+    )
 
 
 def divergent_change_error(change_id: str) -> CliError:
