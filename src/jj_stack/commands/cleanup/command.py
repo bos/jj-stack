@@ -398,13 +398,13 @@ async def _run_tracked_pr_cleanup_pass(
         include_dependents=True,
         include_open_head_prs=True,
         remote_name=remote_name,
+        state=prepared_cleanup.state,
     )
     preflights: dict[str, CleanupPreflight] = {}
     eligible_pr_numbers: list[int] = []
     for change_id, candidate in candidates.items():
         preflight = _preflight_tracked_pr_cleanup(
             initial_observation=observation,
-            candidate=candidate,
             change_id=change_id,
             prepared_cleanup=prepared_cleanup,
             preview_detached_dependents=preview_detached_dependents,
@@ -559,17 +559,12 @@ async def _cleanup_tracked_pr(
 def _preflight_tracked_pr_cleanup(
     *,
     initial_observation: RepoFacts,
-    candidate: TrackedPR,
     change_id: str,
     prepared_cleanup: PreparedCleanup,
     preview_detached_dependents: frozenset[int],
     preview_local_removals: frozenset[str],
 ) -> CleanupPreflight:
-    state = check_tracked_pr(
-        candidate=candidate,
-        change_id=change_id,
-        observation=initial_observation,
-    )
+    state = check_tracked_pr(change_id=change_id, observation=initial_observation)
     if isinstance(state, CleanupAction):
         return state
     local_commits = state.local

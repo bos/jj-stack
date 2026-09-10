@@ -58,6 +58,7 @@ class GlobalSyncFacts:
     paths: tuple[RepoStackPath, ...]
     pr_facts: RepoFacts
     stacks: tuple[GithubStack, ...]
+    state: TrackingState
 
 
 async def observe_global_sync(
@@ -94,6 +95,7 @@ async def observe_global_sync(
             include_remote_targets=False,
             local_commits_snapshot=all_copies,
             remote_name=remote_name,
+            state=state,
         )
     )
     stacks_task = asyncio.create_task(observe_github_stacks(github=github))
@@ -110,14 +112,12 @@ async def observe_global_sync(
         paths=paths,
         pr_facts=pr_observations,
         stacks=stacks,
+        state=state,
     )
 
 
-def build_global_convergence_plan(
-    *,
-    facts: GlobalSyncFacts,
-    state: TrackingState,
-) -> GlobalConvergencePlan:
+def build_global_convergence_plan(*, facts: GlobalSyncFacts) -> GlobalConvergencePlan:
+    state = facts.state
     blocked: list[tuple[str, TrackedPR, Message]] = []
     finishes: list[PRFinishPlan] = []
     heads: list[str] = []

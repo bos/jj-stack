@@ -10,6 +10,7 @@ from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.github.client import GithubClient
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalCommit
+from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.change_state import TrackedPRObservation
 from jj_stack.stack.pr_facts import (
     RepoFacts,
@@ -26,8 +27,8 @@ async def complete_sync_observation(
     remote_name: str,
     selected: tuple[LocalCommit, ...],
     stacks: tuple[GithubStack, ...],
+    state: TrackingState,
 ) -> tuple[RepoFacts, tuple[GithubStack, ...], bool]:
-    state = context.state_store.load()
     selected_prs = {
         tracked.pr_identity.pr_number
         for change in selected
@@ -56,6 +57,7 @@ async def complete_sync_observation(
             github_repo_snapshot=initial.github_repo,
             include_remote_targets=False,
             remote_name=remote_name,
+            state=state,
         )
         if missing_ids
         else None

@@ -97,7 +97,6 @@ def build_selected_convergence_plan(
         change_state = _member_state(
             change_id=change.change_id,
             ancestries=ancestries,
-            candidate=candidate,
             observation=observation,
             rerun=rerun,
             selected=change,
@@ -207,7 +206,6 @@ def _remaining_submitted_prs(
 def _member_state(
     *,
     ancestries: dict[str, CommitAncestry],
-    candidate: TrackedPR,
     change_id: str,
     observation: RepoFacts,
     rerun: str,
@@ -216,14 +214,7 @@ def _member_state(
 ) -> WithPR:
     """Classify one tracked change with its trunk evidence, stopping on a broken saved link."""
 
-    observed = observation.prs.get(change_id)
-    if observed is None or observed.tracked.pr_identity != candidate.pr_identity:
-        raise CliError(
-            t"The saved pull request link for {ui.change_id(change_id)} changed.",
-            hint=t"Check it with {ui.cmd(f'jj-stack view {short_change_id(change_id)}')}, then "
-            t"link the intended PR with "
-            t"{ui.cmd(f'jj-stack relink PR {short_change_id(change_id)}')}.",
-        )
+    observed = observation.prs[change_id]
     state = classify(observed, ancestries=ancestries, selected=selected)
     # GitHub itself moves the heads of a stack's active members when it merges or rebases the
     # stack; `_validate_active_member` and the commit and ancestry checks validate those changes.
@@ -326,7 +317,6 @@ def _classify_github_stack(
         member_state = _member_state(
             change_id=change_id,
             ancestries=ancestries,
-            candidate=candidate,
             observation=observation,
             rerun=rerun,
             member=member,
@@ -336,8 +326,8 @@ def _classify_github_stack(
         if member.is_historical:
             history.append(
                 _historical_member(
-                    change_id=change_id,
                     candidate=candidate,
+                    change_id=change_id,
                     member_state=member_state,
                     observation=observation,
                     selected=selected_by_id.get(change_id),

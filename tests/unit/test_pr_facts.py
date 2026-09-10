@@ -14,6 +14,7 @@ from jj_stack.config import AppConfig
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.jj.client import JjClient
+from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.pr_facts import observe_prs
 from jj_stack.state.store import TrackingStore
 
@@ -71,7 +72,11 @@ def test_failed_observation_finishes_reads_and_local_worker_before_returning(
             github.get_prs_by_numbers.return_value = {}
         observing = asyncio.create_task(
             observe_prs(
-                change_ids=(), context=context, github_client=github, remote_name="origin"
+                change_ids=(),
+                context=context,
+                github_client=github,
+                remote_name="origin",
+                state=TrackingState(),
             )
         )
         if failure != "request":

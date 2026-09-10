@@ -17,7 +17,6 @@ from jj_stack.github.overview_comments import (
 from jj_stack.identifiers import CommitId
 from jj_stack.jj.client import JjClient, PRRefUpdate
 from jj_stack.models.github import GithubIssueComment, GithubPR, GithubStack
-from jj_stack.models.tracking import TrackedPR
 from jj_stack.stack.change_state import (
     CompetingOpenPR,
     PRAmbiguous,
@@ -31,23 +30,10 @@ from jj_stack.stack.pr_facts import RepoFacts
 from jj_stack.ui import Message
 
 
-def check_tracked_pr(
-    *,
-    candidate: TrackedPR,
-    change_id: str,
-    observation: RepoFacts,
-) -> WithPR | CleanupAction:
+def check_tracked_pr(*, change_id: str, observation: RepoFacts) -> WithPR | CleanupAction:
     """Return the classified saved PR, or the reason its identity cannot be trusted."""
 
-    observed = observation.prs.get(change_id)
-    if observed is None or observed.tracked != candidate:
-        return CleanupAction(
-            kind="tracking",
-            body=t"tracking for {ui.change_id(change_id)} changed while this command ran; "
-            t"rerun the same command",
-            status="blocked",
-        )
-    state = classify(observed)
+    state = classify(observation.prs[change_id])
     if isinstance(state, (PRMissing, PRAmbiguous, PRIdentityMismatch)):
         return CleanupAction(
             kind="pull request",

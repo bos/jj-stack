@@ -96,10 +96,8 @@ def _merge_change_precondition_error(
     merge goes on to the commit comparison.
     """
 
-    observed = observation.prs.get(planned.change_id)
+    observed = observation.prs[planned.change_id]
     label = short_change_id(planned.change_id)
-    if observed is None or observed.tracked.pr_identity != planned.identity:
-        return MergePrecondition(f"the saved pull request link for {label} changed")
     selected = next(
         (commit for commit in observed.local if commit.commit_id == planned.commit_id),
         None,

@@ -225,16 +225,13 @@ async def _check_selected_prs(
             github_client=github_client,
             include_dependents=False,
             remote_name=remote_name,
+            state=state,
         )
     except GithubClientError as error:
         raise CliError("Could not inspect the selected pull requests.") from error
 
     for change_id in change_ids:
-        state_or_blocker = check_tracked_pr(
-            candidate=state.prs[change_id],
-            change_id=change_id,
-            observation=observation,
-        )
+        state_or_blocker = check_tracked_pr(change_id=change_id, observation=observation)
         if isinstance(state_or_blocker, CleanupAction):
             raise CliError(plain_text(state_or_blocker.body))
 

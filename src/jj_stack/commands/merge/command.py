@@ -261,6 +261,7 @@ async def _stream_merge_async(
             github_client=github_client,
             github_repo_snapshot=github_repo_state,
             remote_name=remote.name,
+            state=prepared_merge.state,
         )
     )
     stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))

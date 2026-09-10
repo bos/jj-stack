@@ -217,11 +217,7 @@ async def _run_global_plan(
             )
         except GithubClientError as error:
             raise CliError("Could not inspect pull requests") from error
-        state = context.state_store.load()
-        plan = build_global_convergence_plan(
-            facts=facts,
-            state=state,
-        )
+        plan = build_global_convergence_plan(facts=facts)
     for change_id, candidate, reason in plan.blocked:
         pr_label = format_pr_label(candidate.pr_identity.pr_number, repo=facts.pr_facts.repo)
         console.warning(t"Skipped {pr_label} for {ui.change_id(change_id)}: {reason}.")
@@ -329,6 +325,7 @@ async def _run_selected_convergence(
                 github_repo_snapshot=github_repo,
                 include_remote_targets=False,
                 remote_name=target.remote.name,
+                state=prepared.state,
             )
         )
         stacks_task = asyncio.create_task(observe_github_stacks(github=github))
@@ -345,6 +342,7 @@ async def _run_selected_convergence(
                 remote_name=target.remote.name,
                 selected=selected,
                 stacks=observed_stacks,
+                state=prepared.state,
             )
             queued = queued_pr_numbers(observation, selected)
     if queued:

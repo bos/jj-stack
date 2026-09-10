@@ -18,6 +18,7 @@ from jj_stack.models.github import GithubPR, GithubRepo, GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import (
     PRIdentity,
+    TrackingState,
 )
 from jj_stack.stack.change_state import UNOBSERVED, TrackedPRObservation
 from jj_stack.stack.observation import observe_change_copies
@@ -58,6 +59,7 @@ async def observe_prs(
     context: CommandContext,
     github_client: GithubClient,
     remote_name: str,
+    state: TrackingState,
     include_dependents: bool = False,
     include_open_head_prs: bool = False,
     include_remote_targets: bool = True,
@@ -68,7 +70,6 @@ async def observe_prs(
 
     remotes = context.jj_client.list_git_remotes()
     remote = next((item for item in remotes if item.name == remote_name), None)
-    state = context.state_store.load()
     tracked_prs = {
         change_id: tracked
         for change_id in dict.fromkeys(change_ids)
