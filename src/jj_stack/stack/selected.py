@@ -16,7 +16,7 @@ from jj_stack.jj.client import (
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.divergence import divergence_recovery_hint
-from jj_stack.stack.observation import observe_stack_commits
+from jj_stack.stack.observation import TRUNK_PATH, observe_stack_commits
 from jj_stack.stack.path import (
     SelectedPathObservation,
     SelectedStackPath,
@@ -103,8 +103,7 @@ def select_stack_path_containing_change(
     """Project the unique ordinary path whose head descends from one tracked change."""
 
     linked_selector = _change_id_revset(change_id)
-    trunk_path = "first_ancestors(trunk())"
-    nonempty_descendants = f"((({linked_selector}) ~ {trunk_path}):: ~ {trunk_path}) ~ empty()"
+    nonempty_descendants = f"((({linked_selector}) ~ {TRUNK_PATH}):: ~ {TRUNK_PATH}) ~ empty()"
     selected_empty_change = f"({linked_selector}) & empty()"
     head_revset = f"heads(({nonempty_descendants}) | ({selected_empty_change}))"
     # Bind the derived heads before embedding the selector throughout the path scan. Repeating
@@ -201,18 +200,17 @@ def _observe_path_rows(
     selector: str,
     selected_revset: str | None,
 ) -> tuple[_ObservedPathRow, ...]:
-    trunk_path = "first_ancestors(trunk())"
-    off_trunk = f"({selector}) ~ {trunk_path}"
+    off_trunk = f"({selector}) ~ {TRUNK_PATH}"
     ancestors = f"first_ancestors({off_trunk})"
-    trunk_boundaries = f"parents(({ancestors}) ~ {trunk_path}) & {trunk_path}"
+    trunk_boundaries = f"parents(({ancestors}) ~ {TRUNK_PATH}) & {TRUNK_PATH}"
     candidate_neighborhood = f"(visible() & (({selector}) | children({selector})))"
-    candidate_commits = f"({candidate_neighborhood} ~ {trunk_path})"
+    candidate_commits = f"({candidate_neighborhood} ~ {TRUNK_PATH})"
     linked_selector_membership = linked_selector or "none()"
     query = " | ".join(
         (
             "trunk()",
             f"({selector})",
-            f"({ancestors}) ~ {trunk_path}",
+            f"({ancestors}) ~ {TRUNK_PATH}",
             trunk_boundaries,
             candidate_commits,
             *((linked_selector,) if linked_selector is not None else ()),
@@ -228,7 +226,7 @@ def _observe_path_rows(
             linked_selector_membership,
             candidate_commits,
             ancestors,
-            trunk_path,
+            TRUNK_PATH,
         ),
         selected_revset=selected_revset,
     ).rows

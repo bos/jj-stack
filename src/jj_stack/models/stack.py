@@ -33,6 +33,10 @@ class LocalCommit(BaseModel):
         return first_line or "(no description set)"
 
     @property
+    def has_described_work(self) -> bool:
+        return not self.empty and bool(self.description.strip())
+
+    @property
     def is_working_copy(self) -> bool:
         """Whether any workspace currently uses this change as its working copy."""
 

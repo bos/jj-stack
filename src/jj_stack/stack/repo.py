@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from jj_stack.jj.client import JjClient, quote_revset_symbol
 from jj_stack.models.tracking import TrackingState
-from jj_stack.stack.observation import observe_stack_commits
+from jj_stack.stack.observation import TRUNK_PATH, observe_stack_commits
 from jj_stack.stack.path import (
     RepoPathObservation,
     RepoStackPaths,
@@ -27,17 +27,16 @@ def observe_repo_paths(
     commits. Callers keep only the stacks containing their requested commit.
     """
 
-    trunk_path = "first_ancestors(trunk())"
     visible_scope = "visible()"
     if descendant_of:
         anchors = " | ".join(quote_revset_symbol(commit_id) for commit_id in descendant_of)
         visible_scope = f"(visible() & ({anchors})::)"
-    candidates = f"(({visible_scope}) ~ {trunk_path})"
+    candidates = f"(({visible_scope}) ~ {TRUNK_PATH})"
     rows = observe_stack_commits(
         jj_client=jj_client,
         state=state,
         revset=f"trunk() | ({candidates}) | parents({candidates}) | @",
-        membership_revsets=("trunk()", candidates, trunk_path),
+        membership_revsets=("trunk()", candidates, TRUNK_PATH),
     ).rows
     trunks = tuple(commit for commit, flags in rows if flags[0])
     trunk = require_usable_trunk(trunks)
@@ -49,8 +48,7 @@ def observe_repo_paths(
         (
             current_working_copy.commit_id
             if current_working_copy.change_id in state.prs
-            and not current_working_copy.empty
-            and bool(current_working_copy.description.strip())
+            and current_working_copy.has_described_work
             else current_working_copy.parents[0]
         )
         if current_working_copy is not None and len(current_working_copy.parents) == 1

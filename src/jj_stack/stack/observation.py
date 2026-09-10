@@ -13,6 +13,8 @@ from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackingState
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 
+TRUNK_PATH = "first_ancestors(trunk())"
+
 
 @dataclass(frozen=True, slots=True)
 class StackObservation:
@@ -74,7 +76,7 @@ def observe_change_copies(
         for scope in batched(tuple(dict.fromkeys(change_ids)), QUERY_BATCH_SIZE, strict=False)
         for row in jj_client.query_commits_with_membership(
             change_ids_revset(scope),
-            membership_revsets=("~first_ancestors(trunk())",),
+            membership_revsets=(f"~{TRUNK_PATH}",),
             cli_args=cli_args,
         )
     )

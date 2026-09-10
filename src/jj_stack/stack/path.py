@@ -169,16 +169,15 @@ def _ordinary_candidates(
     candidate_commit_ids: frozenset[str],
     commits_by_id: dict[str, LocalCommit],
 ) -> dict[str, LocalCommit]:
+    candidates = (
+        commits_by_id[commit_id] for commit_id in candidate_commit_ids & commits_by_id.keys()
+    )
     return {
-        commit_id: commits_by_id[commit_id]
-        for commit_id in candidate_commit_ids & commits_by_id.keys()
-        if (
-            not commits_by_id[commit_id].is_working_copy
-            or bool(commits_by_id[commit_id].description.strip())
-        )
-        and not commits_by_id[commit_id].hidden
-        and len(commits_by_id[commit_id].parents) == 1
-        and not (commits_by_id[commit_id].is_working_copy and commits_by_id[commit_id].empty)
+        commit.commit_id: commit
+        for commit in candidates
+        if (not commit.is_working_copy or commit.has_described_work)
+        and not commit.hidden
+        and len(commit.parents) == 1
     }
 
 
@@ -195,7 +194,7 @@ def _select_commit(observation: SelectedPathObservation) -> LocalCommit:
         )
         if current is None:
             raise ValueError("Current working copy is absent from the selected observation.")
-        if current.empty or not current.description.strip():
+        if not current.has_described_work:
             if len(current.parents) != 1:
                 raise ValueError("Default selection has no ordinary parent.")
             parent_commit_id = current.parents[0]
