@@ -39,11 +39,12 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands.sync import converge_selected_stack
+from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError, error_hint
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
-from jj_stack.github.error_messages import repo_lookup_error
+from jj_stack.github.error_messages import observe_github_repo, read_or_stop
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepo
@@ -60,6 +61,7 @@ from .models import MergeExecutionInputs, MergeResult, PreparedMerge
 from .plan import build_merge_plan
 from .render import print_merge_result
 
+_RERUN_HINT = "Resolve the GitHub error above, then rerun jj-stack merge."
 HELP = "Merge pull requests at the bottom of a stack"
 
 
@@ -234,14 +236,7 @@ async def _stream_merge_async(
     remote = prepared_merge.target.remote
 
     with console.spinner(description="Inspecting remotes"):
-        try:
-            github_repo_state = await github_client.get_repo()
-        except GithubClientError as error:
-            raise repo_lookup_error(
-                error,
-                repo=github_repo.full_name,
-                hint="Resolve the GitHub error above, then rerun jj-stack merge.",
-            ) from error
+        github_repo_state = await observe_github_repo(github_client, hint=_RERUN_HINT)
         trunk_branch, _trunk_targets = resolve_trunk_branch(
             branches_at_trunk=prepared_merge.context.jj_client.remote_bookmarks_at_commit(
                 remote=remote.name,
@@ -252,28 +247,29 @@ async def _stream_merge_async(
             trunk_commit_id=stack.trunk.commit_id,
         )
     queue_task = asyncio.create_task(
-        github_client.base_branch_uses_merge_queue(branch=trunk_branch)
+        read_or_stop(
+            github_client.base_branch_uses_merge_queue(branch=trunk_branch),
+            message=t"Could not check whether {ui.bookmark(trunk_branch)} uses a merge queue.",
+            hint=_RERUN_HINT,
+        )
     )
     prs_task = asyncio.create_task(
-        observe_prs(
-            change_ids=tuple(change.change_id for change in stack.changes),
-            context=prepared_merge.context,
-            github_client=github_client,
-            github_repo_snapshot=github_repo_state,
-            remote_name=remote.name,
-            state=prepared_merge.state,
+        read_or_stop(
+            observe_prs(
+                change_ids=tuple(change.change_id for change in stack.changes),
+                context=prepared_merge.context,
+                github_client=github_client,
+                github_repo_snapshot=github_repo_state,
+                remote_name=remote.name,
+                state=prepared_merge.state,
+            ),
+            message="Could not inspect GitHub state for merge.",
+            hint=_RERUN_HINT,
         )
     )
     stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))
-    await asyncio.gather(queue_task, prs_task, stacks_task, return_exceptions=True)
-    try:
-        uses_merge_queue = await queue_task
-    except GithubClientError as error:
-        raise CliError(
-            t"Could not check whether {ui.bookmark(trunk_branch)} uses a merge queue.",
-            hint="Resolve the GitHub error above, then rerun jj-stack merge.",
-        ) from error
-    if uses_merge_queue:
+    await wait_for_read_tasks(queue_task, prs_task, stacks_task)
+    if queue_task.result():
         if prepared_merge.merge_method is not None:
             console.warning(
                 t"The base branch {ui.bookmark(trunk_branch)} uses a merge queue; ignoring "
@@ -289,15 +285,8 @@ async def _stream_merge_async(
             merge_method=prepared_merge.merge_method,
             repo_state=github_repo_state,
         )
-    try:
-        observation = await prs_task
-    except GithubClientError as error:
-        raise CliError(
-            "Could not inspect GitHub state for merge.",
-            hint="Resolve the GitHub error above, then rerun jj-stack merge.",
-        ) from error
     plan = build_merge_plan(
-        observation=observation,
+        observation=prs_task.result(),
         remote_name=remote.name,
         repo=github_repo,
         changes=stack.changes,
@@ -305,7 +294,7 @@ async def _stream_merge_async(
         target_change_id=prepared_merge.target_change_id,
         trunk_branch=trunk_branch,
     )
-    stacks = await stacks_task
+    stacks = stacks_task.result()
     execution = MergeExecutionInputs(
         repo=github_client.repo,
         selected_revset=stack.selected_revset,

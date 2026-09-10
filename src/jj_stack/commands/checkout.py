@@ -40,7 +40,7 @@ from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import CliError, UnsupportedStackError, UsageError
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
-from jj_stack.github.error_messages import repo_lookup_error
+from jj_stack.github.error_messages import observe_github_repo
 from jj_stack.github.pr_refs import load_pr, parse_repo_pr_reference, require_managed_pr_head
 from jj_stack.github.resolution import (
     GithubRepoAddress,
@@ -522,18 +522,10 @@ async def _pick_stack(
             (path.stack for path in repo_paths.paths if path.tracked_change_ids),
             key=lambda stack: stack.head.change_id,
         )
-    repo_result, stacks_result = await asyncio.gather(
-        github_client.get_repo(),
-        observe_github_stacks(github=github_client),
-        return_exceptions=True,
-    )
-    if isinstance(repo_result, GithubClientError):
-        raise repo_lookup_error(repo_result, repo=repo.full_name) from repo_result
-    if isinstance(repo_result, BaseException):
-        raise repo_result
-    if isinstance(stacks_result, BaseException):
-        raise stacks_result
-    github_stacks = stacks_result
+    repo_task = asyncio.create_task(observe_github_repo(github_client))
+    stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))
+    await wait_for_read_tasks(repo_task, stacks_task)
+    github_stacks = stacks_task.result()
     try:
         prs = await github_client.get_prs_by_numbers(
             pr_numbers=tuple(member.number for stack in github_stacks for member in stack.prs),

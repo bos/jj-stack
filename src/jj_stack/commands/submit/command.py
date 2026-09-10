@@ -24,15 +24,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import cast
 
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.config import parse_comma_separated_flag_values
 from jj_stack.errors import CliError
-from jj_stack.github.client import GithubClientError, build_github_client
-from jj_stack.github.error_messages import repo_lookup_error
+from jj_stack.github.client import build_github_client
+from jj_stack.github.error_messages import observe_github_repo, read_or_stop
 from jj_stack.github.resolution import (
     require_github_repo,
     resolve_trunk_branch,
@@ -41,7 +41,7 @@ from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubPR, GithubRepo, GithubStack
+from jj_stack.models.github import GithubPR
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace, pr_branch_matches_change
@@ -70,6 +70,8 @@ from .prs import (
 from .publication import plan_pr_updates, publish_prepared
 from .render import print_selected_line, print_submit_rows
 
+_BRANCH_LOOKUP_MESSAGE = "Could not inspect PR branches on GitHub."
+_PR_LOOKUP_MESSAGE = "Could not inspect the selected pull requests."
 HELP = "Create or update PRs for a jj stack"
 DESCRIPTION_HELP = """
 A pull request title comes from a change's subject line, and its body from the rest of the
@@ -232,28 +234,6 @@ def _desired_draft_state(
     if draft_mode == "open":
         return False
     return pr.is_draft
-
-
-def _github_inspection_results(
-    *,
-    lookups: dict[str, ChangeObservation] | BaseException,
-    repo: GithubRepo | BaseException,
-    repo_name: str,
-    stacks: tuple[GithubStack, ...] | BaseException,
-) -> tuple[GithubRepo, dict[str, ChangeObservation], tuple[GithubStack, ...]]:
-    for kind, result in (("repo", repo), ("stacks", stacks), ("prs", lookups)):
-        if not isinstance(result, BaseException):
-            continue
-        if isinstance(result, GithubClientError):
-            if kind == "repo":
-                raise repo_lookup_error(result, repo=repo_name) from result
-            raise CliError(f"Could not inspect GitHub repo {repo_name}") from result
-        raise result
-    return (
-        cast(GithubRepo, repo),
-        cast(dict[str, ChangeObservation], lookups),
-        cast(tuple[GithubStack, ...], stacks),
-    )
 
 
 def _recover_interrupted_first_submissions(
@@ -432,36 +412,36 @@ async def run_submit_async(
     async with build_github_client(repo=github_repo) as github_client:
         generated_descriptions = prepared_inputs.generated_pr_descriptions
         with console.spinner(description="Inspecting remotes"):
-            (
-                exact_remote_targets_result,
-                recovery_targets_result,
-                github_repo_result,
-                lookups_result,
-                observed_stacks_result,
-            ) = await asyncio.gather(
-                github_client.get_branch_targets(
-                    branches=exact_remote_branches,
-                ),
-                github_client.find_branch_targets_by_suffix(
-                    branch_prefix=current_pr_branch_namespace().branch_prefix,
-                    suffixes=recovery_suffixes,
-                ),
-                github_client.get_repo(),
-                discover_pr_lookups(
-                    github_client=github_client,
-                    observations=observations_by_branch(branch_resolutions),
-                ),
-                observe_github_stacks(github=github_client),
-                return_exceptions=True,
+            exact_targets_task = asyncio.create_task(
+                read_or_stop(
+                    github_client.get_branch_targets(branches=exact_remote_branches),
+                    message=_BRANCH_LOOKUP_MESSAGE,
+                )
             )
-            if isinstance(exact_remote_targets_result, BaseException):
-                raise exact_remote_targets_result
-            if isinstance(recovery_targets_result, BaseException):
-                raise recovery_targets_result
-            remote_targets = {
-                **exact_remote_targets_result,
-                **recovery_targets_result,
-            }
+            recovery_targets_task = asyncio.create_task(
+                read_or_stop(
+                    github_client.find_branch_targets_by_suffix(
+                        branch_prefix=current_pr_branch_namespace().branch_prefix,
+                        suffixes=recovery_suffixes,
+                    ),
+                    message=_BRANCH_LOOKUP_MESSAGE,
+                )
+            )
+            repo_task = asyncio.create_task(observe_github_repo(github_client))
+            lookups_task = asyncio.create_task(
+                read_or_stop(
+                    discover_pr_lookups(
+                        github_client=github_client,
+                        observations=observations_by_branch(branch_resolutions),
+                    ),
+                    message=_PR_LOOKUP_MESSAGE,
+                )
+            )
+            stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))
+            await wait_for_read_tasks(
+                exact_targets_task, recovery_targets_task, repo_task, lookups_task, stacks_task
+            )
+            remote_targets = {**exact_targets_task.result(), **recovery_targets_task.result()}
             branch_resolutions = _recover_interrupted_first_submissions(
                 client=client,
                 remote=remote,
@@ -491,17 +471,17 @@ async def run_submit_async(
                 base_branch=base_branch,
                 resolutions=branch_resolutions,
             )
+            lookups = lookups_task.result()
             if pr_branches != initial_pr_branches:
-                lookups_result = await discover_pr_lookups(
-                    github_client=github_client,
-                    observations=observations_by_branch(branch_resolutions),
+                lookups = await read_or_stop(
+                    discover_pr_lookups(
+                        github_client=github_client,
+                        observations=observations_by_branch(branch_resolutions),
+                    ),
+                    message=_PR_LOOKUP_MESSAGE,
                 )
-            github_repo_state, lookups, observed_stacks = _github_inspection_results(
-                lookups=lookups_result,
-                repo=github_repo_result,
-                repo_name=github_repo.full_name,
-                stacks=observed_stacks_result,
-            )
+            github_repo_state = repo_task.result()
+            observed_stacks = stacks_task.result()
             trunk_branch, trunk_targets = resolve_trunk_branch(
                 branches_at_trunk=client.remote_bookmarks_at_commit(
                     remote=remote.name,

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
+
 from jj_stack.errors import CliError
-from jj_stack.github.client import REPO_NOT_FOUND_REASON, GithubClientError
+from jj_stack.github.client import REPO_NOT_FOUND_REASON, GithubClient, GithubClientError
 from jj_stack.github.resolution import (
     GithubRepoAddress,
     GithubTarget,
     UnresolvedGithubTarget,
 )
 from jj_stack.models.git import GitRemote
+from jj_stack.models.github import GithubRepo
 from jj_stack.ui import Message, code
 
 
@@ -38,6 +41,24 @@ def repo_lookup_error(
     if error.status_code == 404:
         hint = REPO_NOT_FOUND_REASON
     return CliError(("Could not inspect GitHub repo ", code(repo)), hint=hint)
+
+
+async def read_or_stop[T](
+    read: Awaitable[T], *, message: Message, hint: Message | None = None
+) -> T:
+    """Await one GitHub read, turning a client failure into a stop with `message`."""
+
+    try:
+        return await read
+    except GithubClientError as error:
+        raise CliError(message, hint=hint) from error
+
+
+async def observe_github_repo(github: GithubClient, *, hint: Message | None = None) -> GithubRepo:
+    try:
+        return await github.get_repo()
+    except GithubClientError as error:
+        raise repo_lookup_error(error, repo=github.repo.full_name, hint=hint) from error
 
 
 def github_unavailable_message(
