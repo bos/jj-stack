@@ -466,7 +466,7 @@ def run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[st
         check=False,
         cwd=cwd,
         env=env,
-        text=True,
+        encoding="utf-8",
     )
     if completed.returncode != 0:
         raise AssertionError(
