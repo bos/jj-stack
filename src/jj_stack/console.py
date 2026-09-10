@@ -18,10 +18,9 @@ from __future__ import annotations
 
 import sys
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from string.templatelib import Template
 from typing import IO, Literal, Protocol
 
@@ -43,10 +42,7 @@ from rich.text import Text
 
 import jj_stack
 import jj_stack.ui as ui
-from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.colors import SemanticStyles, load_semantic_styles
-
-_NO_CLI_ARGS = JjCliArgs()
+from jj_stack.jj.colors import JjColorWhen, SemanticStyles, semantic_styles
 
 SIMPLE = rich_box.SIMPLE
 
@@ -288,10 +284,6 @@ def _raw_console(stream: IO[str], *, color_mode: ColorMode) -> Console:
     return Console(file=stream)
 
 
-def _console_emits_color(console: Console) -> bool:
-    return console.is_terminal and not console.no_color
-
-
 def _build_console(
     console: Console,
     *,
@@ -311,24 +303,16 @@ def _build_console(
 
 def _build_consoles(
     *,
-    cli_args: JjCliArgs,
     color_mode: ColorMode = "auto",
-    load_styles: bool = True,
-    repo: Path | None = None,
+    semantic_styles: SemanticStyles | None = None,
     stderr: IO[str] | None = None,
     stdout: IO[str] | None = None,
     time_output: bool = False,
 ) -> tuple[_ConfiguredConsole, _ConfiguredConsole, SemanticStyles | None]:
     stdout_console = _raw_console(sys.stdout if stdout is None else stdout, color_mode=color_mode)
     stderr_console = _raw_console(sys.stderr if stderr is None else stderr, color_mode=color_mode)
-    # Semantic styles exist only to color output, and reading them costs one
-    # jj invocation, so skip the read when neither console can emit color
-    # (piped or captured output).
-    semantic_styles = None
-    if load_styles and (
-        _console_emits_color(stdout_console) or _console_emits_color(stderr_console)
-    ):
-        semantic_styles = load_semantic_styles(repo=repo, cli_args=cli_args)
+    if color_mode == "never":
+        semantic_styles = None
     return (
         _build_console(
             stdout_console,
@@ -347,10 +331,11 @@ def _build_consoles(
 _STDOUT_CONSOLE: _ConfiguredConsole
 _STDERR_CONSOLE: _ConfiguredConsole
 _SEMANTIC_STYLES: SemanticStyles | None
-_REQUESTED_COLOR_MODE: RequestedColorMode | None = None
+_EFFECTIVE_COLOR: RequestedColorMode | None = None
 _ACTIVE_COLOR_MODE: ColorMode = "auto"
 _STDOUT_STREAM: IO[str] = sys.stdout
 _STDERR_STREAM: IO[str] = sys.stderr
+_TIME_OUTPUT = False
 
 
 def rich_color_mode(color_mode: RequestedColorMode | None) -> ColorMode:
@@ -366,58 +351,93 @@ def rich_color_mode(color_mode: RequestedColorMode | None) -> ColorMode:
 @contextmanager
 def configured_console(
     *,
-    cli_args: JjCliArgs = _NO_CLI_ARGS,
-    color_mode: ColorMode = "auto",
-    repo: Path | None = None,
-    requested_color_mode: RequestedColorMode | None = None,
+    color: RequestedColorMode | None = None,
+    semantic_styles: SemanticStyles | None = None,
     stderr: IO[str] | None = None,
     stdout: IO[str] | None = None,
     time_output: bool = False,
 ):
-    """Temporarily install shared stdout and stderr consoles."""
+    """Temporarily install shared stdout and stderr consoles.
+
+    `color` is the `--color` choice; `adopt_jj_config` fills in jj's own setting and theme once
+    command bootstrap has read them.
+    """
 
     global _STDOUT_CONSOLE
     global _STDERR_CONSOLE
     global _SEMANTIC_STYLES
-    global _REQUESTED_COLOR_MODE
+    global _EFFECTIVE_COLOR
     global _ACTIVE_COLOR_MODE
     global _STDOUT_STREAM
     global _STDERR_STREAM
-    previous_stdout = _STDOUT_CONSOLE
-    previous_stderr = _STDERR_CONSOLE
-    previous_semantic_styles = _SEMANTIC_STYLES
-    previous_requested_color_mode = _REQUESTED_COLOR_MODE
-    previous_active_color_mode = _ACTIVE_COLOR_MODE
-    previous_stdout_stream = _STDOUT_STREAM
-    previous_stderr_stream = _STDERR_STREAM
+    global _TIME_OUTPUT
+    previous = (
+        _STDOUT_CONSOLE,
+        _STDERR_CONSOLE,
+        _SEMANTIC_STYLES,
+        _EFFECTIVE_COLOR,
+        _ACTIVE_COLOR_MODE,
+        _STDOUT_STREAM,
+        _STDERR_STREAM,
+        _TIME_OUTPUT,
+    )
     _STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles(
-        cli_args=cli_args,
-        color_mode=color_mode,
-        repo=repo,
+        color_mode=rich_color_mode(color),
+        semantic_styles=semantic_styles,
         stderr=stderr,
         stdout=stdout,
         time_output=time_output,
     )
-    _REQUESTED_COLOR_MODE = requested_color_mode
-    _ACTIVE_COLOR_MODE = color_mode
+    _EFFECTIVE_COLOR = color
+    _ACTIVE_COLOR_MODE = rich_color_mode(color)
     _STDOUT_STREAM = sys.stdout if stdout is None else stdout
     _STDERR_STREAM = sys.stderr if stderr is None else stderr
+    _TIME_OUTPUT = time_output
     try:
         yield
     finally:
-        _STDOUT_CONSOLE = previous_stdout
-        _STDERR_CONSOLE = previous_stderr
-        _SEMANTIC_STYLES = previous_semantic_styles
-        _REQUESTED_COLOR_MODE = previous_requested_color_mode
-        _ACTIVE_COLOR_MODE = previous_active_color_mode
-        _STDOUT_STREAM = previous_stdout_stream
-        _STDERR_STREAM = previous_stderr_stream
+        (
+            _STDOUT_CONSOLE,
+            _STDERR_CONSOLE,
+            _SEMANTIC_STYLES,
+            _EFFECTIVE_COLOR,
+            _ACTIVE_COLOR_MODE,
+            _STDOUT_STREAM,
+            _STDERR_STREAM,
+            _TIME_OUTPUT,
+        ) = previous
 
 
-def requested_color_mode() -> RequestedColorMode | None:
-    """Return the active CLI `--color` override, if one was supplied."""
+def adopt_jj_config(*, color: str | None, colors: Mapping[str, object]) -> None:
+    """Apply jj's `ui.color` and theme to the installed consoles; `--color` keeps precedence."""
 
-    return _REQUESTED_COLOR_MODE
+    global _STDOUT_CONSOLE
+    global _STDERR_CONSOLE
+    global _SEMANTIC_STYLES
+    global _EFFECTIVE_COLOR
+    global _ACTIVE_COLOR_MODE
+    if _EFFECTIVE_COLOR is None and color in ("always", "auto", "debug", "never"):
+        _EFFECTIVE_COLOR = color
+    _ACTIVE_COLOR_MODE = rich_color_mode(_EFFECTIVE_COLOR)
+    _STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles(
+        color_mode=_ACTIVE_COLOR_MODE,
+        semantic_styles=semantic_styles(colors),
+        stderr=_STDERR_STREAM,
+        stdout=_STDOUT_STREAM,
+        time_output=_TIME_OUTPUT,
+    )
+
+
+def color_when(*, stdout_is_tty: bool) -> JjColorWhen:
+    """Resolve the effective color choice into a `jj --color` value for embedded jj output."""
+
+    if _EFFECTIVE_COLOR == "always":
+        return "always"
+    if _EFFECTIVE_COLOR == "debug":
+        return "debug"
+    if _EFFECTIVE_COLOR == "never":
+        return "never"
+    return "always" if stdout_is_tty else "never"
 
 
 def semantic_style(*labels: str) -> Style | None:
@@ -711,11 +731,6 @@ def _rstrip_line_segments(line: list[Segment]) -> list[Segment]:
     return trimmed
 
 
-# The import-time consoles only serve output emitted before a command
-# installs repo-scoped consoles via `configured_console`, so they never load
-# jj semantic styles: that would cost a jj invocation in the wrong directory
-# on every import.
-_STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles(
-    cli_args=_NO_CLI_ARGS,
-    load_styles=False,
-)
+# The import-time consoles only serve output emitted before `configured_console` installs
+# the ones that carry the invocation's color choice and jj theme.
+_STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles()

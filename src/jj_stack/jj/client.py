@@ -29,6 +29,8 @@ from jj_stack.errors import (
 )
 from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.colors import JjColorWhen
+from jj_stack.jj.settings import JjSettings
 from jj_stack.models.git import GitRemote
 from jj_stack.models.stack import LocalCommit
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
@@ -213,10 +215,6 @@ class _RenderableCommit(Protocol):
     def commit_id(self) -> str: ...
 
 
-CliColorMode = Literal["always", "auto", "debug", "never"]
-JjColorWhen = Literal["always", "debug", "never"]
-
-
 _NO_CLI_ARGS = JjCliArgs()
 
 
@@ -228,9 +226,11 @@ class JjClient:
         repo_root: Path,
         *,
         cli_args: JjCliArgs = _NO_CLI_ARGS,
+        settings: JjSettings | None = None,
     ) -> None:
         self._repo_root = repo_root
         self._cli_args = cli_args
+        self._settings = settings
         self._config_strings: dict[str, str | None] = {}
         self._git_remotes: tuple[GitRemote, ...] | None = None
         self._git_root: Path | None = None
@@ -386,13 +386,17 @@ class JjClient:
     def get_config_string(self, key: str) -> str | None:
         """Return the string value of a jj config key, or None if unset.
 
-        Reads are cached for the client's lifetime: nothing rewrites jj
-        config during a command run, and callers such as per-change
-        rendering re-read the same key many times.
+        The config listing read at startup answers when it has the key; otherwise one
+        `jj config get` runs and is cached, since nothing rewrites jj config during a run.
         """
 
         if key in self._config_strings:
             return self._config_strings[key]
+        if self._settings is not None:
+            listed = self._settings.string(*key.split("."))
+            if listed is not None:
+                self._config_strings[key] = listed
+                return listed
         try:
             value = self._run_jj(("config", "get", key))
         except JjCommandError:
@@ -401,17 +405,6 @@ class JjClient:
         result = stripped if stripped else None
         self._config_strings[key] = result
         return result
-
-    def read_jj_stack_config_list_output(self) -> str:
-        """Return raw stdout from ``jj config list 'jj-stack'``.
-
-        Delegates scope merging and override handling to jj itself, so the
-        same ``--config`` / ``--config-file`` overrides that flow to every jj
-        invocation also shape jj-stack's own configuration. The caller is
-        responsible for parsing the TOML-dotted-key output.
-        """
-
-        return self._run_jj(("config", "list", "jj-stack"))
 
     def enable_initial_working_copy_snapshot(self) -> None:
         """Let the first post-bootstrap jj command use jj's normal working-copy lifecycle."""
@@ -432,23 +425,6 @@ class JjClient:
                 row = _parse_json_line(line, command="jj log", model=_CommitDiffStat)
                 result[row.commit_id] = row.diffstat.rstrip()
         return result
-
-    def resolve_color_when(
-        self,
-        *,
-        cli_color: CliColorMode | None = None,
-        stdout_is_tty: bool,
-    ) -> JjColorWhen:
-        """Resolve the effective `jj --color` mode for embedded log rendering."""
-
-        configured = cli_color or self.get_config_string("ui.color")
-        if configured == "always":
-            return "always"
-        if configured == "debug":
-            return "debug"
-        if configured == "never":
-            return "never"
-        return "always" if stdout_is_tty else "never"
 
     def render_commit_log_lines(
         self,

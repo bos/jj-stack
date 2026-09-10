@@ -105,38 +105,6 @@ def _client(
     return JjClient(Path("/repo"))
 
 
-def test_resolve_color_when_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
-    responses: dict[tuple[str, ...], str] = {
-        ("jj", "config", "get", "ui.color"): "debug\n",
-    }
-    configured = _client(monkeypatch, responses)
-
-    # An explicit jj config value is honored.
-    assert configured.resolve_color_when(stdout_is_tty=True) == "debug"
-    # A CLI override beats the jj config, and CLI "auto" maps to terminal capability.
-    assert configured.resolve_color_when(cli_color="never", stdout_is_tty=True) == "never"
-    assert configured.resolve_color_when(cli_color="auto", stdout_is_tty=False) == "never"
-    assert configured.resolve_color_when(cli_color="auto", stdout_is_tty=True) == "always"
-
-    def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
-        assert tuple(command) == (
-            "jj",
-            "--ignore-working-copy",
-            "config",
-            "get",
-            "ui.color",
-        )
-        assert Path(kwargs["cwd"]) == Path("/repo")
-        return subprocess.CompletedProcess(command, 1, stdout="", stderr="no config\n")
-
-    monkeypatch.setattr(subprocess, "run", run)
-    unconfigured = JjClient(Path("/repo"))
-
-    # Missing config falls back to terminal capability.
-    assert unconfigured.resolve_color_when(stdout_is_tty=True) == "always"
-    assert unconfigured.resolve_color_when(stdout_is_tty=False) == "never"
-
-
 def test_first_post_bootstrap_jj_call_uses_normal_snapshot_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -149,7 +117,7 @@ def test_first_post_bootstrap_jj_call_uses_normal_snapshot_lifecycle(
     monkeypatch.setattr(subprocess, "run", run)
     client = JjClient(Path("/repo"))
 
-    client.read_jj_stack_config_list_output()
+    client.query_bookmarks()
     client.enable_initial_working_copy_snapshot()
     client.list_git_remotes()
     client.query_bookmarks()

@@ -94,7 +94,7 @@ def _status_change(
 
 def _render_lines(*lines: ui_module.Renderable) -> tuple[str, ...]:
     stdout = StringIO()
-    with console_module.configured_console(stdout=stdout, stderr=StringIO(), color_mode="never"):
+    with console_module.configured_console(stdout=stdout, stderr=StringIO(), color="never"):
         for line in lines:
             console_module.output(line)
     return tuple(stdout.getvalue().splitlines())

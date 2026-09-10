@@ -10,8 +10,6 @@ from jj_stack.commands.view import ViewSelector
 from jj_stack.errors import EXIT_USAGE, CliError
 from tests.support.output_assertions import assert_output_contains
 
-pytestmark = pytest.mark.usefixtures("no_configured_color")
-
 
 def test_main_reports_missing_repo_without_traceback(
     tmp_path: Path,

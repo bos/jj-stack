@@ -1,39 +1,22 @@
 from __future__ import annotations
 
-import subprocess
-from collections.abc import Sequence
-from pathlib import Path
+import tomllib
 
 import pytest
 
 from jj_stack.config import load_config
 from jj_stack.errors import CliError
-from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import JjClient
+from jj_stack.jj.settings import JjSettings
 
 
-def _patch_config_output(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    stdout: str,
-) -> None:
-    def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
-        assert command[0] == "jj"
-        assert kwargs["capture_output"] is True
-        assert kwargs["check"] is False
-        assert Path(kwargs["cwd"]) == tmp_path
-        assert kwargs["text"] is True
-        assert tuple(command[-3:]) == ("config", "list", "jj-stack")
-        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+def _settings(listing: str) -> JjSettings:
+    """Build settings from lines shaped like `jj config list` output."""
 
-    monkeypatch.setattr(subprocess, "run", run)
+    return JjSettings(tomllib.loads(listing))
 
 
-def test_load_config_returns_defaults_when_no_keys_set(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _patch_config_output(monkeypatch, tmp_path, "")
-    config = load_config(jj_client=JjClient(tmp_path))
+def test_load_config_returns_defaults_when_no_keys_set() -> None:
+    config = load_config(settings=_settings(""))
 
     assert config.logging.level == "WARNING"
     assert config.branch_prefix == "jj-stack"
@@ -42,10 +25,8 @@ def test_load_config_returns_defaults_when_no_keys_set(
     assert config.team_reviewers == []
 
 
-def test_load_config_parses_and_normalizes_the_resolved_jj_stack_section(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stdout = "\n".join(
+def test_load_config_parses_and_normalizes_the_resolved_jj_stack_section() -> None:
+    listing = "\n".join(
         [
             'jj-stack.branch_prefix = "Team/prs_v2"',
             'jj-stack.reviewers = ["", "octocat", "octocat"]',
@@ -56,8 +37,7 @@ def test_load_config_parses_and_normalizes_the_resolved_jj_stack_section(
             "",
         ]
     )
-    _patch_config_output(monkeypatch, tmp_path, stdout)
-    config = load_config(jj_client=JjClient(tmp_path))
+    config = load_config(settings=_settings(listing))
 
     assert config.logging.level == "INFO"
     assert config.branch_prefix == "Team/prs_v2"
@@ -66,19 +46,12 @@ def test_load_config_parses_and_normalizes_the_resolved_jj_stack_section(
     assert config.labels == ["needs-review"]
 
 
-def test_load_config_rejects_likely_top_level_typo(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stdout = 'jj-stack.reviewrs = ["octocat"]\n'
-    _patch_config_output(monkeypatch, tmp_path, stdout)
-
+def test_load_config_rejects_likely_top_level_typo() -> None:
     with pytest.raises(CliError, match=r"Did you mean \[jj-stack\]\.reviewers\?"):
-        load_config(jj_client=JjClient(tmp_path))
+        load_config(settings=_settings('jj-stack.reviewrs = ["octocat"]\n'))
 
 
-def test_load_config_rejects_invalid_branch_prefixes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_config_rejects_invalid_branch_prefixes() -> None:
     # Each rejection names a next step that survives being followed: `my prs` needs shell
     # quoting, and git accepts `foo|main` and an overlong prefix, so those must not cite git.
     for prefix, next_step in (
@@ -86,10 +59,8 @@ def test_load_config_rejects_invalid_branch_prefixes(
         ("foo|main", "Remove the '|'"),
         ("p" * 235, "`jj config set --repo jj-stack.branch_prefix <prefix>`"),
     ):
-        _patch_config_output(monkeypatch, tmp_path, f'jj-stack.branch_prefix = "{prefix}"\n')
-
         with pytest.raises(CliError, match=r"\[jj-stack\]\.branch_prefix") as caught:
-            load_config(jj_client=JjClient(tmp_path))
+            load_config(settings=_settings(f'jj-stack.branch_prefix = "{prefix}"\n'))
 
         message = str(caught.value)
 
@@ -97,72 +68,6 @@ def test_load_config_rejects_invalid_branch_prefixes(
         assert next_step in message, message
 
 
-def test_load_config_rejects_invalid_logging_level(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stdout = 'jj-stack.logging.level = "DEBIG"\n'
-    _patch_config_output(monkeypatch, tmp_path, stdout)
-
+def test_load_config_rejects_invalid_logging_level() -> None:
     with pytest.raises(CliError, match="Invalid logging level"):
-        load_config(jj_client=JjClient(tmp_path))
-
-
-def test_load_config_wraps_jj_command_failure_with_user_facing_message(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
-        assert Path(kwargs["cwd"]) == tmp_path
-        return subprocess.CompletedProcess(
-            command,
-            1,
-            stdout="",
-            stderr="Config error: Invalid config-file path 'missing.toml'\n",
-        )
-
-    monkeypatch.setattr(subprocess, "run", run)
-    client = JjClient(tmp_path)
-
-    with pytest.raises(CliError) as exc_info:
-        load_config(jj_client=client)
-
-    message = str(exc_info.value)
-    assert message.startswith("Could not load jj-stack config:")
-    assert "Invalid config-file path" in message
-
-
-def test_load_config_surfaces_cli_args_through_to_jj(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed_commands: list[tuple[str, ...]] = []
-
-    def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
-        assert Path(kwargs["cwd"]) == tmp_path
-        observed_commands.append(tuple(command))
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout='jj-stack.logging.level = "INFO"\n',
-            stderr="",
-        )
-
-    monkeypatch.setattr(subprocess, "run", run)
-    client = JjClient(
-        tmp_path,
-        cli_args=JjCliArgs(argv=("--config", "jj-stack.logging.level=INFO")),
-    )
-    config = load_config(jj_client=client)
-
-    assert config.logging.level == "INFO"
-    assert observed_commands == [
-        (
-            "jj",
-            "--config",
-            "jj-stack.logging.level=INFO",
-            "--ignore-working-copy",
-            "config",
-            "list",
-            "jj-stack",
-        )
-    ]
+        load_config(settings=_settings('jj-stack.logging.level = "DEBIG"\n'))

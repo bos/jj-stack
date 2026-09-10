@@ -110,7 +110,7 @@ def test_view_shares_pr_observation_without_losing_selector_order(
 
     stdout = StringIO()
     stderr = StringIO()
-    with console_module.configured_console(stdout=stdout, stderr=stderr, color_mode="never"):
+    with console_module.configured_console(stdout=stdout, stderr=stderr, color="never"):
         exit_code = view_module.view(
             as_json=True,
             cli_args=JjCliArgs(),
@@ -149,7 +149,6 @@ def test_view_keeps_selector_errors_between_their_neighboring_reports(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     jj_client = Mock(spec=JjClient)
-    jj_client.resolve_color_when.return_value = "never"
     jj_client.render_commit_log_blocks.side_effect = lambda changes, **_kwargs: {
         change.commit_id: (change.commit_id,) for change in changes
     }
@@ -179,7 +178,7 @@ def test_view_keeps_selector_errors_between_their_neighboring_reports(
     monkeypatch.setattr(view_module, "prepare_local_stack", prepare_stack)
 
     output = StringIO()
-    with console_module.configured_console(stdout=output, stderr=output, color_mode="never"):
+    with console_module.configured_console(stdout=output, stderr=output, color="never"):
         exit_code = view_module.view(
             as_json=False,
             cli_args=JjCliArgs(),

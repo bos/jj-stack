@@ -1,47 +1,35 @@
 from __future__ import annotations
 
-import subprocess
+import tomllib
 from importlib import import_module
 from io import StringIO
-from pathlib import Path
 
-import pytest
-
-import jj_stack.cli as cli_module
 import jj_stack.console as console_module
-import jj_stack.jj.colors as jj_colors_module
 import jj_stack.ui as ui_module
-from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.colors import SemanticStyles, semantic_styles
 
 
 def _style_cls():
     return import_module("rich.style").Style
 
 
-def test_cli_color_config_read_ignores_working_copy(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    def fake_run(command, **kwargs):
-        assert command == [
-            "jj",
-            "--ignore-working-copy",
-            "config",
-            "get",
-            "ui.color",
-        ]
-        assert kwargs["cwd"] == tmp_path
-        return subprocess.CompletedProcess(command, 0, stdout="debug\n", stderr="")
+def _theme(listing: str) -> SemanticStyles | None:
+    """Build the jj theme from lines shaped like `jj config list colors` output."""
 
-    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+    return semantic_styles(tomllib.loads(listing).get("colors", {}))
 
-    assert (
-        cli_module._load_configured_jj_color(
-            repo=tmp_path,
-            cli_args=JjCliArgs(),
-        )
-        == "debug"
-    )
+
+def test_color_when_prefers_the_flag_then_jj_config_then_the_terminal() -> None:
+    with console_module.configured_console(color="never"):
+        console_module.adopt_jj_config(color="always", colors={})
+        assert console_module.color_when(stdout_is_tty=True) == "never"
+    with console_module.configured_console(color=None):
+        console_module.adopt_jj_config(color="debug", colors={})
+        assert console_module.color_when(stdout_is_tty=False) == "debug"
+    with console_module.configured_console(color=None):
+        console_module.adopt_jj_config(color="rainbow", colors={})
+        assert console_module.color_when(stdout_is_tty=True) == "always"
+        assert console_module.color_when(stdout_is_tty=False) == "never"
 
 
 def test_machine_output_bypasses_terminal_formatting() -> None:
@@ -51,7 +39,7 @@ def test_machine_output_bypasses_terminal_formatting() -> None:
     with console_module.configured_console(
         stdout=output,
         stderr=StringIO(),
-        color_mode="always",
+        color="always",
         time_output=True,
     ):
         console_module.machine_output(payload)
@@ -59,20 +47,17 @@ def test_machine_output_bypasses_terminal_formatting() -> None:
     assert output.getvalue() == f"{payload}\n"
 
 
-def test_output_neutralizes_terminal_escapes_from_change_descriptions(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_output_neutralizes_terminal_escapes_from_change_descriptions() -> None:
     """No change description can carry an escape introducer to the terminal."""
 
-    monkeypatch.setattr(console_module, "load_semantic_styles", lambda **_: None)
     coloured = "\x1b[1;36mcoloured\x1b[0m"
 
-    def render(*objects, color_mode: console_module.ColorMode = "never") -> str:
+    def render(*objects, color: console_module.RequestedColorMode = "never") -> str:
         output = StringIO()
         with console_module.configured_console(
             stdout=output,
             stderr=StringIO(),
-            color_mode=color_mode,
+            color=color,
         ):
             console_module.output(*objects, soft_wrap=True)
         return output.getvalue()
@@ -82,38 +67,27 @@ def test_output_neutralizes_terminal_escapes_from_change_descriptions(
     assert raw.startswith("osc ") and raw.endswith(" tail\n")
     assert render(coloured) == "coloured\n"
 
-    styled = render(coloured, color_mode="always")
+    styled = render(coloured, color="always")
     assert "coloured" in styled and "\x1b[" in styled
     suffixed = ui_module.suffixed_line(coloured, "not submitted")
-    suffixed_output = render(suffixed, color_mode="always")
+    suffixed_output = render(suffixed, color="always")
     assert "coloured" in suffixed_output
     assert "not submitted" in suffixed_output
     assert "\x1b[" in suffixed_output
 
 
-def test_semantic_style_uses_machine_readable_jj_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repo = Path.cwd()
-    stdout = (
-        'colors.change_id\0"ansi-color-81"\n'
-        "colors.working_copy.bold\0true\n"
-        'colors."working_copy change_id"\0"bright magenta"\n'
+def test_semantic_style_uses_jj_color_config() -> None:
+    theme = _theme(
+        'colors.change_id = "ansi-color-81"\n'
+        "colors.working_copy.bold = true\n"
+        'colors."working_copy change_id" = "bright magenta"\n'
     )
-
-    def fake_run(command, **kwargs):
-        assert command[:4] == ["jj", "--ignore-working-copy", "config", "list"]
-        assert "colors" in command
-        assert kwargs["cwd"] == repo
-        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-
-    monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
 
     with console_module.configured_console(
         stdout=StringIO(),
         stderr=StringIO(),
-        color_mode="always",
-        repo=repo,
+        color="always",
+        semantic_styles=theme,
     ):
         assert console_module.semantic_style("missing") is None
         assert console_module.semantic_style("change_id") == _style_cls()(color="color(81)")
@@ -123,26 +97,18 @@ def test_semantic_style_uses_machine_readable_jj_config(
         )
 
 
-def test_rich_text_renders_template_semantics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repo = Path.cwd()
-    stdout = (
-        'colors.local_bookmarks\0"green"\n'
-        "colors.change_id.bold\0true\n"
-        'colors.change_id\0"ansi-color-81"\n'
+def test_rich_text_renders_template_semantics() -> None:
+    theme = _theme(
+        'colors.local_bookmarks = "green"\n'
+        "colors.change_id.bold = true\n"
+        'colors.change_id.fg = "ansi-color-81"\n'
     )
-
-    def fake_run(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-
-    monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
 
     with console_module.configured_console(
         stdout=StringIO(),
         stderr=StringIO(),
-        color_mode="always",
-        repo=repo,
+        color="always",
+        semantic_styles=theme,
     ):
         text = console_module.rich_text(
             t"delete {ui_module.bookmark('jj-stack/feature-aaaaaaaa')} for "
@@ -158,19 +124,11 @@ def test_rich_text_renders_template_semantics(
     assert text.spans[1].style == _style_cls()(color="color(81)", bold=True)
 
 
-def test_joined_semantic_template_interpolation_renders_plain_text_and_styles(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repo = Path.cwd()
-    stdout = 'colors.local_bookmarks\0"green"\n'
+def test_joined_semantic_template_interpolation_renders_plain_text_and_styles() -> None:
+    theme = _theme('colors.local_bookmarks = "green"\n')
     first = "jj-stack/fix-one-aaaaaaaa"
     second = "jj-stack/fix-two-bbbbbbbb"
     expected = f"matches: {first}, {second}."
-
-    def fake_run(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-
-    monkeypatch.setattr(jj_colors_module.subprocess, "run", fake_run)
 
     bookmarks = ui_module.join(ui_module.bookmark, (first, second))
     message = t"matches: {bookmarks}."
@@ -180,8 +138,8 @@ def test_joined_semantic_template_interpolation_renders_plain_text_and_styles(
     with console_module.configured_console(
         stdout=StringIO(),
         stderr=StringIO(),
-        color_mode="always",
-        repo=repo,
+        color="always",
+        semantic_styles=theme,
     ):
         text = console_module.rich_text(message)
 

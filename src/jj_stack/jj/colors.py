@@ -1,18 +1,15 @@
-"""Load jj's color configuration and resolve color labels into Rich styles."""
+"""Resolve jj's color configuration into Rich styles."""
 
 from __future__ import annotations
 
-import json
-import subprocess
-import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Literal
 
 from rich.style import Style
 
-from jj_stack.jj.cli_args import JjCliArgs
+JjColorWhen = Literal["always", "debug", "never"]
 
-_JJ_COLORS_TEMPLATE = r'name ++ "\0" ++ json(value) ++ "\n"'
 _JJ_STYLE_ATTRIBUTES = frozenset({"bg", "bold", "dim", "fg", "italic", "reverse", "underline"})
 _SEMANTIC_STYLE_FALLBACKS: tuple[tuple[frozenset[str], tuple[str, ...]], ...] = (
     (frozenset({"command"}), ("config_list", "name")),
@@ -71,73 +68,37 @@ class SemanticStyles:
         return style, frozenset(matched_labels)
 
 
-def load_semantic_styles(
-    *,
-    repo: Path | None,
-    cli_args: JjCliArgs,
-) -> SemanticStyles | None:
-    """Load effective jj semantic color styles for Rich-authored output."""
+def semantic_styles(colors: Mapping[str, object]) -> SemanticStyles | None:
+    """Build Rich styles from jj's resolved `colors` table.
 
-    cwd = repo if repo is not None and repo.exists() and repo.is_dir() else Path.cwd()
-    try:
-        completed = subprocess.run(
-            [
-                "jj",
-                *cli_args.argv,
-                "--ignore-working-copy",
-                "config",
-                "list",
-                "--include-defaults",
-                "colors",
-                "-T",
-                _JJ_COLORS_TEMPLATE,
-            ],
-            capture_output=True,
-            check=False,
-            cwd=cwd,
-            text=True,
-        )
-    except FileNotFoundError, OSError:
-        return None
-
-    if completed.returncode != 0:
-        return None
-
-    rules = _semantic_style_rules_from_config_list(completed.stdout)
-    return SemanticStyles(rules) if rules else None
-
-
-def _semantic_style_rules_from_config_list(stdout: str) -> tuple[_SemanticStyleRule, ...]:
-    """Parse `jj config list colors` output into Rich style rules."""
+    Each entry maps a label name such as `"diff added"` to either a color name or a table of
+    style attributes (`fg`, `bg`, `bold`, ...), as `jj config list --include-defaults` reports
+    them.
+    """
 
     grouped_styles: dict[frozenset[str], Style] = {}
-    for raw_line in stdout.splitlines():
-        if not raw_line:
-            continue
-        try:
-            raw_name, raw_value = raw_line.split("\0", maxsplit=1)
-        except ValueError:
-            continue
-        label_name, attribute = _parse_color_config_name(raw_name)
-        if label_name is None:
-            continue
+    for label_name, value in colors.items():
         label_set = _normalize_semantic_labels((label_name,))
         if not label_set:
             continue
+        if isinstance(value, Mapping):
+            fragments = (
+                _style_from_config_value(attribute, attribute_value)
+                for attribute, attribute_value in value.items()
+                if attribute in _JJ_STYLE_ATTRIBUTES
+            )
+        else:
+            fragments = (_style_from_config_value(None, value),)
+        for style in fragments:
+            if style is None:
+                continue
+            existing = grouped_styles.get(label_set)
+            grouped_styles[label_set] = style if existing is None else existing + style
 
-        try:
-            value = json.loads(raw_value)
-        except json.JSONDecodeError:
-            continue
-        style = _style_from_config_value(attribute, value)
-        if style is None:
-            continue
-        existing = grouped_styles.get(label_set)
-        grouped_styles[label_set] = style if existing is None else existing + style
-
-    return tuple(
+    rules = tuple(
         _SemanticStyleRule(labels=labels, style=style) for labels, style in grouped_styles.items()
     )
+    return SemanticStyles(rules) if rules else None
 
 
 def _style_from_config_value(attribute: str | None, value: object) -> Style | None:
@@ -153,32 +114,6 @@ def _style_from_config_value(attribute: str | None, value: object) -> Style | No
         # The remaining attributes (bold, dim, ...) are valid Rich style words.
         return Style.parse(attribute if value else f"not {attribute}")
     return None
-
-
-def _parse_color_config_name(name: str) -> tuple[str | None, str | None]:
-    """Extract a jj color label name and optional style attribute."""
-
-    try:
-        parsed = tomllib.loads(f"{name} = 0\n")
-    except tomllib.TOMLDecodeError:
-        return None, None
-
-    colors = parsed.get("colors")
-    if not isinstance(colors, dict) or len(colors) != 1:
-        return None, None
-
-    label_name, value = next(iter(colors.items()))
-    if not isinstance(label_name, str):
-        return None, None
-    if not isinstance(value, dict):
-        return label_name, None
-    if len(value) != 1:
-        return None, None
-
-    attribute = next(iter(value))
-    if attribute not in _JJ_STYLE_ATTRIBUTES:
-        return None, None
-    return label_name, attribute
 
 
 def _normalize_semantic_labels(labels: tuple[str, ...]) -> frozenset[str]:

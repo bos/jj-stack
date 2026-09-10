@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 import sys
 from argparse import (
     SUPPRESS,
@@ -52,7 +51,7 @@ from jj_stack.cli_help import (
     render_website_reference,
 )
 from jj_stack.completion import emit_shell_completion, validate_jj_alias
-from jj_stack.console import RequestedColorMode, configured_console, rich_color_mode
+from jj_stack.console import RequestedColorMode, configured_console
 from jj_stack.errors import (
     EXIT_INTERRUPTED,
     CliError,
@@ -724,20 +723,9 @@ def _print_cli_error(error: CliError) -> None:
         )
 
 
-def _print_early_cli_error(
-    error: CliError,
-    *,
-    cli_args: JjCliArgs,
-    normalized_argv: Sequence[str],
-) -> None:
+def _print_early_cli_error(error: CliError, *, normalized_argv: Sequence[str]) -> None:
     requested_color_mode = _color_arg_from_argv(normalized_argv)
-    with configured_console(
-        cli_args=cli_args,
-        color_mode=rich_color_mode(requested_color_mode),
-        repo=None,
-        requested_color_mode=requested_color_mode,
-        time_output=False,
-    ):
+    with configured_console(color=requested_color_mode):
         _print_cli_error(error)
 
 
@@ -785,34 +773,6 @@ def _color_arg_from_argv(argv: Sequence[str]) -> RequestedColorMode | None:
     return None
 
 
-def _load_configured_jj_color(
-    *,
-    repo: Path | None,
-    cli_args: JjCliArgs,
-) -> RequestedColorMode | None:
-    """Read `ui.color` from `jj` config without requiring repo bootstrap."""
-
-    cwd = repo if repo is not None and repo.exists() and repo.is_dir() else Path.cwd()
-    try:
-        completed = subprocess.run(
-            ["jj", *cli_args.argv, "--ignore-working-copy", "config", "get", "ui.color"],
-            capture_output=True,
-            check=False,
-            cwd=cwd,
-            text=True,
-        )
-    except FileNotFoundError, OSError:
-        return None
-
-    if completed.returncode != 0:
-        return None
-
-    configured = completed.stdout.strip()
-    if configured in _COLOR_CHOICES:
-        return configured
-    return None
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return a process exit code."""
 
@@ -824,28 +784,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         normalized_argv = _normalize_cli_args(stripped_argv)
         args = parser.parse_args(normalized_argv)
     except CliError as error:
-        _print_early_cli_error(
-            error,
-            cli_args=cli_args,
-            normalized_argv=normalized_argv,
-        )
+        _print_early_cli_error(error, normalized_argv=normalized_argv)
         return resolve_exit_code(error)
     args.cli_args = cli_args
     args.normalized_argv = tuple(normalized_argv)
     effective_color = "never" if args.command == "in-use" else args.color
     try:
-        if effective_color is None:
-            effective_color = _load_configured_jj_color(
-                repo=args.repo,
-                cli_args=cli_args,
-            )
-        with configured_console(
-            cli_args=cli_args,
-            color_mode=rich_color_mode(effective_color),
-            repo=args.repo,
-            requested_color_mode=args.color,
-            time_output=args.time_output,
-        ):
+        with configured_console(color=effective_color, time_output=args.time_output):
             with _time_output(enabled=args.time_output):
                 handler = args.handler
                 try:

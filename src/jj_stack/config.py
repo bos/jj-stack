@@ -5,14 +5,13 @@ from __future__ import annotations
 import difflib
 import logging
 import shlex
-import tomllib
 from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from jj_stack.errors import CliError
-from jj_stack.jj.client import JjClient, JjCommandError
+from jj_stack.jj.settings import JjSettings
 from jj_stack.pr_branch_namespace import MAX_BRANCH_PREFIX_BYTES
 from jj_stack.stack.selection import parse_comma_separated_flag_values
 
@@ -105,52 +104,17 @@ class AppConfig(RepoConfig):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
 
-def load_config(*, jj_client: JjClient) -> AppConfig:
-    """Load `jj-stack` config by delegating resolution to `jj` itself.
+def load_config(*, settings: JjSettings) -> AppConfig:
+    """Build jj-stack's configuration from jj's resolved config listing.
 
-    `jj config list 'jj-stack'` respects user/repo/workspace scopes plus any
-    `--config` / `--config-file` overrides already attached to `jj_client`, so
-    jj-stack and every downstream `jj` invocation see the same resolved view.
+    jj already merged the user, repo, and workspace scopes with any `--config` or
+    `--config-file` overrides, so jj-stack and every downstream `jj` invocation see the
+    same values.
     """
 
-    try:
-        stdout = jj_client.read_jj_stack_config_list_output()
-    except JjCommandError as error:
-        raise CliError(f"Could not load jj-stack config: {_jj_error_detail(error)}") from error
-    raw = parse_jj_stack_config_toml(stdout)
+    raw = dict(settings.table(CONFIG_SECTION))
     _raise_on_likely_config_typos(config_data=raw, source="jj config")
     return _validate_config(raw, source="jj config")
-
-
-def _jj_error_detail(error: JjCommandError) -> str:
-    """Strip the inner command trace from a JjCommandError when surfacing it."""
-
-    message = str(error)
-    marker = " failed: "
-    index = message.find(marker)
-    if index == -1:
-        return message
-    return message[index + len(marker) :]
-
-
-def parse_jj_stack_config_toml(text: str) -> dict[str, object]:
-    """Parse the TOML-formatted output of `jj config list 'jj-stack'`.
-
-    Returns the contents of the ``[jj-stack]`` table as a mapping, or an empty
-    mapping when jj has no matching keys set.
-    """
-
-    stripped = text.strip()
-    if not stripped:
-        return {}
-    try:
-        parsed = tomllib.loads(stripped)
-    except tomllib.TOMLDecodeError as error:
-        raise CliError(f"Could not parse jj-stack config from jj: {error}") from error
-    section = parsed.get(CONFIG_SECTION, {})
-    if not isinstance(section, Mapping):
-        raise CliError(f"Invalid jj-stack config from jj: [{CONFIG_SECTION}] must be a table.")
-    return dict(section)
 
 
 def _raise_on_likely_config_typos(*, config_data: Mapping[str, object], source: str) -> None:

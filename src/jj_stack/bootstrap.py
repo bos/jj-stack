@@ -15,6 +15,7 @@ from jj_stack.config import AppConfig, load_config
 from jj_stack.errors import CliError
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
+from jj_stack.jj.settings import read_jj_settings
 from jj_stack.pr_branch_namespace import install_pr_branch_namespace
 from jj_stack.state.store import TrackingStore
 
@@ -51,14 +52,16 @@ def bootstrap_context(
     cli_args: JjCliArgs,
     debug: bool,
 ) -> CommandContext:
-    """Resolve the repo, load config, and initialize logging."""
+    """Resolve the repo, read jj's config once, and initialize the console and logging."""
 
     repo = repo.resolve() if repo is not None else None
     validate_repo_path(repo)
     check_jj_version()
     repo_root = resolve_repo_root(repo or Path.cwd())
-    jj_client = JjClient(repo_root, cli_args=cli_args)
-    config = load_config(jj_client=jj_client)
+    settings = read_jj_settings(cwd=repo_root, cli_args=cli_args)
+    console.adopt_jj_config(color=settings.string("ui", "color"), colors=settings.table("colors"))
+    jj_client = JjClient(repo_root, cli_args=cli_args, settings=settings)
+    config = load_config(settings=settings)
     install_pr_branch_namespace(config.branch_prefix)
     jj_client.enable_initial_working_copy_snapshot()
     configure_logging(debug=debug, configured_level=config.logging.level)

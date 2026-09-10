@@ -30,7 +30,7 @@ from jj_stack.commands._json_status import (
     saved_pr_json,
     stack_change_json,
 )
-from jj_stack.console import requested_color_mode
+from jj_stack.console import color_when
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, ErrorMessage, error_message
 from jj_stack.formatting import format_pr_label, pr_url
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
@@ -175,14 +175,11 @@ def _run_list(
         if not orphan_rows:
             console.output("No stacks.")
             return 0
-        color_when = context.jj_client.resolve_color_when(
-            cli_color=requested_color_mode(),
-            stdout_is_tty=sys.stdout.isatty(),
-        )
+        jj_color = color_when(stdout_is_tty=sys.stdout.isatty())
         with console.spinner(description="Rendering jj change IDs"):
             rendered_change_ids = context.jj_client.render_short_change_ids(
                 tuple(row.change_id for row in orphan_rows),
-                color_when=color_when,
+                color_when=jj_color,
             )
         console.output(
             _stack_table(
@@ -244,17 +241,14 @@ def _run_list(
             )
         )
         return EXIT_INCOMPLETE if incomplete else 0
-    color_when = context.jj_client.resolve_color_when(
-        cli_color=requested_color_mode(),
-        stdout_is_tty=sys.stdout.isatty(),
-    )
+    jj_color = color_when(stdout_is_tty=sys.stdout.isatty())
     head_change_ids_to_render = tuple(row.head_change_id for row in rows) + tuple(
         row.change_id for row in orphan_rows
     )
     with console.spinner(description="Rendering jj change IDs"):
         rendered_change_ids = context.jj_client.render_short_change_ids(
             head_change_ids_to_render,
-            color_when=color_when,
+            color_when=jj_color,
         )
     console.output(
         _stack_table(

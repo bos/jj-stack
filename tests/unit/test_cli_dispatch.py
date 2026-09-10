@@ -9,9 +9,6 @@ from jj_stack.cli import (
     build_parser,
     main,
 )
-from jj_stack.errors import EXIT_INTERRUPTED
-
-pytestmark = pytest.mark.usefixtures("no_configured_color")
 
 
 def test_main_preserves_partial_handler_output_on_keyboard_interrupt(
@@ -100,23 +97,6 @@ def test_config_overrides_stop_at_end_of_options_marker() -> None:
 
     assert cli_args.argv == ()
     assert remaining == ["view", "--", "--config", "x=1"]
-
-
-def test_main_exits_130_when_interrupted_before_the_console_is_configured(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The startup color read runs `jj`, so Ctrl-C can land before any console exists.
-
-    The report itself goes to the process stderr no test console has replaced yet, so only
-    the exit code is observable here.
-    """
-
-    def interrupt(**_kwargs) -> None:
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(cli_module, "_load_configured_jj_color", interrupt)
-
-    assert main(["view"]) == EXIT_INTERRUPTED
 
 
 def test_submit_edit_never_consumes_the_selected_revset() -> None:

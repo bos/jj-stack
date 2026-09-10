@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sys
-from typing import Literal, Protocol
+from typing import Protocol
 
 import jj_stack.ui as ui
-from jj_stack.console import RequestedColorMode, requested_color_mode
+from jj_stack.console import color_when
+from jj_stack.jj.colors import JjColorWhen
 
 
 class RenderableCommit(Protocol):
@@ -19,18 +20,11 @@ class RenderableCommit(Protocol):
 class CommitRenderClient(Protocol):
     """Subset of the jj client interface used for change rendering."""
 
-    def resolve_color_when(
-        self,
-        *,
-        cli_color: RequestedColorMode | None = None,
-        stdout_is_tty: bool,
-    ) -> Literal["always", "debug", "never"]: ...
-
     def render_commit_log_blocks(
         self,
         changes: tuple[RenderableCommit, ...],
         *,
-        color_when: Literal["always", "debug", "never"],
+        color_when: JjColorWhen,
     ) -> dict[str, tuple[str, ...]]: ...
 
 
@@ -103,8 +97,6 @@ def render_commit_blocks(
 
     if not changes:
         return {}
-    color_when = client.resolve_color_when(
-        cli_color=requested_color_mode(),
-        stdout_is_tty=sys.stdout.isatty(),
+    return client.render_commit_log_blocks(
+        changes, color_when=color_when(stdout_is_tty=sys.stdout.isatty())
     )
-    return client.render_commit_log_blocks(changes, color_when=color_when)
