@@ -60,6 +60,14 @@ class GeneratedDescription:
     explicit_fields: frozenset[Literal["body", "title"]] = frozenset()
 
 
+class PRContentUpdates(NamedTuple):
+    """Planned base, body, and title for an existing pull request; None means unchanged."""
+
+    base: str | None
+    body: str | None
+    title: str | None
+
+
 class PRMetadataAction(NamedTuple):
     """One planned additive metadata write for a pull request."""
 
@@ -87,18 +95,18 @@ class PRSyncPlan:
         return "unchanged"
 
     @property
-    def content_updates(self) -> tuple[str | None, str | None, str | None]:
+    def content_updates(self) -> PRContentUpdates:
         pr = self.prepared.pr
         if pr is None:
-            return None, None, None
-        return (
-            self.base_branch if pr.base.ref != self.base_branch else None,
-            (
+            return PRContentUpdates(base=None, body=None, title=None)
+        return PRContentUpdates(
+            base=self.base_branch if pr.base.ref != self.base_branch else None,
+            body=(
                 self.generated_description.body
                 if (pr.body or "") != self.generated_description.body
                 else None
             ),
-            (
+            title=(
                 self.generated_description.title
                 if pr.title != self.generated_description.title
                 else None

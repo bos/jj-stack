@@ -84,7 +84,7 @@ async def _sync_pr(
     branch = prepared_change.branch
     change_id = prepared_change.change.change_id
     pr = plan.prepared.pr
-    base_update, body_update, title_update = plan.content_updates
+    updates = plan.content_updates
 
     if pr is None:
         pr = await _github_request(
@@ -97,14 +97,14 @@ async def _sync_pr(
             ),
             error_message=t"Could not create a pull request for branch {ui.bookmark(branch)}",
         )
-    elif any(update is not None for update in (base_update, body_update, title_update)):
+    elif any(update is not None for update in updates):
         pr_number = format_pr_number(pr.number, url=pr.html_url)
         pr = await _github_request(
             github_client.update_pr(
                 pr_number=pr.number,
-                base=base_update,
-                body=body_update,
-                title=title_update,
+                base=updates.base,
+                body=updates.body,
+                title=updates.title,
             ),
             error_message=t"Could not update pull request {pr_number}",
         )
