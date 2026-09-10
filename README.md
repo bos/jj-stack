@@ -118,7 +118,7 @@ You can also use `pip` inside an activated virtual environment:
 python -m pip install jj-stack
 ```
 
-To upgrade an installation made with `uv`, rerun its command with `--force`. If the command is
+To upgrade an installation made with `uv`, run `uv tool upgrade jj-stack`. If the command is
 not on your shell `PATH`, run `uv tool update-shell`.
 
 ## Learn more

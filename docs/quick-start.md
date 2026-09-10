@@ -25,8 +25,8 @@ uv tool install jj-stack
 You can also install with `pipx install jj-stack`, or use `python -m pip install jj-stack`
 inside an activated virtual environment.
 
-To upgrade a `uv` installation, rerun the install command with `--force`. If your shell cannot
-find `jj-stack`, run `uv tool update-shell`.
+To upgrade a `uv` installation, run `uv tool upgrade jj-stack`. If your shell cannot find
+`jj-stack`, run `uv tool update-shell`.
 
 </details>
 
