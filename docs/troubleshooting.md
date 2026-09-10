@@ -11,22 +11,6 @@ jj-stack found.
 The examples below use `<head-change-id>` to identify your stack. If you do not know that ID, run
 `jj-stack list` and copy your stack's head change ID.
 
-## The pull requests in my stack are not numbered in ascending order!?
-
-This is expected. I didn't consider preserving ascending numeric order to be worth the cost in
-perceived performance.
-
-GitHub's API is *very* slow, costing many hundreds of milliseconds per round-trip, with high
-variability. To be as fast as possible, `jj-stack` creates and updates PRs in a stack
-concurrently. This means that e.g. PR 42 may be created with PR 43 as its parent, because GitHub
-assigned 43 a number a moment earlier than 42.
-
-In part this was because I don't personally care about the numeric ordering, but there's a logic
-to it too. You can move changes around or create new ones inside a stack any time, which will
-naturally change the order of the PRs when you `submit` again. So "a higher-numbered PR is
-always a descendant of a lower-numbered PR" was at best an occasional rule of thumb rather than
-something that could be depended on.
-
 ## Setup or GitHub access fails
 
 Run the setup checks after cloning a repo, changing its Git remote, or encountering an
@@ -37,9 +21,25 @@ jj-stack doctor --fix
 ```
 
 `jj-stack doctor` checks your repo, Git remote, GitHub access and push permission, trunk, and
-Stacks API availability. With `--fix`, it also repairs local fetch configuration and removes
-leftovers from interrupted commands. Follow the guidance for any checks that still fail. It does
-not change GitHub.
+that GitHub's Stacks feature is available for your remote. With `--fix`, it also fixes up your
+fetch config to hide GitHub book-keeping branches, and removes leftovers from interrupted
+commands. Follow the guidance for any checks that still fail. It does not change GitHub.
+
+## The pull requests in a stack are not numbered in ascending order
+
+This is expected. I didn't consider preserving ascending numeric order to be worth the cost in
+perceived performance.
+
+GitHub's API is very slow, costing many hundreds of milliseconds per round-trip, with high
+variability. To be as fast as possible, `jj-stack` creates and updates PRs in a stack
+concurrently. This means that e.g. PR 42 may be created with PR 43 as its parent, because GitHub
+assigned 43 a number a moment earlier than 42.
+
+I chose this in part because I don't personally care about the numeric ordering, but there's a
+logic to it too. You can move changes around or create new ones inside a stack any time, which
+will naturally change the order of the PRs when you `submit` again. So "a higher-numbered PR is
+always a descendant of a lower-numbered PR" was at best an occasional rule of thumb rather than
+something that could be depended on.
 
 ## You want to use the same PRs again after `unstack --local`
 
