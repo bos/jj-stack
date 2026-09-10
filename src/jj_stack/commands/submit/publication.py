@@ -120,7 +120,6 @@ async def publish_prepared(
         auto_close.predict_prs_auto_closed_by_push(
             jj_client=client,
             plans=pr_plans,
-            prepared_changes=prepared_changes,
             remote_targets={**trunk_targets, **remote_targets, **observed_base_targets},
         )
         if pushes_pr_branches

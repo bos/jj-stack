@@ -11,7 +11,7 @@ from jj_stack.identifiers import CommitId
 from jj_stack.jj.client import JjClient
 from jj_stack.models.github import GithubPR
 
-from .models import PreparedSubmitChange, PRSyncPlan
+from .models import PRSyncPlan
 
 
 async def retarget_pr_bases_before_branch_push(
@@ -37,7 +37,6 @@ def predict_prs_auto_closed_by_push(
     *,
     jj_client: JjClient,
     plans: tuple[PRSyncPlan, ...],
-    prepared_changes: tuple[PreparedSubmitChange, ...],
     remote_targets: dict[str, CommitId],
 ) -> tuple[GithubPR, ...]:
     """Pending PRs that GitHub will auto-close (as merged) after the planned push.
@@ -48,10 +47,7 @@ def predict_prs_auto_closed_by_push(
     hold.
     """
 
-    push_targets = {
-        prepared_change.branch: prepared_change.change.commit_id
-        for prepared_change in prepared_changes
-    }
+    push_targets = {plan.prepared.branch: plan.prepared.change.commit_id for plan in plans}
     candidates: list[tuple[str, str, GithubPR]] = []
     for plan in plans:
         pr = plan.prepared.pr
