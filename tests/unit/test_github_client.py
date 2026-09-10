@@ -558,7 +558,8 @@ def test_github_client_fails_closed_on_graphql_errors_that_are_not_a_missing_ali
         asyncio.run(run_test())
 
     assert expected_detail in str(raised.value)
-    # `is_repo_not_found` keys on the repository message, so only the first row reports it.
+    # `is_repo_not_found` keys on NOT_FOUND at the repository path, so only the first row
+    # reports it.
     assert raised.value.is_repo_not_found() == (error_entry["type"] == "NOT_FOUND")
 
 
@@ -822,23 +823,20 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
     assert asyncio.run(run_test()) == [7]
 
 
-def test_user_facing_reason_reports_repo_not_found_for_404_without_raw_detail(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Pretend a token is configured so the 404 reason omits the auth follow-up
-    # hint, letting us assert the bare repo-not-found wording. The raw response
-    # body (JSON, network phrasing) must never leak into the user-facing reason.
-    monkeypatch.setattr("jj_stack.github.client.github_token_from_env", lambda: "token")
+def test_user_facing_reason_quotes_githubs_message_for_a_404_without_raw_detail() -> None:
+    # The raw response body (JSON, network phrasing) must never leak into the user-facing
+    # reason, and a bare 404 says only what GitHub said: the caller knows what was looked up.
     error = GithubClientError(
-        'GitHub request failed: 404 {"message":"Not Found","documentation_url":"x"}',
+        "GitHub request failed: 404",
+        body='{"message":"Not Found","documentation_url":"x"}',
         status_code=404,
     )
 
     reason = error.user_facing_reason()
 
-    assert reason == "repo not found or inaccessible"
+    assert reason == "request failed (GitHub 404: Not Found)"
     assert "documentation_url" not in reason
-    assert "network" not in reason
+    assert not error.is_repo_not_found()
 
 
 @pytest.mark.parametrize(

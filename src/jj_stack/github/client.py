@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections.abc import Sequence
@@ -17,7 +16,7 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from jj_stack.errors import EXIT_GITHUB, SummarizedError
-from jj_stack.github.auth import github_token, github_token_from_env
+from jj_stack.github.auth import github_token
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import CommitId
 from jj_stack.models.github import (
@@ -37,10 +36,33 @@ GITHUB_API_BASE_URL = "https://api.github.com"
 type RateLimitKind = Literal["primary", "secondary"]
 _GRAPHQL_PR_BATCH_SIZE = 25
 
+REPO_NOT_FOUND_REASON = "repo not found or inaccessible - check GITHUB_TOKEN or gh auth"
 _DEFAULT_RATE_LIMIT_RETRIES = 3
 _DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 1.0
 _MAX_RATE_LIMIT_WAIT_SECONDS = 60.0
 _RATE_LIMIT_NOTICE_SECONDS = 5.0
+
+
+class GraphqlError(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    message: str
+    type: str | None = None
+    path: tuple[str | int, ...] = ()
+
+
+class _GraphqlResponse(BaseModel):
+    data: dict[str, object] | None = None
+    errors: tuple[GraphqlError, ...] = ()
+
+
+class _RestErrorDetail(BaseModel):
+    message: str = ""
+
+
+class _RestErrorBody(BaseModel):
+    message: str
+    errors: tuple[_RestErrorDetail, ...] = ()
 
 
 class GithubClientError(SummarizedError):
@@ -52,67 +74,36 @@ class GithubClientError(SummarizedError):
         self,
         message: str,
         *,
+        body: str = "",
+        graphql_errors: tuple[GraphqlError, ...] = (),
         rate_limit: RateLimitKind | None = None,
         rate_limit_reset_seconds: float | None = None,
         status_code: int | None = None,
     ) -> None:
         super().__init__(message)
+        self.body = body
+        self.graphql_errors = graphql_errors
         self.rate_limit = rate_limit
         self.rate_limit_reset_seconds = rate_limit_reset_seconds
         self.status_code = status_code
 
-    def detail(self) -> str:
-        """Return the transport detail with known request prefixes stripped."""
-
-        message = str(self).strip()
-        for prefix in (
-            "GitHub request failed: ",
-            "GitHub pull request base lookup failed: ",
-            "GitHub pull request head lookup failed: ",
-            "GitHub pull request batch lookup failed: ",
-        ):
-            if message.startswith(prefix):
-                return message.removeprefix(prefix).strip()
-        return message
-
     def is_repo_not_found(self) -> bool:
-        """Whether the error indicates the repo is missing or inaccessible."""
+        """Whether GitHub reported the repository itself as unresolvable."""
 
-        if "Could not resolve to a Repository with the name" in self.detail():
-            return True
-        return self.status_code == 404
+        return any(
+            error.type == "NOT_FOUND" and error.path == ("repository",)
+            for error in self.graphql_errors
+        )
 
-    def request_failure_detail(self) -> str:
-        """Return the status code if known, otherwise the transport detail."""
-
-        if self.status_code is None:
-            return self.detail()
-        if reason := self._github_reason():
-            return f"GitHub {self.status_code}: {reason}"
-        return f"GitHub {self.status_code}"
-
-    def _github_reason(self) -> str:
-        """Return GitHub's own explanation for the refusal, bounded in length.
-
-        A 422 body carries the only useful part of GitHub's answer: an invalid reviewer, a
-        branch protection refusal, "No commits between", or a pull request that already
-        exists for the head branch. A body that is not GitHub's JSON, such as a proxy's HTML
-        error page, has no explanation to quote.
-        """
+    def github_message(self) -> str:
+        """Return GitHub's own explanation from the JSON body, bounded in length."""
 
         try:
-            payload = json.loads(self.detail().removeprefix(f"{self.status_code} "))
-        except ValueError:
+            body = _RestErrorBody.model_validate_json(self.body)
+        except ValidationError:
             return ""
-        if not isinstance(payload, dict):
-            return ""
-        reasons = [payload.get("message")]
-        entries = payload.get("errors")
-        if isinstance(entries, list):
-            reasons.extend(entry.get("message") for entry in entries if isinstance(entry, dict))
-        quoted = ": ".join(
-            reason for reason in reasons if isinstance(reason, str) and reason.strip()
-        )
+        reasons = (body.message, *(error.message for error in body.errors))
+        quoted = ": ".join(reason for reason in reasons if reason.strip())
         # The body is remote input on its way to a terminal, so drop anything unprintable
         # rather than forwarding an escape sequence.
         printable = "".join(character if character.isprintable() else " " for character in quoted)
@@ -120,6 +111,17 @@ class GithubClientError(SummarizedError):
         # A single oversized token shortens to nothing but the placeholder, which says less
         # than the bare status does.
         return "" if shortened.strip() == "..." else shortened
+
+    def request_failure_detail(self) -> str:
+        """Return the status and GitHub's explanation if known, otherwise the message."""
+
+        if self.graphql_errors:
+            return "; ".join(error.message for error in self.graphql_errors)
+        if self.status_code is None:
+            return str(self).strip()
+        if reason := self.github_message():
+            return f"GitHub {self.status_code}: {reason}"
+        return f"GitHub {self.status_code}"
 
     def user_facing_reason(self) -> str:
         """Render a concise failure reason suitable after an action prefix."""
@@ -136,10 +138,7 @@ class GithubClientError(SummarizedError):
                 return f"GitHub {self.rate_limit} rate limit reached{resets} - rerun later"
             return "access denied - check GITHUB_TOKEN and repo access"
         if self.is_repo_not_found():
-            message = "repo not found or inaccessible"
-            if github_token_from_env() is None:
-                return f"{message} - check GITHUB_TOKEN or gh auth"
-            return message
+            return REPO_NOT_FOUND_REASON
         return f"request failed ({self.request_failure_detail()})"
 
 
@@ -779,7 +778,7 @@ class GithubClient:
         if already_pending:
             try:
                 payload = response.json()
-            except json.JSONDecodeError as error:
+            except ValueError as error:
                 raise GithubClientError(
                     "GitHub's already-pending merge response was not valid JSON.",
                     status_code=409,
@@ -842,7 +841,7 @@ class GithubClient:
                     json=json,
                 )
             except httpx2.RequestError as error:
-                raise GithubClientError(f"GitHub request failed: {error}") from error
+                raise GithubClientError(f"could not reach GitHub: {error}") from error
 
             retry_after_seconds = _retry_after_seconds(
                 attempt=attempt,
@@ -909,15 +908,20 @@ class GithubClient:
             },
         )
         payload = self._expect_json_payload(response, response_name=response_name)
-        if not isinstance(payload, dict):
-            raise GithubClientError(f"GitHub {response_name} response was not a JSON object.")
-        errors = payload.get("errors")
+        envelope = _validate_model(
+            payload,
+            model=_GraphqlResponse,
+            error_context=f"GitHub {response_name} response had invalid data",
+        )
+        errors = envelope.errors
         if errors and not (tolerate_missing_selections and _only_unresolvable_aliases(errors)):
-            raise GithubClientError(f"GitHub {response_name} failed: {errors}")
-        data = payload.get("data")
-        if not isinstance(data, dict):
+            summary = "; ".join(error.message for error in errors)
+            raise GithubClientError(
+                f"GitHub {response_name} failed: {summary}", graphql_errors=errors
+            )
+        if envelope.data is None:
             raise GithubClientError(f"GitHub {response_name} response was missing `data`.")
-        return data
+        return envelope.data
 
     def _expect_json_payload(
         self,
@@ -936,7 +940,7 @@ class GithubClient:
         _expect_success(response)
         try:
             return response.json()
-        except json.JSONDecodeError as error:
+        except ValueError as error:
             raise GithubClientError(
                 f"GitHub {response_name} response was not valid JSON."
             ) from error
@@ -950,7 +954,8 @@ def _expect_success(response: httpx2.Response) -> None:
     except httpx2.HTTPStatusError as error:
         rate_limit, reset_seconds = _rate_limit_refusal(error.response)
         raise GithubClientError(
-            f"GitHub request failed: {error.response.status_code} {error.response.text}",
+            f"GitHub request failed: {error.response.status_code}",
+            body=error.response.text,
             rate_limit=rate_limit,
             rate_limit_reset_seconds=reset_seconds,
             status_code=error.response.status_code,
@@ -1041,7 +1046,7 @@ def _seconds_until_rate_limit_reset(value: str | None) -> float | None:
         return None
 
 
-def _only_unresolvable_aliases(errors: object) -> bool:
+def _only_unresolvable_aliases(errors: tuple[GraphqlError, ...]) -> bool:
     """Whether every GraphQL error only says one selection inside the repo is missing.
 
     GitHub answers an unresolvable `pullRequest(number:)` alias with `null` in `data` plus a
@@ -1051,14 +1056,8 @@ def _only_unresolvable_aliases(errors: object) -> bool:
     branch or an absent merge queue must not silently lose one.
     """
 
-    if not isinstance(errors, list):
-        return False
     return all(
-        isinstance(error, dict)
-        and error.get("type") == "NOT_FOUND"
-        and isinstance(path := error.get("path"), list)
-        and len(path) == 2
-        and path[0] == "repository"
+        error.type == "NOT_FOUND" and len(error.path) == 2 and error.path[0] == "repository"
         for error in errors
     )
 

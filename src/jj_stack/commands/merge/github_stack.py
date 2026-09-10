@@ -135,7 +135,7 @@ async def execute_async_merge(
             pr_number=merge.target.identity.pr_number,
         )
     except GithubClientError as error:
-        if error.status_code in {400, 409} and "head" in error.detail().casefold():
+        if error.status_code in {400, 409} and "head" in error.github_message().casefold():
             return _blocked_result(
                 execution,
                 merge,

@@ -391,7 +391,8 @@ def test_view_preserves_saved_identity_when_github_lookup_fails(
     class FailingPRLookupClient(GithubClient):
         async def get_open_prs_by_head_refs(self, *, head_refs):
             raise GithubClientError(
-                'GitHub request failed: 403 {"message":"Forbidden"}',
+                "GitHub request failed: 403",
+                body='{"message":"Forbidden"}',
                 rate_limit="primary",
                 rate_limit_reset_seconds=3600,
                 status_code=403,

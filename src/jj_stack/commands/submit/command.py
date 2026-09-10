@@ -32,6 +32,7 @@ from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.config import parse_comma_separated_flag_values
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
+from jj_stack.github.error_messages import repo_lookup_error
 from jj_stack.github.resolution import (
     require_github_repo,
     resolve_trunk_branch,
@@ -251,6 +252,8 @@ def _github_inspection_results(
             if unavailable is not None:
                 raise unavailable from None
         if isinstance(result, GithubClientError):
+            if kind == "repo":
+                raise repo_lookup_error(result, repo=repo_name) from result
             raise CliError(f"Could not inspect GitHub repo {repo_name}") from result
         raise result
     return (

@@ -1775,7 +1775,7 @@ def test_submit_reports_published_prs_when_the_overview_update_needs_retrying(
             body: str,
         ):
             if fail_update:
-                raise GithubClientError("GitHub request failed: 404 Not Found", status_code=404)
+                raise GithubClientError("GitHub request failed: 404", status_code=404)
             return await super().update_issue_comment(comment_id=comment_id, body=body)
 
     app = create_app(FakeGithubState.single_repo(fake_repo))

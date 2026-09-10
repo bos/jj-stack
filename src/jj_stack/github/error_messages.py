@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from jj_stack.github.client import GithubClientError
+from jj_stack.errors import CliError
+from jj_stack.github.client import REPO_NOT_FOUND_REASON, GithubClientError
 from jj_stack.github.resolution import (
     GithubRepoAddress,
     GithubTarget,
@@ -16,6 +17,27 @@ def github_action_error_message(*, action: str, error: GithubClientError) -> str
     """Prefix the client's canonical GitHub failure reason with its failed action."""
 
     return f"{action}: {error.user_facing_reason()}"
+
+
+def repo_lookup_reason(error: GithubClientError) -> str:
+    """Explain a failed lookup of the repo itself, where a 404 means the repo is out of reach."""
+
+    if error.status_code == 404:
+        return REPO_NOT_FOUND_REASON
+    return error.user_facing_reason()
+
+
+def repo_lookup_error(
+    error: GithubClientError,
+    *,
+    repo: str,
+    hint: Message | None = None,
+) -> CliError:
+    """Wrap a failed repo lookup; raise the result `from error`."""
+
+    if error.status_code == 404:
+        hint = REPO_NOT_FOUND_REASON
+    return CliError(("Could not inspect GitHub repo ", code(repo)), hint=hint)
 
 
 def github_unavailable_message(

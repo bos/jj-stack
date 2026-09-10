@@ -39,6 +39,7 @@ from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import CliError, UnsupportedStackError, UsageError
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
+from jj_stack.github.error_messages import repo_lookup_error
 from jj_stack.github.pr_refs import load_pr, parse_repo_pr_reference, require_managed_pr_head
 from jj_stack.github.resolution import (
     GithubRepoAddress,
@@ -509,7 +510,7 @@ async def _pick_stack(context: CommandContext) -> CheckoutPickerChoice:
             return_exceptions=True,
         )
         if isinstance(repo_result, GithubClientError):
-            raise CliError(f"Could not inspect GitHub repo {repo.full_name}") from repo_result
+            raise repo_lookup_error(repo_result, repo=repo.full_name) from repo_result
         if isinstance(repo_result, BaseException):
             raise repo_result
         if isinstance(stacks_result, GithubClientError):

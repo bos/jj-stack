@@ -43,6 +43,7 @@ from jj_stack.config import MergeMethod
 from jj_stack.errors import CliError, error_hint
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClientError, build_github_client
+from jj_stack.github.error_messages import repo_lookup_error
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepo
@@ -233,8 +234,9 @@ async def _stream_merge_async(
             try:
                 github_repo_state = await github_client.get_repo()
             except GithubClientError as error:
-                raise CliError(
-                    t"Could not inspect GitHub repo {github_repo.full_name}",
+                raise repo_lookup_error(
+                    error,
+                    repo=github_repo.full_name,
                     hint="Resolve the GitHub error above, then rerun jj-stack merge.",
                 ) from error
             trunk_branch, _trunk_targets = resolve_trunk_branch(

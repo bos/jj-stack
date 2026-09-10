@@ -29,19 +29,16 @@ def test_error_message_appends_github_cause_reason() -> None:
         assert str(error) == "Could not load pull request #7: request failed (Connection refused)"
 
 
-def test_error_message_uses_github_cause_reason_when_message_is_empty(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr("jj_stack.github.client.github_token_from_env", lambda: "token")
-
+def test_error_message_uses_github_cause_reason_when_message_is_empty() -> None:
     cause = GithubClientError(
-        'GitHub request failed: 404 {"message":"Not Found"}',
+        "GitHub request failed: 404",
+        body='{"message":"Not Found"}',
         status_code=404,
     )
     try:
         raise CliError("") from cause
     except CliError as error:
-        assert plain_text(error_message(error)) == "repo not found or inaccessible"
+        assert plain_text(error_message(error)) == "request failed (GitHub 404: Not Found)"
 
 
 def test_resolve_exit_code_prefers_the_error_category_over_the_cause() -> None:

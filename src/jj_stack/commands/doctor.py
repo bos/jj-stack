@@ -30,6 +30,7 @@ from jj_stack.github.client import (
     GithubClientError,
     build_github_client,
 )
+from jj_stack.github.error_messages import repo_lookup_reason
 from jj_stack.github.resolution import (
     GithubRepoAddress,
     parse_github_repo,
@@ -303,7 +304,7 @@ async def _check_github_access(*, parsed_repo: GithubRepoAddress) -> list[CheckR
         try:
             github_repo = await client.get_repo()
         except GithubClientError as error:
-            reason = error.user_facing_reason()
+            reason = repo_lookup_reason(error)
         else:
             return [
                 CheckResult("connectivity", "ok", f"reached {parsed_repo.full_name}"),
