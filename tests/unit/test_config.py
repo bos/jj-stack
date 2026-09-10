@@ -4,7 +4,7 @@ import tomllib
 
 import pytest
 
-from jj_stack.config import load_config
+from jj_stack.config import load_config, parse_comma_separated_flag_values
 from jj_stack.errors import CliError
 from jj_stack.jj.settings import JjSettings
 
@@ -71,3 +71,11 @@ def test_load_config_rejects_invalid_branch_prefixes() -> None:
 def test_load_config_rejects_invalid_logging_level() -> None:
     with pytest.raises(CliError, match="Invalid logging level"):
         load_config(settings=_settings('jj-stack.logging.level = "DEBIG"\n'))
+
+
+def test_parse_comma_separated_flag_values_dedupes_keeping_first_occurrence_order() -> None:
+    assert parse_comma_separated_flag_values(["alice,bob", "carol,bob", "alice"]) == [
+        "alice",
+        "bob",
+        "carol",
+    ]

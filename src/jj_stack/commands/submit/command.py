@@ -29,6 +29,7 @@ from typing import cast
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
+from jj_stack.config import parse_comma_separated_flag_values
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClientError, build_github_client
 from jj_stack.github.resolution import (
@@ -50,9 +51,6 @@ from jj_stack.stack.pr_branches import (
     ensure_new_pr_branches_unclaimed,
     ensure_unique_pr_branches,
     resolve_pr_branches,
-)
-from jj_stack.stack.selection import (
-    parse_comma_separated_flag_values,
 )
 from jj_stack.stack.status import discover_pr_lookups
 from jj_stack.state.operation_lock import operation_lock_if_mutating

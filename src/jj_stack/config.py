@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 import logging
 import shlex
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from jj_stack.errors import CliError
 from jj_stack.jj.settings import JjSettings
 from jj_stack.pr_branch_namespace import MAX_BRANCH_PREFIX_BYTES
-from jj_stack.stack.selection import parse_comma_separated_flag_values
 
 CONFIG_SECTION = "jj-stack"
 DEFAULT_BRANCH_PREFIX = "jj-stack"
@@ -22,6 +21,26 @@ _REJECTED_REF_CHARS = frozenset(" ~^:?*[\\\x7f") | frozenset(map(chr, range(32))
 
 
 MergeMethod = Literal["merge", "rebase", "squash"]
+
+
+def parse_comma_separated_flag_values(
+    values: Sequence[str] | None,
+) -> list[str] | None:
+    """Parse repeated comma-separated flag or config values into a deduplicated list."""
+
+    if values is None:
+        return None
+
+    parsed_values: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in value.split(","):
+            normalized = item.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            parsed_values.append(normalized)
+    return parsed_values
 
 
 class RepoConfig(BaseModel):

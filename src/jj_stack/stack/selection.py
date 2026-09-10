@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import jj_stack.ui as ui
 from jj_stack.errors import AmbiguousSelectionError, CliError, UsageError
 from jj_stack.formatting import format_pr_label
@@ -14,26 +12,6 @@ from jj_stack.github.pr_refs import (
 from jj_stack.github.resolution import GithubRepoAddress, parse_github_repo, select_submit_remote
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import TrackingStore
-
-
-def parse_comma_separated_flag_values(
-    values: Sequence[str] | None,
-) -> list[str] | None:
-    """Parse repeated comma-separated flag values into a deduplicated list."""
-
-    if values is None:
-        return None
-
-    parsed_values: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        for item in value.split(","):
-            normalized = item.strip()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            parsed_values.append(normalized)
-    return parsed_values
 
 
 def resolve_linked_change_for_pr(
