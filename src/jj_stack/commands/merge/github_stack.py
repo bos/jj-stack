@@ -14,7 +14,7 @@ from jj_stack.models.github import GithubStack, GithubStackMerge
 from jj_stack.stack.github_stack_safety import selected_github_stack
 from jj_stack.ui import Message
 
-from .models import MergeAction, MergeChange, MergeExecutionInputs, MergePlan, MergeResult
+from .plan import MergeAction, MergeChange, MergeExecutionInputs, MergePlan, MergeResult
 
 _MERGE_POLL_TIMEOUT_SECONDS = 600.0
 _MAX_MERGE_POLL_INTERVAL_SECONDS = 30.0
@@ -29,6 +29,9 @@ class AsyncMergePlan:
     @property
     def target(self) -> MergeChange:
         return self.planned[-1]
+
+    def actions(self, action: MergeAction | None = None) -> tuple[MergeAction, ...]:
+        return tuple(item for item in (action, self.boundary_action) if item is not None)
 
     def action(
         self,
@@ -109,9 +112,7 @@ async def execute_async_merge(
     merge: AsyncMergePlan,
 ) -> MergeResult:
     if not merge.planned:
-        return execution.result(
-            actions=(() if merge.boundary_action is None else (merge.boundary_action,))
-        )
+        return execution.result(actions=merge.actions())
     if merge.resource is None and merge.target.base_ref != execution.trunk_branch:
         try:
             await github.update_pr(
@@ -285,11 +286,7 @@ def _applied_result(
         ),
         status="applied",
     )
-    actions = (action, merge.boundary_action) if merge.boundary_action is not None else (action,)
-    return execution.result(
-        actions=actions,
-        final_trunk_commit_id=final_sha,
-    )
+    return execution.result(actions=merge.actions(action), final_trunk_commit_id=final_sha)
 
 
 def _enqueued_result(
@@ -308,8 +305,4 @@ def _enqueued_result(
         ),
         status="applied",
     )
-    actions = (action, merge.boundary_action) if merge.boundary_action is not None else (action,)
-    return execution.result(
-        actions=actions,
-        enqueued=True,
-    )
+    return execution.result(actions=merge.actions(action), enqueued=True)

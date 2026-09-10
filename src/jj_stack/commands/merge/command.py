@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import jj_stack.console as console
@@ -48,7 +49,8 @@ from jj_stack.github.error_messages import observe_github_repo, read_or_stop
 from jj_stack.github.resolution import GithubTarget, resolve_trunk_branch
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepo
-from jj_stack.models.stack import LocalCommit
+from jj_stack.models.stack import LocalCommit, LocalStack
+from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.pr_facts import observe_github_stacks, observe_prs
 from jj_stack.stack.preparation import prepare_local_stack
 from jj_stack.stack.selection import (
@@ -57,12 +59,23 @@ from jj_stack.stack.selection import (
 from jj_stack.state.operation_lock import operation_lock
 
 from .github_stack import build_async_merge_plan, execute_async_merge
-from .models import MergeExecutionInputs, MergeResult, PreparedMerge
-from .plan import build_merge_plan
-from .render import print_merge_result
+from .plan import MergeExecutionInputs, MergeResult, build_merge_plan
 
 _RERUN_HINT = "Resolve the GitHub error above, then rerun jj-stack merge."
 HELP = "Merge pull requests at the bottom of a stack"
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedMerge:
+    """Locally prepared merge inputs before GitHub planning and execution."""
+
+    dry_run: bool
+    context: CommandContext
+    merge_method: str | None
+    stack: LocalStack
+    state: TrackingState
+    target: GithubTarget
+    target_change_id: str | None
 
 
 def merge(
@@ -119,7 +132,7 @@ async def _run_merge(
         )
     async with build_github_client(repo=prepared_merge.target.repo) as github_client:
         result, github_repo_state = await _stream_merge_async(prepared_merge, github_client)
-        print_merge_result(result)
+        _print_merge_result(result)
         if result.blocked:
             return 1
         if result.enqueued or not result.applied:
@@ -303,24 +316,17 @@ async def _stream_merge_async(
     )
     async_merge = build_async_merge_plan(plan, stacks, execution)
     if prepared_merge.dry_run:
-        if async_merge.planned:
-            action = async_merge.action(
+        action = (
+            async_merge.action(
                 merge_action=merge_action,
                 method=resolved_merge_method,
                 repo=execution.repo,
                 trunk_branch=trunk_branch,
             )
-            actions = (
-                (action, async_merge.boundary_action)
-                if async_merge.boundary_action is not None
-                else (action,)
-            )
-            return execution.result(actions=actions), github_repo_state
-        return execution.result(
-            actions=(
-                () if async_merge.boundary_action is None else (async_merge.boundary_action,)
-            )
-        ), github_repo_state
+            if async_merge.planned
+            else None
+        )
+        return execution.result(actions=async_merge.actions(action)), github_repo_state
     return await execute_async_merge(
         execution=execution,
         github=github_client,
@@ -377,3 +383,51 @@ def _resolve_merge_method(
             t"{ui.code('jj-stack.merge_method')}.",
         )
     return allowed_methods[0]
+
+
+def _print_merge_result(result: MergeResult) -> None:
+    console.output(
+        t'Trunk: {ui.bookmark(result.trunk_branch)}, observed at "{result.trunk_subject}"'
+    )
+    if result.actions:
+        console.output(_result_header(result))
+        for action in result.actions:
+            if action.status == "applied":
+                prefix = "  ✓"
+                prefix_style = ("signature status good",)
+                body_style = None
+            elif action.status == "planned":
+                prefix = "  ~"
+                prefix_style = ("hint heading",)
+                body_style = None
+            else:
+                prefix = "  ✗"
+                prefix_style = ("error heading",)
+                body_style = ("warning heading",)
+            action_label = "stop" if action.kind == "boundary" else action.kind
+            console.output(
+                ui.prefixed_line(
+                    f"{prefix} ",
+                    (ui.semantic_text(action_label, "prefix"), ": ", action.body),
+                    prefix_labels=prefix_style,
+                    message_labels=body_style,
+                )
+            )
+    if result.final_trunk_commit_id is not None:
+        console.output(
+            t"GitHub reported final trunk commit {ui.commit_id(result.final_trunk_commit_id)}."
+        )
+    if result.enqueued:
+        console.output(
+            "Wait for GitHub to finish merging, then run jj-stack sync for this stack."
+        )
+
+
+def _result_header(result: MergeResult) -> str:
+    if result.enqueued:
+        return "In merge queue:"
+    if result.applied:
+        return "Merge completed:"
+    if result.blocked:
+        return "Merge blocked:"
+    return "Merge preview:"

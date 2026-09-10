@@ -3,8 +3,7 @@ from __future__ import annotations
 import pytest
 
 from jj_stack.commands.merge.command import _resolve_merge_method
-from jj_stack.commands.merge.models import MergeChange
-from jj_stack.commands.merge.preconditions import merge_precondition_error
+from jj_stack.commands.merge.plan import MergeChange, merge_precondition_error
 from jj_stack.errors import CliError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import ChangeId, CommitId
@@ -147,6 +146,7 @@ def test_merge_preconditions_reject_repo_drift() -> None:
         expected_trunk_branch="main",
         observation=observation,
         remote_name="origin",
+        sync_target="abcdefgh",
         change=MergeChange(
             base_ref="main",
             change_id=ChangeId("a" * 32),
@@ -156,8 +156,10 @@ def test_merge_preconditions_reject_repo_drift() -> None:
     )
 
     assert error is not None
-    assert error.reason == "the configured Git remote no longer names the planned GitHub repo"
-    assert error.recovery == "inspect"
+    assert plain_text(error) == (
+        "the configured Git remote no longer names the planned GitHub repo; inspect it and "
+        "rerun jj-stack merge"
+    )
 
 
 @pytest.mark.merge_recovery
@@ -212,6 +214,7 @@ def test_merge_preconditions_name_a_closed_pull_request() -> None:
         expected_trunk_branch="main",
         observation=observation,
         remote_name="origin",
+        sync_target="abcdefgh",
         change=MergeChange(
             base_ref="main",
             change_id=change.change_id,
@@ -221,5 +224,4 @@ def test_merge_preconditions_name_a_closed_pull_request() -> None:
     )
 
     assert error is not None
-    assert "#1 is closed" in plain_text(error.reason)
-    assert error.recovery == "inspect"
+    assert plain_text(error).endswith("#1 is closed; inspect it and rerun jj-stack merge")
