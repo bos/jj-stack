@@ -57,8 +57,7 @@ from jj_stack.stack.reporting import report_change, status_label, submittable_ed
 from jj_stack.stack.status import (
     StackStatusChange,
     build_status_changes_for_prepared_stack,
-    lookup_pr_lookups,
-    prepare_status_changes,
+    observe_status,
     status_is_incomplete,
 )
 
@@ -209,11 +208,13 @@ def _run_list(
             t"{ui.join(ui.change_id, change_ids)}. Live GitHub details for those changes "
             t"were not inspected."
         )
-    pr_lookups, github_error = _load_pr_lookups(
-        excluded_branches=duplicate_branch_names,
-        github_target=github_target,
-        prepared_discovered=prepared_discovered,
-    )
+    with console.spinner(description="Inspecting GitHub"):
+        lookups = observe_status(
+            prepared=tuple(item.prepared for item in prepared_discovered),
+            exclude_branches=duplicate_branch_names,
+        )
+    github_error = error_message(lookups) if isinstance(lookups, CliError) else None
+    pr_lookups = {} if isinstance(lookups, CliError) else lookups
     github_repo_error = github_target.github_repo_error or github_error
     for message in remote_and_github_unavailable_messages(
         github_error=github_repo_error,
@@ -490,41 +491,6 @@ def _pr_references_from_changes(
         if change.tracked is not None:
             references.setdefault(change.tracked.pr_identity.pr_number, None)
     return tuple(references.items())
-
-
-def _load_pr_lookups(
-    *,
-    excluded_branches: frozenset[str],
-    github_target: GithubTarget | UnresolvedGithubTarget,
-    prepared_discovered: tuple[_PreparedDiscoveredStack, ...],
-) -> tuple[dict[str, ChangeObservation], ErrorMessage | None]:
-    if not isinstance(github_target, GithubTarget):
-        return {}, None
-
-    prepared_changes_by_branch = {
-        branch: change
-        for item in prepared_discovered
-        for change in prepare_status_changes(item.prepared)
-        if change.tracked is not None
-        and (branch := change.branch) is not None
-        and branch not in excluded_branches
-    }
-    if not prepared_changes_by_branch:
-        return {}, None
-
-    try:
-        with console.progress(
-            description="Inspecting GitHub",
-            total=len(prepared_changes_by_branch),
-        ) as progress:
-            pr_lookups = lookup_pr_lookups(
-                github_repo=github_target.repo,
-                on_progress=progress.advance,
-                prepared_changes=tuple(prepared_changes_by_branch.values()),
-            )
-            return pr_lookups, None
-    except CliError as error:
-        return {}, error_message(error)
 
 
 def _format_pr_summary(

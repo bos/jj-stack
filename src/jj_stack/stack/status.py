@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 import jj_stack.ui as ui
@@ -92,7 +92,9 @@ class PreparedChange:
 
 
 def observe_status(
-    *, prepared: tuple[PreparedLocalStack, ...]
+    *,
+    prepared: tuple[PreparedLocalStack, ...],
+    exclude_branches: frozenset[str] = frozenset(),
 ) -> dict[str, ChangeObservation] | CliError:
     """Observe the saved PRs of selected stacks in one repository."""
 
@@ -105,7 +107,7 @@ def observe_status(
         change
         for stack in prepared
         for change in prepare_status_changes(stack)
-        if change.tracked is not None
+        if change.tracked is not None and change.branch not in exclude_branches
     )
     if not changes:
         return {}
@@ -228,25 +230,6 @@ def status_is_incomplete(changes: tuple[StackStatusChange, ...]) -> bool:
     """Whether any change stops a report from describing the stack completely."""
 
     return any(report_incomplete(change.state) for change in changes)
-
-
-def lookup_pr_lookups(
-    *,
-    github_repo: GithubRepoAddress,
-    on_progress: Callable[[int], None],
-    prepared_changes: tuple[PreparedChange, ...],
-) -> dict[str, ChangeObservation]:
-    """Return pull-request lookups for saved branches."""
-
-    pr_lookups = asyncio.run(
-        lookup_pr_lookups_async(
-            github_repo=github_repo,
-            prepared_changes=prepared_changes,
-        )
-    )
-    if pr_lookups:
-        on_progress(len(pr_lookups))
-    return pr_lookups
 
 
 async def lookup_pr_lookups_async(
