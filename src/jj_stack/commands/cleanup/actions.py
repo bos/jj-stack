@@ -9,7 +9,7 @@ import jj_stack.ui as ui
 from jj_stack.console import ActionStatus
 from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label
-from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.github.client import PR_PAGE_SIZE, GithubClient, GithubClientError
 from jj_stack.github.overview_comments import (
     STACK_OVERVIEW_COMMENT_LABEL,
     delete_stack_overview_comment,
@@ -146,8 +146,8 @@ def plan_pr_cleanup(
         # GitHub can never reopen a closed PR whose head branch is gone, so its base is free.
         and (item.state == "open" or item.head_branch_exists)
     )
-    # A full 100-result page may hide another dependent, so it also fails closed.
-    blockers = dependents[:1] or observed_dependents[99:100]
+    # A full page may hide another dependent, so it also fails closed.
+    blockers = dependents[:1] or observed_dependents[PR_PAGE_SIZE - 1 : PR_PAGE_SIZE]
     if blockers:
         dependent = blockers[0]
         pr_label = format_pr_label(pr.number, url=pr.html_url)

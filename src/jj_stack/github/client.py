@@ -35,6 +35,8 @@ GITHUB_API_BASE_URL = "https://api.github.com"
 
 type RateLimitKind = Literal["primary", "secondary"]
 _GRAPHQL_PR_BATCH_SIZE = 25
+# GitHub's largest page.
+PR_PAGE_SIZE = 100
 
 REPO_NOT_FOUND_REASON = "repo not found or inaccessible - check GITHUB_TOKEN or gh auth"
 _DEFAULT_RATE_LIMIT_RETRIES = 3
@@ -1221,7 +1223,7 @@ def _prs_by_ref_query(
             _graphql_document(
                 f"""
                 {alias}: pullRequests(
-                  first: 100,
+                  first: {PR_PAGE_SIZE},
                   states: {states},
                   {ref_argument}: ${name}
                 ) {{
