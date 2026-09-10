@@ -232,6 +232,7 @@ class JjClient:
         self._repo_root = repo_root
         self._cli_args = cli_args
         self._config_strings: dict[str, str | None] = {}
+        self._git_remotes: tuple[GitRemote, ...] | None = None
         self._git_root: Path | None = None
         self._initial_working_copy_snapshot_pending = False
 
@@ -559,8 +560,13 @@ class JjClient:
         return tuple(self.query_commits(combined_revset))
 
     def list_git_remotes(self) -> tuple[GitRemote, ...]:
-        """List configured Git remotes for the repo."""
+        """List configured Git remotes for the repo, cached for the client's lifetime."""
 
+        if self._git_remotes is None:
+            self._git_remotes = self._read_git_remotes()
+        return self._git_remotes
+
+    def _read_git_remotes(self) -> tuple[GitRemote, ...]:
         stdout = self._run_jj(("git", "remote", "list"))
         remotes: list[GitRemote] = []
         for line in stdout.splitlines():

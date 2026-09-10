@@ -152,12 +152,13 @@ def test_first_post_bootstrap_jj_call_uses_normal_snapshot_lifecycle(
     client.read_jj_stack_config_list_output()
     client.enable_initial_working_copy_snapshot()
     client.list_git_remotes()
-    client.list_git_remotes()
+    client.query_bookmarks()
 
-    assert observed_commands == [
-        ("jj", "--ignore-working-copy", "config", "list", "jj-stack"),
-        ("jj", "git", "remote", "list"),
-        ("jj", "--ignore-working-copy", "git", "remote", "list"),
+    # Only the first command after bootstrap may snapshot the working copy.
+    assert ["--ignore-working-copy" in command for command in observed_commands] == [
+        True,
+        False,
+        True,
     ]
 
 
