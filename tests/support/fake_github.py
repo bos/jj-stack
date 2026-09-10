@@ -360,6 +360,9 @@ class FakeGithubRepo:
         if pr.state == state:
             return
         pr.state = state
+        if state == "closed":
+            # GitHub removes a closed pull request from the merge queue.
+            self.leave_merge_queue((pr.number,))
         self.pr_events.append(
             FakeGithubPREvent(
                 kind="state",
