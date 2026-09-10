@@ -76,6 +76,13 @@ and clean it up:
 jj-stack cleanup --pull-request <pr> --close
 ```
 
+To close and clean up every orphaned PR in the repo at once, use `orphans` in place of a PR
+number:
+
+```console
+jj-stack cleanup --pull-request orphans --close
+```
+
 If the PR is still part of a GitHub stack, first remove that stack with the
 `jj-stack unstack --stack <number>` command printed in the error. Cleanup can also keep an
 orphaned PR's branch if another PR still uses it; follow [the guidance above](
