@@ -1,7 +1,7 @@
 """Create or update GitHub pull requests for the selected stack of changes.
 
 Push the selected changes and create or update one PR per change, in local parent order.
-Existing PRs follow their change IDs. Resolve any conflicts before submitting.
+Existing PRs stay linked to their changes. Resolve any conflicts before submitting.
 
 The `--label`, `--reviewers`, and `--team-reviewers` flags accept comma-separated values and may
 be repeated. When passed, they override the corresponding configured defaults for this run.
