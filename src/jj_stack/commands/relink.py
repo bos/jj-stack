@@ -18,8 +18,8 @@ change ID for each PR when relinking, and the top change's ID when submitting th
 The existing PRs keep their numbers and discussions.
 
 `jj-stack relink` itself only updates local tracking. `jj-stack submit` changes GitHub.
-`jj-stack relink` works with open PRs for their original changes in this repo. It cannot transfer
-a PR to a different change ID, even with `--replace-remote`.
+`jj-stack relink` reconnects an open PR in this repo to the change it was created from. It cannot
+transfer a PR to a different change ID, even with `--replace-remote`.
 """
 
 from __future__ import annotations
