@@ -53,7 +53,7 @@ from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.pr_branches import duplicate_pr_branch_claims
 from jj_stack.stack.preparation import PreparedLocalStack
 from jj_stack.stack.repo import observe_repo_paths
-from jj_stack.stack.reporting import report_change, status_label
+from jj_stack.stack.reporting import report_change, status_label, submittable_edits
 from jj_stack.stack.status import (
     StackStatusChange,
     build_status_changes_for_prepared_stack,
@@ -345,12 +345,12 @@ def _emit_divergence_hints(rows: tuple[StackRow, ...]) -> None:
 
 
 def _emit_stale_stacks_advisory(rows: tuple[StackRow, ...]) -> None:
-    """Direct changed stacks to inspection, where repairs can precede another submit."""
-
     stale_heads = tuple(
         row.head_change_id
         for row in rows
-        if any(change.state.has_local_edits for change in row.changes)
+        if submittable_edits(
+            {change.change_id: report_change(change.state) for change in row.changes}
+        )
     )
     if not stale_heads:
         return

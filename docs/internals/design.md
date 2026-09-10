@@ -715,8 +715,8 @@ replaces:
   their own submits.
 - **Join stacks**: submit the resulting local chain to replace the old stacks with one stack.
 
-Stacks not yet resubmitted may still show old overview comments. `list` finds PRs that need a
-refresh by comparing each submitted baseline with the current local commit and naming the stack.
+Stacks not yet resubmitted may still show old overview comments. `list` names each stack that a
+`submit` would refresh, and `view` lists the changes involved.
 
 ## CLI contract
 

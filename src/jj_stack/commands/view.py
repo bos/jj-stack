@@ -55,7 +55,7 @@ from jj_stack.stack.preparation import (
     prepare_local_stack,
     stack_preparation_cli_error,
 )
-from jj_stack.stack.reporting import report_change, status_label
+from jj_stack.stack.reporting import report_change, status_label, submittable_edits
 from jj_stack.stack.selected import is_change_id_prefix
 from jj_stack.stack.selection import resolve_linked_change_for_pr
 from jj_stack.stack.status import (
@@ -575,19 +575,7 @@ def render_status_advisory_lines(
         if reports[change.change_id].lifecycle == "closed"
         and reports[change.change_id].repair is None
     ]
-    # A repair anywhere in the selected stack stops submit for the whole stack.
-    submitted_disagreements = (
-        ()
-        if repair_changes
-        or divergent_changes
-        or closed_changes
-        or any(report.lifecycle == "queued" for report in reports.values())
-        else tuple(
-            change.change_id
-            for change in reversed(result.changes)
-            if reports[change.change_id].needs_submit
-        )
-    )
+    submitted_disagreements = tuple(reversed(submittable_edits(reports)))
     if (
         not cleanup_changes
         and not divergent_changes

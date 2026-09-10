@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -118,6 +119,18 @@ def report_change(state: ChangeState) -> ChangeReport:
         reason=state.reason if isinstance(state, Stop) else None,
         repair=state.repair if isinstance(state, Stop) else None,
     )
+
+
+def submittable_edits(reports: Mapping[str, ChangeReport]) -> tuple[str, ...]:
+    """Changes a `submit` would refresh; none when anything in the stack would stop `submit`."""
+
+    blocked = any(
+        report.repair is not None or report.divergent or report.lifecycle in ("closed", "queued")
+        for report in reports.values()
+    )
+    if blocked:
+        return ()
+    return tuple(change_id for change_id, report in reports.items() if report.needs_submit)
 
 
 def _pr_status(pr: GithubPR) -> ReportStatus:
