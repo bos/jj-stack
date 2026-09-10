@@ -22,6 +22,7 @@ from jj_stack.errors import (
     AmbiguousSelectionError,
     CliError,
     DriftError,
+    ErrorHint,
     ErrorMessage,
     UsageError,
 )
@@ -73,7 +74,13 @@ _WORKSPACE_TEMPLATE = dedent(
 
 
 class JjCommandError(CliError):
-    """Raised when a `jj` invocation fails."""
+    """Raised when a `jj` invocation fails; `stderr` holds jj's own diagnostics."""
+
+    def __init__(
+        self, message: ErrorMessage, *, hint: ErrorHint | None = None, stderr: str = ""
+    ) -> None:
+        super().__init__(message, hint=hint)
+        self.stderr = stderr
 
 
 PRBranchFetchIsolationStatus = Literal["ready", "applied", "required"]
@@ -219,7 +226,7 @@ class JjClient:
         try:
             return tuple(self._query_commits(revset))
         except JjCommandError as error:
-            if _is_missing_commit_error(_unwrap_command_error_message(str(error))):
+            if _is_missing_commit_error(error.stderr):
                 return ()
             raise
 
@@ -1131,10 +1138,13 @@ class JjClient:
                     t"untracked remote bookmark. If it is a branch you intend to edit, track "
                     t"it with {ui.cmd('jj bookmark track NAME@REMOTE')}. Otherwise, check your "
                     t"{ui.code('immutable_heads()')} configuration before retrying.",
+                    stderr=message,
                 )
             displayed_command = _redact_http_url_userinfo(shlex.join(command))
             displayed_message = _redact_http_url_userinfo(message)
-            raise JjCommandError(t"{ui.cmd(displayed_command)} failed: {displayed_message}")
+            raise JjCommandError(
+                t"{ui.cmd(displayed_command)} failed: {displayed_message}", stderr=message
+            )
         return completed.stderr if return_stderr else completed.stdout
 
 
@@ -1156,11 +1166,6 @@ def _is_missing_commit_error(message: str) -> bool:
     return "Revision `" in message and "doesn't exist" in message
 
 
-def _unwrap_command_error_message(message: str) -> str:
-    _prefix, separator, suffix = message.partition(" failed: ")
-    return suffix if separator else message
-
-
 def _redact_http_url_userinfo(text: str) -> str:
     """Remove HTTP URL credentials from command and subprocess-error displays."""
 
@@ -1174,11 +1179,10 @@ def _redact_http_url_userinfo(text: str) -> str:
 
 
 def _revset_resolution_error(revset: str, error: JjCommandError) -> CliError | None:
-    raw_message = _unwrap_command_error_message(str(error))
-    if _is_missing_commit_error(raw_message):
+    if _is_missing_commit_error(error.stderr):
         return CliError(t"Revset {ui.revset(revset)} did not resolve to a visible commit.")
 
-    first_line = raw_message.splitlines()[0].strip()
+    first_line = error.stderr.partition("\n")[0].strip()
     if first_line.startswith("Error: Failed to parse revset:"):
         detail = first_line.removeprefix("Error: ").strip()
         return UsageError(t"Invalid revset {ui.revset(revset)}: {detail}.")
@@ -1189,7 +1193,7 @@ def _revset_resolution_error(revset: str, error: JjCommandError) -> CliError | N
 def divergent_change_id_from_error(error: JjCommandError) -> str | None:
     """Return the short change ID that made a bare revset symbol divergent."""
 
-    first_line = _unwrap_command_error_message(str(error)).splitlines()[0].strip()
+    first_line = error.stderr.partition("\n")[0].strip()
     match = re.fullmatch(r"Error: Change ID `([k-z]+)` is divergent", first_line)
     return match.group(1) if match is not None else None
 

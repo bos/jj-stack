@@ -51,7 +51,9 @@ class _InvalidRevsetClient(JjClient):
         *,
         limit: int | None = None,
     ) -> list[LocalCommit]:
-        raise JjCommandError("jj log failed: Error: Failed to parse revset: unexpected token")
+        raise JjCommandError(
+            "jj log failed", stderr="Error: Failed to parse revset: unexpected token"
+        )
 
 
 def test_resolve_commit_reports_ambiguous_revsets_with_ambiguous_exit_code() -> None:
