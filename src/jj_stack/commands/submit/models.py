@@ -11,7 +11,7 @@ from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR
 from jj_stack.models.stack import LocalCommit, LocalStack
-from jj_stack.models.tracking import TrackingState
+from jj_stack.models.tracking import TrackedPR, TrackingState
 
 PRAction = Literal["created", "unchanged", "updated"]
 PRDraftAction = Literal["draft", "ready"]
@@ -116,10 +116,23 @@ class PRSyncPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class ExplicitBase:
+    """The submitted parent `--base` names."""
+
+    change: LocalCommit
+    tracked: TrackedPR
+
+    @property
+    def branch(self) -> str:
+        return self.tracked.pr_identity.head_ref
+
+
+@dataclass(frozen=True, slots=True)
 class PublicationInputs:
     """Local publication inputs prepared before GitHub mutations begin."""
 
     client: JjClient
+    explicit_base: ExplicitBase | None
     generated_pr_descriptions: dict[str, GeneratedDescription]
     generated_stack_description: GeneratedDescription | None
     is_maximal_path: bool

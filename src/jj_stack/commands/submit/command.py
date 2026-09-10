@@ -364,9 +364,8 @@ async def run_submit_async(
     remote = prepared_inputs.remote
     stack = prepared_inputs.stack
     state = prepared_inputs.state
-    explicit_base = stack.base_parent if options.base_revset is not None else None
-    tracked_base = state.prs[explicit_base.change_id] if explicit_base is not None else None
-    base_branch = tracked_base.pr_identity.head_ref if tracked_base is not None else None
+    explicit_base = prepared_inputs.explicit_base
+    base_branch = explicit_base.branch if explicit_base is not None else None
 
     if not stack.changes:
         print_submit_rows(inputs=prepared_inputs, rows=(), heading="Submitted changes:")
@@ -393,9 +392,9 @@ async def run_submit_async(
     ) -> dict[str, ChangeObservation]:
         changes: dict[str, LocalCommit] = {change.change_id: change for change in stack.changes}
         branches = {resolution.branch: resolution.change_id for resolution in resolutions}
-        if explicit_base is not None and base_branch is not None:
-            changes[explicit_base.change_id] = explicit_base
-            branches[base_branch] = explicit_base.change_id
+        if explicit_base is not None:
+            changes[explicit_base.change.change_id] = explicit_base.change
+            branches[explicit_base.branch] = explicit_base.change.change_id
         return {
             branch: ChangeObservation(
                 change_id=change_id,
@@ -498,13 +497,13 @@ async def run_submit_async(
             stack=stack,
         )
         bottom_base_branch = trunk_branch
-        if explicit_base is not None and tracked_base is not None and base_branch is not None:
+        if explicit_base is not None:
             child_bottom = short_change_id(stack.changes[0].change_id)
             child_head = short_change_id(stack.head.change_id)
             child_rebase = f"jj rebase -s '{child_bottom}' -o 'trunk()'"
             require_published_base(
-                base=explicit_base,
-                lookup=lookups[base_branch],
+                base=explicit_base.change,
+                lookup=lookups[explicit_base.branch],
                 merged_hint=(
                     t"Sync the parent PR first, rebase only the child stack with "
                     t"{ui.cmd(child_rebase)}, and then run "
@@ -512,14 +511,14 @@ async def run_submit_async(
                     t"{ui.cmd('--base')}."
                 ),
                 remote=remote,
-                remote_target=remote_targets.get(base_branch),
+                remote_target=remote_targets.get(explicit_base.branch),
                 retry=(
-                    f"jj-stack submit --base {short_change_id(explicit_base.change_id)} "
+                    f"jj-stack submit --base {short_change_id(explicit_base.change.change_id)} "
                     f"{child_head}"
                 ),
-                tracked_base=tracked_base,
+                tracked_base=explicit_base.tracked,
             )
-            bottom_base_branch = base_branch
+            bottom_base_branch = explicit_base.branch
         drafts: dict[str, bool] = {
             prepared.change.change_id: _desired_draft_state(
                 draft_mode=options.draft_mode,

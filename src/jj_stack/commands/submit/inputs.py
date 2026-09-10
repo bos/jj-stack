@@ -18,6 +18,7 @@ from jj_stack.stack.selected import require_submittable_changes, select_stack_pa
 from .descriptions import resolve_generated_descriptions
 from .github_stack import GithubStackPRSnapshot, github_stack_pr_snapshot
 from .models import (
+    ExplicitBase,
     PrivateCommitFinder,
     PublicationInputs,
     SubmitOptions,
@@ -45,6 +46,7 @@ def prepare_submit_inputs(
         stack=path.stack,
         state=state,
     )
+    explicit_base = None
     if options.base_revset is not None:
         base = stack.base_parent
         short_base = short_change_id(base.change_id)
@@ -70,6 +72,7 @@ def prepare_submit_inputs(
                 t"refresh it using its usual submit command, "
                 t"then run {retry}.",
             )
+        explicit_base = ExplicitBase(change=base, tracked=tracked_base)
     if options.edit and options.describe_with is not None:
         raise UsageError(
             t"{ui.cmd('--describe-with')} cannot be combined with {ui.cmd('--edit')} or "
@@ -83,6 +86,7 @@ def prepare_submit_inputs(
         is_maximal_path=path.is_maximal,
         descriptions=options.descriptions,
         describe_with=options.describe_with,
+        explicit_base=explicit_base,
     )
 
 
@@ -95,6 +99,7 @@ def prepare_publication_inputs(
     is_maximal_path: bool,
     descriptions: tuple[str, ...] = (),
     describe_with: str | None = None,
+    explicit_base: ExplicitBase | None = None,
 ) -> PublicationInputs:
     client = context.jj_client
     require_submittable_changes(stack.changes)
@@ -119,6 +124,7 @@ def prepare_publication_inputs(
     )
     return PublicationInputs(
         client=client,
+        explicit_base=explicit_base,
         generated_pr_descriptions=generated_pr_descriptions,
         generated_stack_description=generated_stack_description,
         is_maximal_path=is_maximal_path,
