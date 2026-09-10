@@ -11,9 +11,9 @@ You can also read them on the [jj-stack website](https://www.serpentine.com/soft
 ## Everyday work
 
 - [Submit and update a stack](guides/submit-and-update.md)
+- [Edit and rearrange a stack](guides/revise.md)
 - [Work with a stack on GitHub](guides/working-on-github.md)
 - [Review and merge a stack on GitHub](guides/review-a-stack.md)
-- [Edit and rearrange a stack](guides/revise.md)
 - [Merge and sync](guides/merge-and-sync.md)
 - [Multiple stacks and dependent work](guides/multiple-stacks.md)
 - [Continue an existing stack](guides/continue-a-stack.md)
