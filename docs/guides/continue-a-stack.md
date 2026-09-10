@@ -31,6 +31,15 @@ is already available locally. Choose a stack to fetch any missing commits, save 
 links, and run `jj edit` on its top unmerged change. For a stack already tracked here, the command
 edits its local head change.
 
+If this checkout already tracks the stack, you can skip the picker and edit its head directly:
+
+```console
+jj-stack checkout --revset <head-change-id>
+```
+
+This works like `jj edit`, but first confirms that every change in the stack has a saved pull
+request link. It does not contact GitHub.
+
 ## Check out a specific pull request
 
 If you know the PR number or URL, select it directly:

@@ -992,8 +992,9 @@ def _add_checkout_parser(
         selector,
         "--revset",
         help=(
-            t"Local stack head to edit; defaults to {ui.revset('@')} when the "
-            t"working-copy change is described and nonempty, otherwise {ui.revset('@-')}"
+            t"Edit the head of a locally tracked stack without contacting GitHub; "
+            t"defaults to {ui.revset('@')} when the working-copy change is described and "
+            t"nonempty, otherwise {ui.revset('@-')}"
         ),
     )
     add_help_argument(

@@ -1,18 +1,20 @@
 """Check out an existing stack of pull requests submitted with jj-stack.
 
+Use this command to continue work you submitted from another machine or checkout. It fetches any
+missing commits, saves their pull request links, and runs `jj edit` on the selected change. If a
+PR's version differs from your local version, checkout keeps both and explains how to resolve the
+difference.
+
+Use `--pull-request` to bring in a PR and the PRs below it. Select the top PR to check out the
+whole stack. Use `--pick` to choose from local and GitHub stacks in an interactive list. Use
+`--revset` to edit the head of a stack this checkout already tracks; it confirms that every
+change has a saved pull request link and does not contact GitHub.
+
 The PRs and their head branches must belong to the repo selected by your Git remote. PR branches
 must use jj-stack's branch naming scheme with this checkout's configured prefix, normally
 `jj-stack/`. If the original checkout used a custom prefix, set the same `jj-stack.branch_prefix`
 here first. PRs with head branches in another repository, such as a contributor's fork, are
 not supported.
-
-Use `--pull-request` to bring in a PR and the PRs below it. Select the top PR to check out the
-whole stack. Use `--revset` for a locally tracked stack, or `--pick` to choose from local and
-GitHub stacks in an interactive list.
-
-The command fetches any missing commits, saves their pull request links, and runs `jj edit` on
-the selected change. If a PR's version differs from your local version, checkout keeps both and
-explains how to resolve the difference.
 
 Checkout does not rebase changes or modify GitHub. To start a new change on top, run `jj new`
 afterward.
