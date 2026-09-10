@@ -1,10 +1,16 @@
 ---
 title: Multiple stacks and dependent work
 linkTitle: Multiple stacks
-description: Work with multiple local stacks.
+description: >-
+  Find your submitted stacks, build on a stack under review, and move changes between stacks.
 navGroup: Everyday work
 weight: 60
 ---
+
+Each linear chain of changes above trunk is its own stack, and each stack is submitted, reviewed,
+and merged separately. This guide covers finding the stacks you have submitted, building new work
+on a stack that is still under review, testing independent stacks together, and moving a change
+from one stack to another.
 
 ## See every stack
 
