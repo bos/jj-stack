@@ -92,12 +92,10 @@ or pass a bookmark or other revision expression that resolves to that head.
 For `submit`, select the stack by its head change ID. A middle change or a bookmark selects only
 the lower part of the stack, and `submit` stops if GitHub already groups the whole stack as one.
 
-For a partial merge, use `jj-stack merge --pull-request <pr>`. It merges from the bottom of
-the stack through the named PR and leaves the PRs above it open. If GitHub merges
-immediately, without a merge queue, this is called a **direct merge**. `jj-stack` then updates
-the remaining local changes and their PRs automatically. A revset naming a middle change
-would leave the upper changes out of the selected stack, so the command refuses it if GitHub
-groups those PRs in the same stack.
+`merge` follows the same rules, so a middle change selects only the lower part of the stack, and
+`merge` stops in the same case. To merge only the bottom of a stack, name the last PR to merge
+with `--pull-request <pr>` instead. See
+[merge and sync](../guides/merge-and-sync.md#choose-how-much-of-your-stack-to-merge).
 
 ## PR branches are separate from your bookmarks
 
