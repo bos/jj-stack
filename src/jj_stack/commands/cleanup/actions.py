@@ -1,11 +1,12 @@
-"""Shared PR checks and cleanup helpers."""
+"""Cleanup actions and the pull request checks that plan them."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import jj_stack.ui as ui
-from jj_stack.commands.cleanup.shared import CleanupAction
+from jj_stack.console import ActionStatus
 from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -27,6 +28,22 @@ from jj_stack.stack.change_state import (
 )
 from jj_stack.stack.pr_facts import RepoFacts
 from jj_stack.ui import Message
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupAction:
+    """One cleanup action that was planned, applied, blocked, or skipped."""
+
+    kind: str
+    status: ActionStatus
+    body: Message
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupResult:
+    """Rendered cleanup result for the selected repo."""
+
+    actions: tuple[CleanupAction, ...]
 
 
 def check_tracked_pr(*, change_id: str, observation: RepoFacts) -> WithPR | CleanupAction:

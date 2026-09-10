@@ -20,14 +20,16 @@ retrying cleanup.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._cleanup_actions import (
+from jj_stack.commands.cleanup.actions import (
+    CleanupAction,
+    CleanupResult,
     apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
     check_tracked_pr,
@@ -46,10 +48,7 @@ from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import github_target_unavailable_messages
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
-from jj_stack.github.resolution import (
-    GithubTarget,
-    resolve_github_target,
-)
+from jj_stack.github.resolution import GithubTarget, UnresolvedGithubTarget, resolve_github_target
 from jj_stack.identifiers import short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import PRRefUpdate
@@ -69,13 +68,19 @@ from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock
 from jj_stack.ui import plain_text
 
-from .shared import (
-    CleanupAction,
-    CleanupResult,
-    PreparedCleanup,
-)
-
 HELP = "Remove unused PR branches, stack overviews, and saved links"
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCleanup:
+    """Locally prepared cleanup inputs before any GitHub inspection."""
+
+    candidates: dict[str, TrackedPR]
+    close_open_prs: bool
+    context: CommandContext
+    dry_run: bool
+    github_target: GithubTarget | UnresolvedGithubTarget
+    state: TrackingState
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,14 +168,7 @@ def _run_cleanup_command(
             pr=pr,
             revset=revset,
         )
-    if _cleanup_needs_remote_context(prepared_cleanup=prepared_cleanup):
-        if prepared_cleanup.github_target is None:
-            prepared_cleanup = replace(
-                prepared_cleanup,
-                github_target=resolve_github_target(
-                    prepared_cleanup.context.jj_client.list_git_remotes()
-                ),
-            )
+    if prepared_cleanup.candidates:
         for message in github_target_unavailable_messages(prepared_cleanup.github_target):
             console.warning(plain_text(message))
 
@@ -201,11 +199,11 @@ async def cleanup_tracked_prs(
 
     state = context.state_store.load()
     prepared_cleanup = PreparedCleanup(
+        candidates=_cleanup_candidates(state, change_ids),
         close_open_prs=False,
         context=context,
-        github_target=github_target,
         dry_run=dry_run,
-        selected_change_ids=change_ids,
+        github_target=github_target,
         state=state,
     )
 
@@ -259,13 +257,23 @@ def _prepare_cleanup(
     )
 
     return PreparedCleanup(
+        candidates=_cleanup_candidates(
+            state, state.prs if selected_change_ids is None else selected_change_ids
+        ),
         close_open_prs=close,
         context=context,
-        github_target=None,
         dry_run=dry_run,
-        selected_change_ids=selected_change_ids,
+        github_target=resolve_github_target(context.jj_client.list_git_remotes()),
         state=state,
     )
+
+
+def _cleanup_candidates(state: TrackingState, change_ids: Iterable[str]) -> dict[str, TrackedPR]:
+    return {
+        change_id: tracked
+        for change_id in change_ids
+        if (tracked := state.prs.get(change_id)) is not None
+    }
 
 
 def _resolve_cleanup_change_ids(
@@ -336,14 +344,7 @@ async def _run_cleanup_async(
         actions.append(action)
         on_action(action)
 
-    selected_change_ids = prepared_cleanup.selected_change_ids
-    candidates = {
-        change_id: candidate
-        for change_id in (
-            prepared_cleanup.state.prs if selected_change_ids is None else selected_change_ids
-        )
-        if (candidate := prepared_cleanup.state.prs.get(change_id)) is not None
-    }
+    candidates = prepared_cleanup.candidates
     github_target = prepared_cleanup.github_target
     if isinstance(github_target, GithubTarget) and candidates:
         if github_client is not None:
@@ -639,19 +640,3 @@ async def _apply_tracked_pr_cleanup(
         )
         record_action(action)
     return False
-
-
-def _cleanup_needs_remote_context(
-    *,
-    prepared_cleanup: PreparedCleanup,
-) -> bool:
-    """Whether plain cleanup might need remote or GitHub state beyond local checks."""
-
-    return any(
-        change_id in prepared_cleanup.state.prs
-        for change_id in (
-            tuple(prepared_cleanup.state.prs)
-            if prepared_cleanup.selected_change_ids is None
-            else prepared_cleanup.selected_change_ids
-        )
-    )

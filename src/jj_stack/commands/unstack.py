@@ -19,8 +19,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands._cleanup_actions import check_tracked_pr
-from jj_stack.commands.cleanup.shared import CleanupAction
+from jj_stack.commands.cleanup.actions import CleanupAction, check_tracked_pr
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.error_messages import require_github_target

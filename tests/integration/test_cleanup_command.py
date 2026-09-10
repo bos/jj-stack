@@ -381,7 +381,7 @@ def test_cleanup_stops_later_prs_after_partial_mutation_failure(
         raise CliError("comment deletion failed")
 
     monkeypatch.setattr(
-        "jj_stack.commands._cleanup_actions.delete_stack_overview_comment",
+        "jj_stack.commands.cleanup.actions.delete_stack_overview_comment",
         reject_comment_delete,
     )
 
