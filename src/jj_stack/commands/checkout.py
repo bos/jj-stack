@@ -36,7 +36,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.concurrency import wait_for_read_tasks
-from jj_stack.errors import CliError, UsageError
+from jj_stack.errors import CliError, UnsupportedStackError, UsageError
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError, build_github_client
 from jj_stack.github.pr_refs import load_pr, parse_repo_pr_reference, require_managed_pr_head
@@ -48,7 +48,7 @@ from jj_stack.github.resolution import (
 from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import JjClient, UnsupportedStackError
+from jj_stack.jj.client import JjClient
 from jj_stack.models.github import GithubPR, GithubStack
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, TrackingState

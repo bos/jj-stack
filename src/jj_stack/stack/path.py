@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import jj_stack.ui as ui
-from jj_stack.errors import AmbiguousSelectionError, CliError
-from jj_stack.jj.client import UnsupportedStackError
+from jj_stack.errors import AmbiguousSelectionError, CliError, UnsupportedStackError
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.stack.divergence import divergence_recovery_hint
 

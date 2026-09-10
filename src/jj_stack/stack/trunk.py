@@ -5,8 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jj_stack.ui as ui
-from jj_stack.errors import CliError
-from jj_stack.jj.client import UnsupportedStackError
+from jj_stack.errors import CliError, UnsupportedStackError
 from jj_stack.models.stack import LocalCommit
 
 

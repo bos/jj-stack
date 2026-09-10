@@ -33,7 +33,7 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._json_status import stack_change_json
-from jj_stack.errors import EXIT_INCOMPLETE, CliError, error_message
+from jj_stack.errors import EXIT_INCOMPLETE, CliError, UnsupportedStackError, error_message
 from jj_stack.formatting import (
     CommitRenderClient,
     RenderableCommit,
@@ -47,7 +47,6 @@ from jj_stack.identifiers import short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import (
     JjCommandError,
-    UnsupportedStackError,
     divergent_change_id_from_error,
 )
 from jj_stack.stack.divergence import divergence_recovery_hint

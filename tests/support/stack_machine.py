@@ -16,9 +16,9 @@ from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, precondition, rule
 
 import jj_stack.cli as cli_module
-from jj_stack.errors import CliError, DriftError
+from jj_stack.errors import CliError, DriftError, UnsupportedStackError
 from jj_stack.identifiers import ChangeId
-from jj_stack.jj.client import JjClient, UnsupportedStackError
+from jj_stack.jj.client import JjClient
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
 from jj_stack.state.store import TrackingStore
 from tests.integration.submit_command_helpers import configure_submit_environment, run_main

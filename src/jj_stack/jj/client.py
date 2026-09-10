@@ -19,11 +19,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 import jj_stack.ui as ui
 from jj_stack.errors import (
-    EXIT_NO_STACK,
     AmbiguousSelectionError,
     CliError,
     DriftError,
-    ErrorHint,
     ErrorMessage,
     UsageError,
 )
@@ -158,52 +156,6 @@ class _CommitDiffStat(BaseModel):
 
     commit_id: CommitId
     diffstat: str
-
-
-UnsupportedStackReason = Literal[
-    "divergent_change",
-    "empty_change",
-    "hidden_commit",
-    "immutable_commit",
-    "merge_commit",
-    "reached_root_before_trunk",
-    "trunk_resolved_to_root",
-    "undescribed_change",
-]
-
-
-class UnsupportedStackError(CliError):
-    """Raised when local history cannot be treated as a linear stack."""
-
-    exit_code = EXIT_NO_STACK
-
-    def __init__(
-        self,
-        message: ErrorMessage,
-        *,
-        change_id: str | None = None,
-        hint: ErrorHint | None = None,
-        reason: UnsupportedStackReason | None = None,
-    ) -> None:
-        super().__init__(message, hint=hint)
-        self.change_id = change_id
-        self.reason = reason
-
-    @classmethod
-    def stack_shape(
-        cls,
-        change_id: str,
-        detail: ErrorMessage,
-        *,
-        hint: ErrorHint | None = None,
-        reason: UnsupportedStackReason,
-    ) -> UnsupportedStackError:
-        return cls(
-            t"Unsupported stack shape at {ui.change_id(change_id)}: {detail}",
-            change_id=change_id,
-            hint=hint,
-            reason=reason,
-        )
 
 
 class StaleWorkspaceError(CliError):

@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import jj_stack.ui as ui
+from jj_stack.errors import UnsupportedStackError
 from jj_stack.identifiers import short_change_id
 from jj_stack.jj.client import (
     JjClient,
     JjCommandError,
-    UnsupportedStackError,
     divergent_change_id_from_error,
     quote_revset_symbol,
 )

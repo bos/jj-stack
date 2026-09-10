@@ -8,12 +8,12 @@ from jj_stack.errors import (
     EXIT_USAGE,
     AmbiguousSelectionError,
     CliError,
+    UnsupportedStackError,
     UsageError,
     error_message,
     resolve_exit_code,
 )
 from jj_stack.github.client import GithubClientError
-from jj_stack.jj.client import UnsupportedStackError
 from jj_stack.ui import plain_text
 
 

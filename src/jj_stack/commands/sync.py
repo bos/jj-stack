@@ -40,6 +40,7 @@ from jj_stack.commands.sync_apply import apply_pr_finishes, apply_selected_conve
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import (
     CliError,
+    UnsupportedStackError,
     UsageError,
     error_hint,
     error_message,
@@ -55,7 +56,7 @@ from jj_stack.github.resolution import (
 )
 from jj_stack.identifiers import CommitId
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import UnsupportedStackError, quote_revset_symbol
+from jj_stack.jj.client import quote_revset_symbol
 from jj_stack.models.github import GithubStack
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
 from jj_stack.stack.convergence import (
