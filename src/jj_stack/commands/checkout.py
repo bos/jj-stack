@@ -59,7 +59,7 @@ from jj_stack.stack.pr_facts import duplicate_pr_claim_change_ids
 from jj_stack.stack.preparation import stack_preparation_cli_error
 from jj_stack.stack.repo import observe_repo_paths
 from jj_stack.stack.selected import select_stack_path
-from jj_stack.state.operation_lock import acquire_operation_lock
+from jj_stack.state.operation_lock import operation_lock
 
 HELP = "Check out an existing stack of pull requests"
 
@@ -100,7 +100,7 @@ def checkout(
         choice = asyncio.run(_pick_stack(context))
         pr = choice.pr
         revset = choice.revset
-    with acquire_operation_lock(context.state_store.require_writable(), command="checkout"):
+    with operation_lock(context.state_store, command="checkout"):
         context.jj_client.clear_pr_branch_temp_artifacts()
         result = asyncio.run(
             _run_checkout_async(

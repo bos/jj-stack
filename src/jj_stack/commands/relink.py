@@ -55,7 +55,7 @@ from jj_stack.stack.change_state import (
 )
 from jj_stack.stack.pr_facts import duplicate_pr_claim_change_ids
 from jj_stack.stack.selected import require_submittable_changes, select_stack_path
-from jj_stack.state.operation_lock import acquire_operation_lock
+from jj_stack.state.operation_lock import operation_lock
 
 HELP = "Reconnect a change to its pull request"
 
@@ -83,7 +83,7 @@ def relink(
     """CLI entrypoint for `relink`."""
 
     context = bootstrap_context(repo=repo, cli_args=cli_args, debug=debug)
-    with acquire_operation_lock(context.state_store.require_writable(), command="relink"):
+    with operation_lock(context.state_store, command="relink"):
         result = asyncio.run(
             _run_relink_async(
                 context=context,

@@ -52,7 +52,7 @@ from jj_stack.stack.preparation import prepare_local_stack
 from jj_stack.stack.selection import (
     resolve_linked_change_for_pr,
 )
-from jj_stack.state.operation_lock import operation_lock_if_mutating
+from jj_stack.state.operation_lock import operation_lock
 
 from .github_stack import build_async_merge_plan, execute_async_merge
 from .models import MergeExecutionInputs, MergeResult, PreparedMerge
@@ -77,7 +77,7 @@ def merge(
         cli_args=cli_args,
         debug=debug,
     )
-    with operation_lock_if_mutating(
+    with operation_lock(
         context.state_store,
         command="merge",
         mutating=not dry_run,
@@ -209,8 +209,6 @@ def _prepare_merge(
             t"{ui.cmd('jj-stack doctor')} reports what it found.",
         )
 
-    if not dry_run:
-        context.state_store.require_writable()
     return PreparedMerge(
         context=context,
         dry_run=dry_run,

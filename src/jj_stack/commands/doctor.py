@@ -40,7 +40,7 @@ from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubRepo
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
-from jj_stack.state.operation_lock import operation_lock_if_mutating
+from jj_stack.state.operation_lock import operation_lock
 from jj_stack.ui import Message
 
 HELP = "Check repo setup and GitHub connectivity"
@@ -74,7 +74,7 @@ def doctor(
         debug=debug,
     )
     with (
-        operation_lock_if_mutating(
+        operation_lock(
             context.state_store,
             command="doctor --fix",
             mutating=fix,

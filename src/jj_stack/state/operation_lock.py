@@ -101,13 +101,17 @@ def acquire_operation_lock(
 
 
 @contextmanager
-def operation_lock_if_mutating(
+def operation_lock(
     state_store: TrackingStore,
     *,
     command: str,
-    mutating: bool,
+    mutating: bool = True,
 ) -> Iterator[None]:
-    """Serialize a mutating command without creating state for a read-only run."""
+    """Serialize a mutating command; a read-only run takes no lock and creates no state.
+
+    Acquiring the lock also creates the data directory, so callers under it need no separate
+    writability check before persisting tracking.
+    """
 
     if not mutating:
         yield

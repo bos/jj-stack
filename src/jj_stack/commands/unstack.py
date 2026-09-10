@@ -39,7 +39,7 @@ from jj_stack.stack.selected import select_stack_path
 from jj_stack.stack.selection import (
     resolve_linked_change_for_pr,
 )
-from jj_stack.state.operation_lock import operation_lock_if_mutating
+from jj_stack.state.operation_lock import operation_lock
 from jj_stack.ui import plain_text
 
 HELP = "Remove a GitHub stack without closing its pull requests"
@@ -89,7 +89,7 @@ def unstack(
         debug=debug,
     )
     command = "unstack --local" if local else "unstack"
-    with operation_lock_if_mutating(
+    with operation_lock(
         context.state_store,
         command=command,
         mutating=not dry_run,

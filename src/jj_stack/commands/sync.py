@@ -83,7 +83,7 @@ from jj_stack.stack.preparation import (
     stack_preparation_cli_error,
 )
 from jj_stack.stack.selection import resolve_linked_change_for_pr
-from jj_stack.state.operation_lock import operation_lock_if_mutating
+from jj_stack.state.operation_lock import operation_lock
 from jj_stack.ui import Message
 
 HELP = "Update a local stack after GitHub merges or rebases it"
@@ -102,7 +102,7 @@ def sync(
     if sum((all_, pr is not None, revset is not None)) > 1:
         raise UsageError("Use only one of sync --all, --pull-request, or a revset.")
     context = bootstrap_context(repo=repo, cli_args=cli_args, debug=debug)
-    with operation_lock_if_mutating(
+    with operation_lock(
         context.state_store,
         command="sync --all" if all_ else "sync",
         mutating=not dry_run,

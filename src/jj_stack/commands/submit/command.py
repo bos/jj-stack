@@ -53,7 +53,7 @@ from jj_stack.stack.pr_branches import (
     resolve_pr_branches,
 )
 from jj_stack.stack.status import discover_pr_lookups
-from jj_stack.state.operation_lock import operation_lock_if_mutating
+from jj_stack.state.operation_lock import operation_lock
 
 from .changes import prepare_submit_changes, require_published_base
 from .descriptions import edit_prs_in_editor, preserve_external_pr_text, resume_edit_hint
@@ -139,7 +139,7 @@ def submit(
         revset=revset,
         team_reviewers=team_reviewers,
     )
-    with operation_lock_if_mutating(
+    with operation_lock(
         context.state_store,
         command="submit",
         mutating=not dry_run,

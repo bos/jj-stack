@@ -67,7 +67,7 @@ from jj_stack.stack.pr_facts import (
 from jj_stack.stack.repo import observe_repo_paths
 from jj_stack.stack.selected import select_stack_path
 from jj_stack.stack.selection import resolve_pr_reference
-from jj_stack.state.operation_lock import operation_lock_if_mutating
+from jj_stack.state.operation_lock import operation_lock
 from jj_stack.ui import plain_text
 
 from .shared import (
@@ -128,7 +128,7 @@ def cleanup(
         cli_args=cli_args,
         debug=debug,
     )
-    with operation_lock_if_mutating(
+    with operation_lock(
         context.state_store,
         command="cleanup",
         mutating=not dry_run,
@@ -197,8 +197,6 @@ async def cleanup_tracked_prs(
     """Run cleanup for PRs reconciled by another command."""
 
     state = context.state_store.load()
-    if not dry_run:
-        context.state_store.require_writable()
     prepared_cleanup = PreparedCleanup(
         close_open_prs=False,
         context=context,
@@ -250,8 +248,6 @@ def _prepare_cleanup(
 
     state_store = context.state_store
     state = state_store.load()
-    if not dry_run:
-        state_store.require_writable()
     selected_change_ids = _resolve_cleanup_change_ids(
         context=context,
         pr=pr,

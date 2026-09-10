@@ -100,8 +100,6 @@ async def publish_prepared(
 ) -> None:
     client = prepared_inputs.client
     state = prepared_inputs.state
-    if not dry_run:
-        context.state_store.require_writable()
     prepared_changes = tuple(plan.prepared for plan in pr_plans)
     pushes_pr_branches = any(change.remote_action == "pushed" for change in prepared_changes)
     planned_branches = {change.branch for change in prepared_changes}
