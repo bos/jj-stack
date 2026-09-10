@@ -27,6 +27,9 @@ class GithubStackPlan:
         if self.action == "append" and len(self.affected_stacks) != 1:
             raise ValueError("A GitHub stack append requires exactly one existing stack.")
 
+    def creates_stack(self, pr_count: int) -> bool:
+        return self.action in ("create", "replace") and pr_count >= 2
+
 
 def plan_github_stack(
     *,
@@ -111,8 +114,6 @@ async def apply_github_stack_plan(
 ) -> GithubStack | None:
     """Create the desired stack or append PRs to it after any replaced stacks were dissolved."""
 
-    if plan.action == "none":
-        return None
     try:
         if plan.action == "append":
             stack = plan.affected_stacks[0]
@@ -120,11 +121,11 @@ async def apply_github_stack_plan(
                 stack_number=stack.number,
                 pr_numbers=pr_numbers[len(stack.active_pr_numbers) :],
             )
-        if len(pr_numbers) < 2:
-            return None
-        return await github_client.create_stack(pr_numbers=pr_numbers)
+        if plan.creates_stack(len(pr_numbers)):
+            return await github_client.create_stack(pr_numbers=pr_numbers)
     except GithubClientError as error:
         raise CliError("Could not update the GitHub stack") from error
+    return None
 
 
 def github_stack_pr_snapshot(pr: GithubStackPR) -> GithubStackPRSnapshot:

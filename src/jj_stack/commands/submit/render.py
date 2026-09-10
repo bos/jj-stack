@@ -30,7 +30,7 @@ def print_submit_preview(
         actions.append(
             f"would extend GitHub stack #{github_stack_plan.affected_stacks[0].number}"
         )
-    elif github_stack_plan.action in ("create", "replace") and len(plans) > 1:
+    elif github_stack_plan.creates_stack(len(plans)):
         actions.append(f"would create a GitHub stack with {len(plans)} PRs")
     print_submit_rows(
         inputs=inputs,
