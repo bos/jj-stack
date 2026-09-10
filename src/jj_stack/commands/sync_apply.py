@@ -76,7 +76,9 @@ async def apply_pr_finishes(
                     result.candidate.pr_identity.pr_number,
                     repo=github.repo,
                 )
-                console.output(t"  {marker} close {pr_label}")
+                console.output(
+                    t"  {marker} close {pr_label} for {ui.change_id(result.change_id)}"
+                )
     return tuple(results)
 
 
@@ -90,9 +92,6 @@ async def _apply_pr_finish(
     if dry_run:
         return PRFinishResult(plan.change_id, candidate, "finished")
     pr_label = format_pr_label(pr.number, url=pr.html_url)
-    console.output(
-        t"Closing {pr_label}: change {ui.change_id(plan.change_id)} is already on trunk."
-    )
     try:
         await github.close_pr(pr_number=pr.number)
     except GithubClientError as error:
