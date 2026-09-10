@@ -15,7 +15,7 @@ from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubTarget
-from jj_stack.identifiers import CommitId, short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.jj.client import PRRefUpdate
 from jj_stack.models.github import GithubPR, GithubStack
 from jj_stack.models.stack import LocalCommit
@@ -34,7 +34,7 @@ from jj_stack.ui import Message
 
 @dataclass(frozen=True, slots=True)
 class PRFinishResult:
-    change_id: str
+    change_id: ChangeId
     candidate: TrackedPR
     outcome: Literal["finished", "already_terminal", "skipped"]
     skip_reason: Message | None = None
@@ -163,7 +163,7 @@ def _apply_local_convergence(
     plan: SelectedConvergencePlan,
     remote_name: str,
     trunk_commit_id: CommitId,
-) -> dict[str, tuple[LocalCommit, ...]]:
+) -> dict[ChangeId, tuple[LocalCommit, ...]]:
     actions = plan.actions
     rewritten = plan.rewritten_changes if isinstance(plan, GithubStackMergePlan) else ()
     # GitHub rewrites each remaining PR from its submitted baseline. Use GitHub's commits only
@@ -302,7 +302,7 @@ def _verified_local_rebase(
     context: CommandContext,
     plan: GithubStackRebasePlan,
     trunk_commit_id: CommitId,
-) -> tuple[dict[str, LocalCommit], str | None]:
+) -> tuple[dict[ChangeId, LocalCommit], str | None]:
     adopted = plan.rewritten_changes
     local = plan.actions.remaining_changes
     desired = local
@@ -344,7 +344,7 @@ def _verified_local_rebase(
                 t"{ui.cmd('jj-stack sync')} again when the stacks match.",
             )
         expected_parent = change.commit_id
-    desired_by_change: dict[str, LocalCommit] = {item.change_id: item for item in desired}
+    desired_by_change: dict[ChangeId, LocalCommit] = {item.change_id: item for item in desired}
     tree_pairs = tuple(
         (desired_by_change[item.change_id].commit_id, item.pr.head.sha) for item in adopted
     )
@@ -366,11 +366,11 @@ async def _cleanup_reconciled_prs(
     dry_run: bool,
     finish_results: tuple[PRFinishResult, ...],
     github: GithubClient,
-    remaining_prs: dict[str, GithubPR],
-    dependencies: dict[str, tuple[LocalCommit, ...]],
+    remaining_prs: dict[ChangeId, GithubPR],
+    dependencies: dict[ChangeId, tuple[LocalCommit, ...]],
     target: GithubTarget,
 ) -> int:
-    cleanup_change_ids: list[str] = []
+    cleanup_change_ids: list[ChangeId] = []
     for result in finish_results:
         if result.outcome == "skipped":
             continue
@@ -404,7 +404,7 @@ async def _cleanup_reconciled_prs(
 
 def _observe_removal_dependencies(
     *, context: CommandContext, actions: ConvergenceActions
-) -> dict[str, tuple[LocalCommit, ...]]:
+) -> dict[ChangeId, tuple[LocalCommit, ...]]:
     anchors = {
         change.change_id: (
             change.change.commit_id

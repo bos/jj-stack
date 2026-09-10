@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from jj_stack.identifiers import CommitId
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
@@ -54,9 +55,9 @@ def test_trunk_evidence_needs_the_pr_head_at_the_submitted_commit_and_a_result_o
     )
 
     for pr, submitted_ancestry, merge_ancestry, expected in rows:
-        ancestries: dict[str, CommitAncestry] = {"submitted-1": submitted_ancestry}
+        ancestries: dict[CommitId, CommitAncestry] = {CommitId("submitted-1"): submitted_ancestry}
         if merge_ancestry is not None:
-            ancestries["merge-1"] = merge_ancestry
+            ancestries[CommitId("merge-1")] = merge_ancestry
         kind, reason = classify_trunk_evidence(
             ancestries=ancestries, candidate=_candidate(), pr=pr
         )
@@ -79,7 +80,7 @@ def _change(*, commit_id: str, empty: bool = False, immutable: bool = False) -> 
 def test_unpublished_edit_check_covers_every_shape_its_callers_pass() -> None:
     """One wrong answer here destroys local work, so pin every shape callers pass."""
 
-    submitted = "submitted-1"
+    submitted = CommitId("submitted-1")
 
     assert not _change(commit_id="submitted-1").holds_unpublished_edit(submitted)
     assert _change(commit_id="edited-locally").holds_unpublished_edit(submitted)

@@ -96,11 +96,11 @@ class GithubStackMergeDetails(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    expected_head_sha: str | None = None
+    expected_head_sha: CommitId | None = None
     merge_action: str | None = None
     merge_method: str | None = None
     message: str | None = None
-    sha: str | None = None
+    sha: CommitId | None = None
     uuid: str | None = None
 
 
@@ -223,8 +223,8 @@ class GithubIssueComment(BaseModel):
 class GithubPRRevision(BaseModel):
     """One available pull request revision observed from a force push."""
 
-    before_commit_id: str
-    commit_id: str
+    before_commit_id: CommitId
+    commit_id: CommitId
     is_current: bool
     version: int
 

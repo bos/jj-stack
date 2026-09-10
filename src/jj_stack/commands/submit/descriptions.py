@@ -14,6 +14,7 @@ from typing import Literal
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, UsageError
+from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.models.github import GithubPR
 from jj_stack.models.stack import LocalCommit
@@ -32,14 +33,14 @@ def resolve_generated_descriptions(
     changes: tuple[LocalCommit, ...],
     selected_revset: str,
     template: str,
-) -> tuple[dict[str, GeneratedDescription], GeneratedDescription | None]:
+) -> tuple[dict[ChangeId, GeneratedDescription], GeneratedDescription | None]:
     """Resolve pull request descriptions and an optional stack description."""
 
     if descriptions and describe_with is not None:
         raise UsageError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
 
     if describe_with is None:
-        default_descriptions: dict[str, GeneratedDescription] = {
+        default_descriptions: dict[ChangeId, GeneratedDescription] = {
             change.change_id: GeneratedDescription(
                 body=default_pr_body(change.description, template=template),
                 title=change.subject,
@@ -59,7 +60,7 @@ def resolve_generated_descriptions(
             }
         return default_descriptions, stack_description
 
-    generated_descriptions: dict[str, GeneratedDescription] = {
+    generated_descriptions: dict[ChangeId, GeneratedDescription] = {
         change.change_id: _run_description_command(
             command=describe_with,
             kind="pr",
@@ -92,14 +93,14 @@ def resolve_generated_descriptions(
 
 def preserve_external_pr_text(
     *,
-    descriptions: dict[str, GeneratedDescription],
-    prs: Mapping[str, GithubPR | None],
-    submitted_commits: dict[str, LocalCommit],
+    descriptions: dict[ChangeId, GeneratedDescription],
+    prs: Mapping[ChangeId, GithubPR | None],
+    submitted_commits: dict[ChangeId, LocalCommit],
     template: str,
-) -> dict[str, GeneratedDescription]:
+) -> dict[ChangeId, GeneratedDescription]:
     """Preserve a live PR pair unless its text still matches the submitted description."""
 
-    preserved: dict[str, GeneratedDescription] = {}
+    preserved: dict[ChangeId, GeneratedDescription] = {}
     for change_id, description in descriptions.items():
         pr = prs[change_id]
         submitted = submitted_commits.get(change_id)
@@ -153,8 +154,8 @@ def _resolve_description_files(
     descriptions: Sequence[str],
     jj_client: JjClient,
     changes: tuple[LocalCommit, ...],
-) -> tuple[dict[str, GeneratedDescription], GeneratedDescription | None]:
-    generated_descriptions: dict[str, GeneratedDescription] = {}
+) -> tuple[dict[ChangeId, GeneratedDescription], GeneratedDescription | None]:
+    generated_descriptions: dict[ChangeId, GeneratedDescription] = {}
     generated_stack_description: GeneratedDescription | None = None
     for description in descriptions:
         target, path_text = _parse_description_file_spec(description)
@@ -238,7 +239,7 @@ def _read_description_file(path_text: str) -> str:
 
 def _build_stack_description_input(
     *,
-    generated_descriptions: dict[str, GeneratedDescription],
+    generated_descriptions: dict[ChangeId, GeneratedDescription],
     jj_client: JjClient,
     changes: tuple[LocalCommit, ...],
 ) -> dict[str, object]:

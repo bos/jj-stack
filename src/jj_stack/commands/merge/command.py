@@ -50,6 +50,7 @@ from jj_stack.github.error_messages import (
     require_github_target,
 )
 from jj_stack.github.resolution import GithubTarget
+from jj_stack.identifiers import ChangeId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepo
 from jj_stack.models.stack import LocalCommit, LocalStack
@@ -79,7 +80,7 @@ class PreparedMerge:
     stack: LocalStack
     state: TrackingState
     target: GithubTarget
-    target_change_id: str | None
+    target_change_id: ChangeId | None
 
 
 def merge(
@@ -189,7 +190,7 @@ def _resolve_merge_target(
     context: CommandContext,
     pr: str | None,
     revset: str | None,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, ChangeId | None]:
     if pr is not None:
         resolved_revset, note = resolve_linked_change_for_pr(
             jj_client=context.jj_client,
@@ -207,7 +208,7 @@ def _prepare_merge(
     dry_run: bool,
     merge_method: str | None,
     revset: str | None,
-    target_change_id: str | None,
+    target_change_id: ChangeId | None,
 ) -> PreparedMerge:
     prepared = prepare_local_stack(
         containing_change_id=target_change_id,

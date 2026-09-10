@@ -18,7 +18,7 @@ import jj_stack.bootstrap
 import jj_stack.github.resolution
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.identifiers import short_change_id
+from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.client import JjClient, PRRefUpdate
 from jj_stack.models.stack import LocalStack
 from jj_stack.stack.selected import select_stack_path
@@ -434,11 +434,13 @@ def sign_commit(repo: Path, revset: str) -> None:
     )
 
 
-def jj_commit_id(repo: Path, revset: str) -> str:
-    return run_command(
-        ["jj", "log", "--no-graph", "-r", revset, "-T", "commit_id"],
-        repo,
-    ).stdout.strip()
+def jj_commit_id(repo: Path, revset: str) -> CommitId:
+    return CommitId(
+        run_command(
+            ["jj", "log", "--no-graph", "-r", revset, "-T", "commit_id"],
+            repo,
+        ).stdout.strip()
+    )
 
 
 def expose_pr_branch_namespace(repo: Path) -> None:

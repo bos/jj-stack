@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import jj_stack.ui as ui
 from jj_stack.errors import UnsupportedStackError
-from jj_stack.identifiers import short_change_id
+from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.client import (
     JjClient,
     JjCommandError,
@@ -253,7 +253,7 @@ def _observe_path_rows(
 
 def _project_rows(
     *,
-    candidate_commit_ids: frozenset[str] | None = None,
+    candidate_commit_ids: frozenset[CommitId] | None = None,
     inspection_mode: bool,
     rows: tuple[_ObservedPathRow, ...],
     selected_revset: str,
@@ -322,7 +322,7 @@ def _project_rows(
 
 def _heads_containing_commit(
     *,
-    commit_id: str,
+    commit_id: CommitId,
     heads: tuple[LocalCommit, ...],
     commits: tuple[LocalCommit, ...],
 ) -> tuple[LocalCommit, ...]:

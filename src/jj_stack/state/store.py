@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 import jj_stack.ui as ui
 from jj_stack.errors import TrackingStateError
+from jj_stack.identifiers import ChangeId
 from jj_stack.models.tracking import (
     PRIdentity,
     SubmittedBaseline,
@@ -71,7 +72,7 @@ class TrackingStore:
 
     def relink_pr(
         self,
-        change_id: str,
+        change_id: ChangeId,
         *,
         identity: PRIdentity,
         baseline: SubmittedBaseline,
@@ -85,7 +86,7 @@ class TrackingStore:
     def relink_prs(
         self,
         *,
-        replacements: Mapping[str, TrackedPR],
+        replacements: Mapping[ChangeId, TrackedPR],
     ) -> TrackingState:
         """Atomically replace complete pull request records."""
 
@@ -93,7 +94,7 @@ class TrackingStore:
             _require_identity_matches_change(tracked.pr_identity, change_id)
         return self._persist(TrackingState(prs={**self._load_state().prs, **replacements}))
 
-    def remove_pr(self, change_id: str) -> None:
+    def remove_pr(self, change_id: ChangeId) -> None:
         """Atomically remove one complete pull request record."""
 
         state = self._load_state()
@@ -168,7 +169,7 @@ class TrackingStore:
         )
 
 
-def _require_identity_matches_change(identity: PRIdentity, change_id: str) -> None:
+def _require_identity_matches_change(identity: PRIdentity, change_id: ChangeId) -> None:
     if not pr_branch_matches_change(identity.head_ref, change_id):
         raise ValueError(f"PR branch {identity.head_ref!r} does not match change {change_id!r}.")
 

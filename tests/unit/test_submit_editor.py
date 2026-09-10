@@ -15,6 +15,7 @@ from jj_stack.commands.submit.editor import (
 )
 from jj_stack.commands.submit.models import GeneratedDescription
 from jj_stack.errors import CliError
+from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient
 from tests.support.change_helpers import make_change
 
@@ -150,18 +151,20 @@ def test_edit_applies_editor_output_to_descriptions(monkeypatch, tmp_path: Path)
 
     descriptions, drafts, document_path = edit_prs_in_editor(
         descriptions={
-            "bottomchange": GeneratedDescription(body="Bottom body.", title="feature 1"),
-            "topchange": GeneratedDescription(body="", title="feature 2"),
+            ChangeId("bottomchange"): GeneratedDescription(
+                body="Bottom body.", title="feature 1"
+            ),
+            ChangeId("topchange"): GeneratedDescription(body="", title="feature 2"),
         },
-        drafts={"bottomchange": True, "topchange": False},
+        drafts={ChangeId("bottomchange"): True, ChangeId("topchange"): False},
         jj_client=JjClient(tmp_path),
         changes=_two_change_stack(),
     )
 
-    assert drafts == {"bottomchange": True, "topchange": False}
-    assert descriptions["topchange"].title == "feature 2 [edited]"
-    assert descriptions["bottomchange"].title == "feature 1"
-    assert descriptions["bottomchange"].body == "Bottom body."
+    assert drafts == {ChangeId("bottomchange"): True, ChangeId("topchange"): False}
+    assert descriptions[ChangeId("topchange")].title == "feature 2 [edited]"
+    assert descriptions[ChangeId("bottomchange")].title == "feature 1"
+    assert descriptions[ChangeId("bottomchange")].body == "Bottom body."
     assert document_path.is_file()
     document_path.unlink()
 
@@ -175,10 +178,12 @@ def test_edit_aborts_when_editor_exits_nonzero(monkeypatch, tmp_path: Path) -> N
     document_path.write_text(
         render_description_edit_document(
             descriptions={
-                "bottomchange": GeneratedDescription(body="Bottom body.", title="feature 1"),
-                "topchange": GeneratedDescription(body="", title="feature 2"),
+                ChangeId("bottomchange"): GeneratedDescription(
+                    body="Bottom body.", title="feature 1"
+                ),
+                ChangeId("topchange"): GeneratedDescription(body="", title="feature 2"),
             },
-            drafts={"bottomchange": False, "topchange": False},
+            drafts={ChangeId("bottomchange"): False, ChangeId("topchange"): False},
             changes=_two_change_stack(),
         ),
         encoding="utf-8",
@@ -187,10 +192,12 @@ def test_edit_aborts_when_editor_exits_nonzero(monkeypatch, tmp_path: Path) -> N
     with pytest.raises(CliError, match="exited with status 3") as caught:
         edit_prs_in_editor(
             descriptions={
-                "bottomchange": GeneratedDescription(body="Bottom body.", title="feature 1"),
-                "topchange": GeneratedDescription(body="", title="feature 2"),
+                ChangeId("bottomchange"): GeneratedDescription(
+                    body="Bottom body.", title="feature 1"
+                ),
+                ChangeId("topchange"): GeneratedDescription(body="", title="feature 2"),
             },
-            drafts={"bottomchange": False, "topchange": False},
+            drafts={ChangeId("bottomchange"): False, ChangeId("topchange"): False},
             jj_client=JjClient(tmp_path),
             changes=_two_change_stack(),
             document_path=document_path,

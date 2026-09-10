@@ -7,10 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from jj_stack.identifiers import ChangeId
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, TrackingState
 from jj_stack.state.store import TrackingStateError, TrackingStore
 
-CHANGE_ID = "abcdefghijklmno"
+CHANGE_ID = ChangeId("abcdefghijklmno")
 OTHER_CHANGE_ID = "qrstuvwxyzabcde"
 
 

@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import batched
 
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import QUERY_BATCH_SIZE, JjClient, change_ids_revset, quote_revset_symbol
 from jj_stack.models.stack import LocalCommit
@@ -24,9 +25,9 @@ class StackObservation:
     cli_args: JjCliArgs
 
     def copies(
-        self, change_ids: Sequence[str], *, off_trunk: bool = False
-    ) -> dict[str, tuple[LocalCommit, ...]]:
-        grouped: dict[str, list[LocalCommit]] = {change_id: [] for change_id in change_ids}
+        self, change_ids: Sequence[ChangeId], *, off_trunk: bool = False
+    ) -> dict[ChangeId, tuple[LocalCommit, ...]]:
+        grouped: dict[ChangeId, list[LocalCommit]] = {change_id: [] for change_id in change_ids}
         for commit, flags in self.rows:
             if not off_trunk or flags[0]:
                 grouped[commit.change_id].append(commit)
@@ -44,7 +45,7 @@ def observe_stack_commits(
     """Observe raw copies together, then distinguish a saved snapshot from its local rewrite."""
 
     cli_args, expected = observe_pr_bookmarks(jj_client=jj_client, state=state)
-    rows_by_commit: dict[str, tuple[LocalCommit, tuple[bool, ...]]] = {}
+    rows_by_commit: dict[CommitId, tuple[LocalCommit, tuple[bool, ...]]] = {}
     scopes = tuple(batched(tuple(expected), QUERY_BATCH_SIZE, strict=False)) or ((),)
     for index, scope in enumerate(scopes):
         copies = change_ids_revset(scope) if scope else "none()"
@@ -66,7 +67,7 @@ def observe_stack_commits(
 
 
 def observe_change_copies(
-    *, jj_client: JjClient, state: TrackingState, change_ids: Sequence[str]
+    *, jj_client: JjClient, state: TrackingState, change_ids: Sequence[ChangeId]
 ) -> StackObservation:
     """Read all copies of the requested changes in batches, reading bookmarks once."""
 
@@ -84,9 +85,9 @@ def observe_change_copies(
 
 
 def _project_copies(
-    rows: tuple[tuple[LocalCommit, tuple[bool, ...]], ...], expected: Mapping[str, str]
+    rows: tuple[tuple[LocalCommit, tuple[bool, ...]], ...], expected: Mapping[ChangeId, CommitId]
 ) -> tuple[tuple[LocalCommit, tuple[bool, ...]], ...]:
-    grouped: dict[str, list[LocalCommit]] = {}
+    grouped: dict[ChangeId, list[LocalCommit]] = {}
     for commit, _flags in rows:
         if not commit.hidden:
             grouped.setdefault(commit.change_id, []).append(commit)
@@ -111,7 +112,7 @@ def _project_copies(
 
 def observe_pr_bookmarks(
     *, jj_client: JjClient, state: TrackingState
-) -> tuple[JjCliArgs, dict[str, str]]:
+) -> tuple[JjCliArgs, dict[ChangeId, CommitId]]:
     """Narrow built-in remote immutability using one complete bookmark observation.
 
     A saved branch must have one owner and exactly its baseline as target. Untracked remote
@@ -121,7 +122,7 @@ def observe_pr_bookmarks(
 
     namespace = current_pr_branch_namespace()
     bookmarks = jj_client.query_bookmarks()
-    targets: dict[str, set[str]] = {}
+    targets: dict[str, set[CommitId]] = {}
     untracked = [
         (row.name, target)
         for row in bookmarks

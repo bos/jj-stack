@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label
+from jj_stack.identifiers import ChangeId
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import PRIdentity, TrackedPR
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
@@ -19,14 +20,14 @@ class ResolvedPRBranch:
     """Stable PR branch selected for one local change."""
 
     branch: str
-    change_id: str
+    change_id: ChangeId
     recovered: bool = False
 
 
 def resolve_pr_branches(
     *,
     changes: tuple[LocalCommit, ...],
-    tracked_prs: Mapping[str, TrackedPR],
+    tracked_prs: Mapping[ChangeId, TrackedPR],
 ) -> tuple[ResolvedPRBranch, ...]:
     """Resolve each branch from its saved identity or initial name."""
 
@@ -47,7 +48,7 @@ def resolve_pr_branches(
 
 def ensure_new_pr_branches_unclaimed(
     resolutions: tuple[ResolvedPRBranch, ...],
-    tracked_prs: Mapping[str, TrackedPR],
+    tracked_prs: Mapping[ChangeId, TrackedPR],
 ) -> None:
     saved_by_branch = {
         tracked.pr_identity.head_ref: change_id for change_id, tracked in tracked_prs.items()
@@ -90,11 +91,11 @@ def ensure_unique_pr_branches(
 
 
 def duplicate_pr_branch_claims(
-    claims: Iterable[tuple[str, str]],
-) -> dict[str, tuple[str, ...]]:
+    claims: Iterable[tuple[str, ChangeId]],
+) -> dict[str, tuple[ChangeId, ...]]:
     """Return branches claimed by more than one distinct change."""
 
-    change_ids_by_branch: dict[str, set[str]] = {}
+    change_ids_by_branch: dict[str, set[ChangeId]] = {}
     for branch, change_id in claims:
         change_ids_by_branch.setdefault(branch, set()).add(change_id)
     return {
@@ -104,7 +105,9 @@ def duplicate_pr_branch_claims(
     }
 
 
-def duplicate_pr_claim_change_ids(identities: Mapping[str, PRIdentity]) -> frozenset[str]:
+def duplicate_pr_claim_change_ids(
+    identities: Mapping[ChangeId, PRIdentity],
+) -> frozenset[ChangeId]:
     """Return every change participating in a duplicate PR or head claim."""
 
     values = identities.values()
@@ -118,7 +121,7 @@ def duplicate_pr_claim_change_ids(identities: Mapping[str, PRIdentity]) -> froze
 
 
 def require_unique_pr_claims(
-    *, saved: Mapping[str, PRIdentity], replacements: Mapping[str, PRIdentity]
+    *, saved: Mapping[ChangeId, PRIdentity], replacements: Mapping[ChangeId, PRIdentity]
 ) -> None:
     """Refuse saved links that would give one PR number or branch two local changes."""
 

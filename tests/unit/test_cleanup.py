@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from jj_stack.identifiers import ChangeId
 from jj_stack.stack.pr_branches import duplicate_pr_claim_change_ids
 from tests.support.tracking import make_pr_identity
 
@@ -11,9 +12,9 @@ def test_duplicate_claim_facts_reject_shared_prs_and_branches() -> None:
     same_pr = identity.model_copy(update={"head_ref": "jj-stack/other-bbbbbbbb"})
     same_branch = identity.model_copy(update={"pr_number": 2})
 
-    assert duplicate_pr_claim_change_ids({"saved": identity, "same-pr": same_pr}) == frozenset(
-        {"saved", "same-pr"}
-    )
     assert duplicate_pr_claim_change_ids(
-        {"saved": identity, "same-branch": same_branch}
+        {ChangeId("saved"): identity, ChangeId("same-pr"): same_pr}
+    ) == frozenset({"saved", "same-pr"})
+    assert duplicate_pr_claim_change_ids(
+        {ChangeId("saved"): identity, ChangeId("same-branch"): same_branch}
     ) == frozenset({"saved", "same-branch"})

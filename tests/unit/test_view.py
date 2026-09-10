@@ -9,6 +9,7 @@ import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
 import jj_stack.ui as ui_module
 from jj_stack.commands._json_status import stack_change_json
+from jj_stack.identifiers import ChangeId
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, PRState
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
 from jj_stack.stack.change_state import (
@@ -79,7 +80,7 @@ def _status_change(
     )
     open_prs = (pr,) if isinstance(pr, GithubPR) and pr.state == "open" else ()
     observation = ChangeObservation(
-        change_id=change_id,
+        change_id=ChangeId(change_id),
         tracked=tracked,
         branch=pr_identity.head_ref if pr_identity is not None else None,
         local=(change,),

@@ -6,7 +6,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ConflictedStackError, UsageError
 from jj_stack.github.resolution import select_submit_remote
-from jj_stack.identifiers import short_change_id
+from jj_stack.identifiers import ChangeId, short_change_id
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubStackPR
@@ -147,7 +147,7 @@ def confirm_orphaned_pr_snapshots(
     """Check saved PRs whose local changes have no visible copy outside trunk."""
 
     candidate_snapshots = {github_stack_pr_snapshot(candidate) for candidate in candidates}
-    change_ids_by_snapshot: dict[GithubStackPRSnapshot, list[str]] = {}
+    change_ids_by_snapshot: dict[GithubStackPRSnapshot, list[ChangeId]] = {}
     for change_id, tracked in sorted(state.prs.items()):
         # Do not add repository identity to this match. jj-stack operates on one configured
         # repository, and these candidates were observed through its GitHub client. PR number,

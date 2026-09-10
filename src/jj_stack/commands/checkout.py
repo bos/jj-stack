@@ -47,7 +47,7 @@ from jj_stack.github.resolution import (
     require_github_repo,
     select_submit_remote,
 )
-from jj_stack.identifiers import CommitId, short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
@@ -398,7 +398,7 @@ def _save_checkout_tracking(
     # The stack was discovered from the top PR's head, so any changes above the top PR's own
     # change are additions to its branch. Each lower PR's head must be exactly its change's
     # commit, and every branch must name the change it is paired with.
-    replacements: dict[str, TrackedPR] = {}
+    replacements: dict[ChangeId, TrackedPR] = {}
     for pr, head_sha, change in zip(prs, pr_heads, changes, strict=True):
         _require_branch_matches_change(branch=pr.head.ref, change=change)
         pr_label = format_pr_label(pr.number, url=pr.html_url)
@@ -526,7 +526,7 @@ def _picker_choices(
     prs: dict[int, GithubPR | None],
     repo: GithubRepoAddress,
     state: TrackingState,
-    visible_commit_ids: set[str],
+    visible_commit_ids: set[CommitId],
 ) -> tuple[CheckoutPickerChoice, ...]:
     saved_by_pr = {
         tracked.pr_identity.pr_number: (change_id, tracked.pr_identity)

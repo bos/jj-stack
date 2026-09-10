@@ -13,7 +13,7 @@ from jj_stack.errors import CliError, error_message
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
-from jj_stack.identifiers import CommitId
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.client import PRRefUpdate
 from jj_stack.models.github import GithubStack
 from jj_stack.stack.github_stack_safety import dissolve_github_stack
@@ -46,8 +46,8 @@ from .revision_comments import (
 def plan_pr_updates(
     *,
     bottom_base_branch: str,
-    drafts: dict[str, bool],
-    generated_descriptions: dict[str, GeneratedDescription],
+    drafts: dict[ChangeId, bool],
+    generated_descriptions: dict[ChangeId, GeneratedDescription],
     metadata: PRMetadataAction,
     explicit_metadata: bool = False,
     prepared_changes: tuple[PreparedSubmitChange, ...],

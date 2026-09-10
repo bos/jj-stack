@@ -24,6 +24,7 @@ from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.error_messages import require_github_target
 from jj_stack.github.resolution import resolve_github_target
+from jj_stack.identifiers import ChangeId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalStack
@@ -48,7 +49,7 @@ class LocalUnstackAction:
     """One saved pull request link forgotten by `unstack --local`."""
 
     branch: str
-    change_id: str
+    change_id: ChangeId
     subject: str
 
 
@@ -192,10 +193,10 @@ def _resolve_local_github_stack(
     context: CommandContext,
     pr: str | None,
     revset: str | None,
-) -> tuple[TrackingState, tuple[str, ...], tuple[int, ...]]:
+) -> tuple[TrackingState, tuple[ChangeId, ...], tuple[int, ...]]:
     state, stack = _resolve_local_stack(context=context, pr=pr, revset=revset)
 
-    change_ids: list[str] = []
+    change_ids: list[ChangeId] = []
     pr_numbers: list[int] = []
     for change in stack.changes:
         tracked_pr = state.prs.get(change.change_id)
@@ -208,7 +209,7 @@ def _resolve_local_github_stack(
 
 async def _check_selected_prs(
     *,
-    change_ids: tuple[str, ...],
+    change_ids: tuple[ChangeId, ...],
     context: CommandContext,
     github_client: GithubClient,
     remote_name: str,
@@ -241,7 +242,7 @@ def _run_local_unstack(
 ) -> LocalUnstackResult:
     state, stack = _resolve_local_stack(context=context, pr=pr, revset=revset)
     actions: list[LocalUnstackAction] = []
-    forgotten: list[str] = []
+    forgotten: list[ChangeId] = []
     for change in stack.changes:
         tracked_pr = state.prs.get(change.change_id)
         if tracked_pr is None:

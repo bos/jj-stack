@@ -52,7 +52,7 @@ from jj_stack.github.resolution import (
     GithubTarget,
     resolve_github_target,
 )
-from jj_stack.identifiers import CommitId
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import quote_revset_symbol
 from jj_stack.models.github import GithubRepo
@@ -195,7 +195,7 @@ async def _run_global_plan(
     github: GithubClient,
     target: GithubTarget,
     trunk_commit_id: CommitId,
-) -> tuple[int, GithubRepo, tuple[str, ...], str | None]:
+) -> tuple[int, GithubRepo, tuple[ChangeId, ...], str | None]:
     with console.spinner(description="Inspecting tracked pull requests"):
         try:
             facts = await observe_global_sync(

@@ -43,7 +43,7 @@ class MergeResult:
     enqueued: bool
     trunk_branch: str
     trunk_subject: str
-    final_trunk_commit_id: str | None = None
+    final_trunk_commit_id: CommitId | None = None
 
     @property
     def applied(self) -> bool:
@@ -68,7 +68,7 @@ class MergeExecutionInputs:
         *,
         actions: tuple[MergeAction, ...],
         enqueued: bool = False,
-        final_trunk_commit_id: str | None = None,
+        final_trunk_commit_id: CommitId | None = None,
     ) -> MergeResult:
         return MergeResult(
             actions=actions,
@@ -105,7 +105,7 @@ def build_merge_plan(
     repo: GithubRepoAddress,
     changes: tuple[LocalCommit, ...],
     state: TrackingState,
-    target_change_id: str | None,
+    target_change_id: ChangeId | None,
     trunk_branch: str,
 ) -> MergePlan:
     merge_changes = tuple(_merge_change(observation, change, state) for change in changes)

@@ -12,6 +12,7 @@ from typing import Literal
 
 import jj_stack.ui as ui
 from jj_stack.formatting import format_pr_label
+from jj_stack.identifiers import CommitId
 from jj_stack.models.github import GithubPR
 from jj_stack.models.tracking import TrackedPR
 from jj_stack.ui import Message
@@ -22,7 +23,7 @@ TrunkEvidenceKind = Literal["exact", "rewritten"]
 
 def classify_trunk_evidence(
     *,
-    ancestries: Mapping[str, CommitAncestry],
+    ancestries: Mapping[CommitId, CommitAncestry],
     candidate: TrackedPR,
     pr: GithubPR,
 ) -> tuple[TrunkEvidenceKind | None, Message]:

@@ -44,7 +44,7 @@ from jj_stack.formatting import (
 )
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.identifiers import short_change_id
+from jj_stack.identifiers import CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import (
     JjCommandError,
@@ -390,7 +390,7 @@ def render_status_summary_lines(
     leading_separator: bool,
     result,
     verbose: bool,
-    prerendered_blocks: dict[str, tuple[str, ...]],
+    prerendered_blocks: dict[CommitId, tuple[str, ...]],
 ) -> tuple[ui.Renderable, ...]:
     """Render capped submitted and unsubmitted summaries before the trunk row."""
 
@@ -463,10 +463,10 @@ def _prefetch_commit_log_blocks(
     client: CommitRenderClient,
     changes: tuple[StackStatusChange, ...],
     trunk: RenderableCommit,
-) -> dict[str, tuple[str, ...]]:
+) -> dict[CommitId, tuple[str, ...]]:
     """Render the `jj log` block for every change we will print, in parallel."""
 
-    seen: set[str] = set()
+    seen: set[CommitId] = set()
     ordered: list[RenderableCommit] = []
     for change in (*changes, trunk):
         if change.commit_id in seen:
@@ -716,7 +716,7 @@ def _render_summary_change_lines(
     change: StackStatusChange,
     repo: GithubRepoAddress | None,
     show_status: bool,
-    prerendered_blocks: dict[str, tuple[str, ...]],
+    prerendered_blocks: dict[CommitId, tuple[str, ...]],
 ) -> tuple[ui.Renderable, ...]:
     """Render one change inside a submitted or unsubmitted summary section."""
 

@@ -14,7 +14,7 @@ from jj_stack.github.overview_comments import (
     STACK_OVERVIEW_COMMENT_LABEL,
     delete_stack_overview_comment,
 )
-from jj_stack.identifiers import CommitId
+from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient, PRRefUpdate
 from jj_stack.models.github import GithubIssueComment, GithubPR, GithubStack
 from jj_stack.stack.change_state import (
@@ -46,7 +46,7 @@ class CleanupResult:
     actions: tuple[CleanupAction, ...]
 
 
-def check_tracked_pr(*, change_id: str, observation: RepoFacts) -> WithPR | CleanupAction:
+def check_tracked_pr(*, change_id: ChangeId, observation: RepoFacts) -> WithPR | CleanupAction:
     """Return the classified saved PR, or the reason its identity cannot be trusted."""
 
     state = classify(observation.prs[change_id])
@@ -197,7 +197,7 @@ def plan_pr_cleanup(
         if remote_target is None
         else PRRefUpdate(
             branch=branch,
-            expected_target=CommitId(remote_target),
+            expected_target=remote_target,
             desired_target=None,
         )
     )

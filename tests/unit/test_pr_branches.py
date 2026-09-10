@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from jj_stack.errors import CliError
+from jj_stack.identifiers import ChangeId
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import SubmittedBaseline, TrackedPR
 from jj_stack.pr_branch_namespace import (
@@ -23,7 +24,7 @@ from tests.support.tracking import make_pr_identity
 
 def test_generate_pr_branch_normalizes_subject() -> None:
     change = _change(
-        change_id="zvlywqkxtmnpqrstu",
+        change_id=ChangeId("zvlywqkxtmnpqrstu"),
         description="Fix cache invalidation!!!\n\nBody text.\n",
     )
 
@@ -33,7 +34,7 @@ def test_generate_pr_branch_normalizes_subject() -> None:
 
 
 def test_generate_pr_branch_falls_back_when_subject_has_no_ascii_slug() -> None:
-    change = _change(change_id="abcdefghijklmno", description="修正 🚀\n")
+    change = _change(change_id=ChangeId("abcdefghijklmno"), description="修正 🚀\n")
 
     branch = current_pr_branch_namespace().generate_branch(change)
 
@@ -42,7 +43,7 @@ def test_generate_pr_branch_falls_back_when_subject_has_no_ascii_slug() -> None:
 
 def test_generate_pr_branch_truncates_a_subject_github_cannot_store() -> None:
     change = _change(
-        change_id="zvlywqkxtmnpqrstu",
+        change_id=ChangeId("zvlywqkxtmnpqrstu"),
         description=" ".join(["refactor the transport layer"] * 12) + "\n",
     )
 
@@ -73,18 +74,18 @@ def test_pr_branch_matcher_ties_a_branch_to_one_change(
     branch: str,
     matches: bool,
 ) -> None:
-    assert pr_branch_matches_change(branch, "zvlywqkxtmnpqrstu") is matches
+    assert pr_branch_matches_change(branch, ChangeId("zvlywqkxtmnpqrstu")) is matches
 
 
 def test_pr_branch_resolution_rejects_multiple_changes_on_same_branch() -> None:
     resolutions = (
         ResolvedPRBranch(
             branch="jj-stack/shared-abcdefgh",
-            change_id="abcdefghijklmno",
+            change_id=ChangeId("abcdefghijklmno"),
         ),
         ResolvedPRBranch(
             branch="jj-stack/shared-abcdefgh",
-            change_id="qrstuvwxyzabcde",
+            change_id=ChangeId("qrstuvwxyzabcde"),
         ),
     )
 
@@ -93,8 +94,8 @@ def test_pr_branch_resolution_rejects_multiple_changes_on_same_branch() -> None:
 
 
 def test_pr_branch_resolution_rejects_new_branch_claimed_by_another_stack() -> None:
-    existing_change_id = "abcdefgh-one"
-    new_change_id = "abcdefgh-two"
+    existing_change_id = ChangeId("abcdefgh-one")
+    new_change_id = ChangeId("abcdefgh-two")
     branch = "jj-stack/shared-abcdefgh"
 
     tracked_prs = {

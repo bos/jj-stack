@@ -10,6 +10,7 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR, TrackingState
@@ -42,17 +43,17 @@ from jj_stack.ui import Message
 
 @dataclass(frozen=True, slots=True)
 class GlobalConvergencePlan:
-    blocked: tuple[tuple[str, TrackedPR, Message], ...]
+    blocked: tuple[tuple[ChangeId, TrackedPR, Message], ...]
     finishes: tuple[OnTrunkChange, ...]
-    sync_change_ids: tuple[str, ...]
+    sync_change_ids: tuple[ChangeId, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class GlobalSyncFacts:
     """One repo-wide observation for global classification."""
 
-    ancestries: Mapping[str, CommitAncestry]
-    local_copies: Mapping[str, tuple[LocalCommit, ...]]
+    ancestries: Mapping[CommitId, CommitAncestry]
+    local_copies: Mapping[ChangeId, tuple[LocalCommit, ...]]
     paths: tuple[RepoStackPath, ...]
     pr_facts: RepoFacts
     stacks: tuple[GithubStack, ...]
@@ -64,7 +65,7 @@ async def observe_global_sync(
     context: CommandContext,
     github: GithubClient,
     remote_name: str,
-    trunk_commit_id: str,
+    trunk_commit_id: CommitId,
 ) -> GlobalSyncFacts:
     """Observe tracked pull requests from tracking toward affected local paths."""
 
@@ -115,9 +116,9 @@ async def observe_global_sync(
 
 def build_global_convergence_plan(*, facts: GlobalSyncFacts) -> GlobalConvergencePlan:
     state = facts.state
-    blocked: list[tuple[str, TrackedPR, Message]] = []
+    blocked: list[tuple[ChangeId, TrackedPR, Message]] = []
     finishes: list[OnTrunkChange] = []
-    heads: list[str] = []
+    heads: list[ChangeId] = []
     tracked_prs = frozenset(tracked.pr_identity.pr_number for tracked in state.prs.values())
     for change_id, candidate in sorted(state.prs.items()):
         reason, finish, candidate_heads = _classify_global_candidate(
@@ -140,11 +141,11 @@ def build_global_convergence_plan(*, facts: GlobalSyncFacts) -> GlobalConvergenc
 
 def _classify_global_candidate(
     *,
-    change_id: str,
+    change_id: ChangeId,
     candidate: TrackedPR,
     facts: GlobalSyncFacts,
     tracked_pr_numbers: frozenset[int],
-) -> tuple[Message | None, OnTrunkChange | None, tuple[str, ...]]:
+) -> tuple[Message | None, OnTrunkChange | None, tuple[ChangeId, ...]]:
     ancestry = facts.ancestries[candidate.submitted_baseline.commit_id]
     state = classify(facts.pr_facts.prs[change_id], ancestries=facts.ancestries)
     heads = _candidate_path_heads(change_id, facts=facts)
@@ -171,10 +172,10 @@ def _affected_candidate_plan(
     *,
     candidate: TrackedPR,
     facts: GlobalSyncFacts,
-    heads: tuple[str, ...] | None,
+    heads: tuple[ChangeId, ...] | None,
     state: TrackedPRState,
     tracked_prs: frozenset[int],
-) -> tuple[Message | None, OnTrunkChange | None, tuple[str, ...]]:
+) -> tuple[Message | None, OnTrunkChange | None, tuple[ChangeId, ...]]:
     if heads is None:
         return "local history is not a supported stack", None, ()
     if heads:
@@ -201,7 +202,9 @@ def _affected_candidate_plan(
     return None, finish, ()
 
 
-def _candidate_path_heads(change_id: str, *, facts: GlobalSyncFacts) -> tuple[str, ...] | None:
+def _candidate_path_heads(
+    change_id: ChangeId, *, facts: GlobalSyncFacts
+) -> tuple[ChangeId, ...] | None:
     copies = {commit.commit_id for commit in facts.local_copies[change_id]}
     if not copies:
         return ()

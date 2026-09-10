@@ -11,6 +11,7 @@ from jj_stack.github.pr_refs import (
     parse_repo_pr_reference,
 )
 from jj_stack.github.resolution import GithubRepoAddress, select_submit_remote
+from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import TrackingStore
 
@@ -20,7 +21,7 @@ def resolve_linked_change_for_pr(
     jj_client: JjClient,
     pr_reference: str,
     revset: str | None,
-) -> tuple[str, ui.Message]:
+) -> tuple[ChangeId, ui.Message]:
     """Resolve `--pull-request` to one linked local change ID, with the note that says so."""
 
     if revset is not None:

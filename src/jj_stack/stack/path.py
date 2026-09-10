@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import jj_stack.ui as ui
 from jj_stack.errors import AmbiguousSelectionError, CliError, UnsupportedStackError
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.stack.divergence import divergence_recovery_hint
 
@@ -14,9 +15,9 @@ from jj_stack.stack.divergence import divergence_recovery_hint
 class SelectedPathObservation:
     """Immutable facts needed to derive one selected parent path."""
 
-    candidate_commit_ids: frozenset[str]
-    current_working_copy_commit_id: str | None
-    trunk_first_parent_ids: frozenset[str]
+    candidate_commit_ids: frozenset[CommitId]
+    current_working_copy_commit_id: CommitId | None
+    trunk_first_parent_ids: frozenset[CommitId]
     commits: tuple[LocalCommit, ...]
     selected_revset: str
     selector_commits: tuple[LocalCommit, ...]
@@ -37,18 +38,18 @@ class RepoStackPath:
     """One repo path annotated by existing tracking."""
 
     stack: LocalStack
-    tracked_change_ids: frozenset[str]
+    tracked_change_ids: frozenset[ChangeId]
 
 
 @dataclass(frozen=True, slots=True)
 class RepoPathObservation:
     """Observed commits and tracking needed to find local stacks."""
 
-    candidate_commit_ids: frozenset[str]
-    current_tracked_commit_id: str | None
-    trunk_first_parent_ids: frozenset[str]
+    candidate_commit_ids: frozenset[CommitId]
+    current_tracked_commit_id: CommitId | None
+    trunk_first_parent_ids: frozenset[CommitId]
     commits: tuple[LocalCommit, ...]
-    tracked_change_ids: frozenset[str]
+    tracked_change_ids: frozenset[ChangeId]
     trunk: LocalCommit
 
 
@@ -56,7 +57,7 @@ class RepoPathObservation:
 class RepoStackPaths:
     """Local stacks ending at the heads in the observed part of the repo."""
 
-    current_tracked_commit_id: str | None
+    current_tracked_commit_id: CommitId | None
     paths: tuple[RepoStackPath, ...]
 
 
@@ -77,7 +78,7 @@ def project_selected_path(observation: SelectedPathObservation) -> SelectedStack
             stack=stack,
         )
 
-    commits_by_id: dict[str, LocalCommit] = {
+    commits_by_id: dict[CommitId, LocalCommit] = {
         commit.commit_id: commit
         for commit in sorted(observation.commits, key=lambda item: item.commit_id)
     }
@@ -119,7 +120,7 @@ def project_repo_paths(
 ) -> RepoStackPaths:
     """Derive maximal parent-connected paths from ordinary visible candidates."""
 
-    commits_by_id: dict[str, LocalCommit] = {
+    commits_by_id: dict[CommitId, LocalCommit] = {
         commit.commit_id: commit
         for commit in sorted(observation.commits, key=lambda item: item.commit_id)
     }
@@ -158,17 +159,17 @@ def project_repo_paths(
 
 
 def _maximal_candidate_commit_ids(
-    candidates: dict[str, LocalCommit],
-) -> frozenset[str]:
+    candidates: dict[CommitId, LocalCommit],
+) -> frozenset[CommitId]:
     parent_commit_ids = {commit.parents[0] for commit in candidates.values() if commit.parents}
     return frozenset(candidates.keys() - parent_commit_ids)
 
 
 def _ordinary_candidates(
     *,
-    candidate_commit_ids: frozenset[str],
-    commits_by_id: dict[str, LocalCommit],
-) -> dict[str, LocalCommit]:
+    candidate_commit_ids: frozenset[CommitId],
+    commits_by_id: dict[CommitId, LocalCommit],
+) -> dict[CommitId, LocalCommit]:
     candidates = (
         commits_by_id[commit_id] for commit_id in candidate_commit_ids & commits_by_id.keys()
     )

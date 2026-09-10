@@ -42,7 +42,7 @@ class LocalCommit(BaseModel):
 
         return self.current_working_copy or bool(self.working_copy_workspaces)
 
-    def holds_unpublished_edit(self, submitted_commit_id: str) -> bool:
+    def holds_unpublished_edit(self, submitted_commit_id: CommitId) -> bool:
         """Whether this change holds work that was never submitted.
 
         Callers check this because acting on a wrong answer destroys local work. An immutable

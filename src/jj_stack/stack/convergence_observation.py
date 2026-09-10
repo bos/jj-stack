@@ -8,6 +8,7 @@ from dataclasses import replace
 from jj_stack.bootstrap import CommandContext
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.github.client import GithubClient
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackingState
@@ -103,10 +104,10 @@ def queued_pr_numbers(
 
 def dependent_path_heads(
     *,
-    ancestor_commit_ids: tuple[str, ...],
+    ancestor_commit_ids: tuple[CommitId, ...],
     context: CommandContext,
-    excluded_change_ids: frozenset[str],
-) -> dict[str, tuple[LocalCommit, ...]]:
+    excluded_change_ids: frozenset[ChangeId],
+) -> dict[CommitId, tuple[LocalCommit, ...]]:
     if not ancestor_commit_ids:
         return {}
     paths = observe_repo_paths(
@@ -114,9 +115,9 @@ def dependent_path_heads(
         descendant_of=ancestor_commit_ids,
         state=context.state_store.load(),
     ).paths
-    result: dict[str, tuple[LocalCommit, ...]] = {}
+    result: dict[CommitId, tuple[LocalCommit, ...]] = {}
     for ancestor in ancestor_commit_ids:
-        heads: dict[str, LocalCommit] = {}
+        heads: dict[CommitId, LocalCommit] = {}
         for path in paths:
             if not any(item.commit_id == ancestor for item in path.stack.changes):
                 continue

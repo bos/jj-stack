@@ -12,7 +12,7 @@ from jj_stack.commands.submit.publication import plan_pr_updates, publish_prepar
 from jj_stack.errors import CliError, ConflictedStackError
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubTarget
-from jj_stack.identifiers import CommitId, short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.models.github import GithubStack
 from jj_stack.stack.convergence_models import ConvergenceActions
 from jj_stack.stack.selected import select_stack_path
@@ -64,7 +64,7 @@ async def refresh_selected_prs(
         ) from error
     prepared: list[PreparedSubmitChange] = []
     remote_targets: dict[str, CommitId] = {}
-    drafts: dict[str, bool] = {}
+    drafts: dict[ChangeId, bool] = {}
     for change in path.stack.changes:
         change_id = change.change_id
         pr = actions.remaining_prs[change_id]

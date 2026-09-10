@@ -48,7 +48,7 @@ def predict_prs_auto_closed_by_push(
     """
 
     push_targets = {plan.prepared.branch: plan.prepared.change.commit_id for plan in plans}
-    candidates: list[tuple[str, str, GithubPR]] = []
+    candidates: list[tuple[CommitId, CommitId, GithubPR]] = []
     for plan in plans:
         pr = plan.prepared.pr
         if pr is None or pr.state != "open":

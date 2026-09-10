@@ -40,7 +40,7 @@ from jj_stack.github.resolution import (
     require_github_repo,
     select_submit_remote,
 )
-from jj_stack.identifiers import short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubPR
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
@@ -65,7 +65,7 @@ class RelinkResult:
     """Explicit PR relink result for one local change."""
 
     branch: str
-    change_id: str
+    change_id: ChangeId
     pr_number: int
     pr_url: str
     subject: str
@@ -220,7 +220,7 @@ async def _load_exact_relink_pr(
     github_client: GithubClient,
     pr_number: int,
     repo: GithubRepoAddress,
-) -> tuple[GithubPR, str]:
+) -> tuple[GithubPR, CommitId]:
     pr = await load_pr(github_client=github_client, pr_number=pr_number)
     pr_number_label = format_pr_number(pr.number, url=pr.html_url)
     if pr.state != "open":

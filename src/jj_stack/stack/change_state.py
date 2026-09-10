@@ -20,7 +20,7 @@ from typing import TypedDict, overload
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, DriftCondition, DriftError
 from jj_stack.formatting import format_pr_label
-from jj_stack.identifiers import short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.models.github import GithubPR
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.models.tracking import PRIdentity, TrackedPR, TrackingState
@@ -51,7 +51,7 @@ class ObservationFailed:
 class ChangeObservation:
     """Everything one command observed about one change; unobserved facts stay marked."""
 
-    change_id: str
+    change_id: ChangeId
     tracked: TrackedPR | None
     # The PR branch the change uses, or would use once submitted.
     branch: str | None
@@ -64,7 +64,7 @@ class ChangeObservation:
     pr: GithubPR | None | Unobserved | ObservationFailed = UNOBSERVED
     open_prs_on_branch: tuple[GithubPR, ...] | Unobserved | ObservationFailed = UNOBSERVED
     # The commit at branch@remote; None when the branch is absent.
-    remote_target: str | None | Unobserved = UNOBSERVED
+    remote_target: CommitId | None | Unobserved = UNOBSERVED
     # Whether PR and ancestry checks found the submitted work on trunk.
     trunk_evidence: TrunkEvidenceKind | None | Unobserved = UNOBSERVED
     trunk_evidence_reason: Message | None = None
@@ -81,7 +81,7 @@ class TrackedPRObservation(ChangeObservation):
 
 @dataclass(frozen=True, kw_only=True)
 class _State:
-    change_id: str
+    change_id: ChangeId
     tracked: TrackedPR | None
     branch: str | None
     remote_name: str | None
@@ -118,7 +118,7 @@ class WithPR(_State):
     tracked: TrackedPR
     pr: GithubPR
     # The commit at branch@remote, when observed; None when the branch is absent.
-    remote_target: str | None | Unobserved
+    remote_target: CommitId | None | Unobserved
     # Why PR or ancestry checks did not confirm the submitted work on trunk.
     # None when those checks passed or trunk was not inspected.
     trunk_evidence_reason: Message | None = None
@@ -150,7 +150,7 @@ class Unpublished(_State):
     """No tracking; the change has never been submitted from a tracked repo."""
 
     # A branch already at the local commit is an interrupted first push, which submit finishes.
-    remote_target: str | None | Unobserved
+    remote_target: CommitId | None | Unobserved
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -324,7 +324,7 @@ class UntrackedPRExists(Stop, _State):
 
 @dataclass(frozen=True, kw_only=True)
 class BranchClaimed(Stop, _State):
-    remote_target: str
+    remote_target: CommitId
 
     @property
     def drift_condition(self) -> DriftCondition:
@@ -454,7 +454,7 @@ def _pr_label(pr: GithubPR) -> Message:
 
 
 class _Common(TypedDict):
-    change_id: str
+    change_id: ChangeId
     branch: str | None
     remote_name: str | None
     local: tuple[LocalCommit, ...]
@@ -464,7 +464,7 @@ class _Common(TypedDict):
 class _WithPRCommon(_Common):
     tracked: TrackedPR
     pr: GithubPR
-    remote_target: str | None | Unobserved
+    remote_target: CommitId | None | Unobserved
     trunk_evidence_reason: Message | None
 
 
@@ -473,7 +473,7 @@ def classify(
     observation: TrackedPRObservation,
     *,
     selected: LocalCommit | None = None,
-    ancestries: Mapping[str, CommitAncestry] | None = None,
+    ancestries: Mapping[CommitId, CommitAncestry] | None = None,
 ) -> TrackedPRState: ...
 
 
@@ -482,7 +482,7 @@ def classify(
     observation: ChangeObservation,
     *,
     selected: LocalCommit | None = None,
-    ancestries: Mapping[str, CommitAncestry] | None = None,
+    ancestries: Mapping[CommitId, CommitAncestry] | None = None,
 ) -> ChangeState: ...
 
 
@@ -490,7 +490,7 @@ def classify(
     observation: ChangeObservation,
     *,
     selected: LocalCommit | None = None,
-    ancestries: Mapping[str, CommitAncestry] | None = None,
+    ancestries: Mapping[CommitId, CommitAncestry] | None = None,
 ) -> ChangeState:
     """Derive one state from one observation; unobserved facts never produce a stop."""
 
@@ -600,7 +600,7 @@ def _classify_open(
     return Published(**with_pr)
 
 
-def _selected_commit_id(o: ChangeObservation) -> str | None:
+def _selected_commit_id(o: ChangeObservation) -> CommitId | None:
     if o.selected is not None:
         return o.selected.commit_id
     if len(o.local) == 1:
@@ -608,7 +608,7 @@ def _selected_commit_id(o: ChangeObservation) -> str | None:
     return None
 
 
-def _local_commit_ids(o: ChangeObservation) -> frozenset[str]:
+def _local_commit_ids(o: ChangeObservation) -> frozenset[CommitId]:
     ids = {commit.commit_id for commit in o.local}
     if o.selected is not None:
         ids.add(o.selected.commit_id)
@@ -691,7 +691,7 @@ def report_incomplete(state: ChangeState) -> bool:
 class OrphanedRecord:
     """A saved tracking record whose change has left every live stack."""
 
-    change_id: str
+    change_id: ChangeId
     pr_identity: PRIdentity
 
 

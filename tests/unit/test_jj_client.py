@@ -14,7 +14,7 @@ from jj_stack.errors import (
     CliError,
     resolve_exit_code,
 )
-from jj_stack.identifiers import CommitId
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.client import (
     _BOOKMARK_TEMPLATE,
     _COMMIT_TEMPLATE,
@@ -191,7 +191,7 @@ def test_remote_bookmarks_at_commit_include_untracked_remote_bookmarks(
     }
 
     bookmarks = _client(monkeypatch, responses).remote_bookmarks_at_commit(
-        remote="origin", commit_id="trunk"
+        remote="origin", commit_id=CommitId("trunk")
     )
 
     assert bookmarks == ("main", "release")
@@ -341,7 +341,7 @@ def test_stack_observation_bounds_change_scopes_and_reads_bookmarks_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     alphabet = str.maketrans("0123456789abcdef", "klmnopqrstuvwxyz")
-    change_ids = tuple(f"{index:032x}".translate(alphabet) for index in range(3_001))
+    change_ids = tuple(ChangeId(f"{index:032x}".translate(alphabet)) for index in range(3_001))
     state = TrackingState(
         prs={
             change_id: TrackedPR(
@@ -553,7 +553,7 @@ def test_remote_change_id_inspection_fetches_an_object_without_creating_a_ref(
 
     commit = JjClient(Path("/repo")).read_remote_git_commit(
         remote="origin",
-        commit_id=commit_id,
+        commit_id=CommitId(commit_id),
     )
 
     assert commit.change_id == "full-change-id"

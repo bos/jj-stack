@@ -108,8 +108,8 @@ class PRRefUpdate:
 class GitCommitMetadata:
     """Raw headers and subject of one backing-Git commit."""
 
-    change_id: str | None
-    parents: tuple[str, ...]
+    change_id: ChangeId | None
+    parents: tuple[CommitId, ...]
     author: str
     subject: str
 
@@ -118,8 +118,8 @@ class GitCommitMetadata:
 class PRTempArtifacts:
     """Targets of the temporary ref and bookmark used to import PR branches."""
 
-    bookmark_targets: tuple[str, ...]
-    ref_target: str | None
+    bookmark_targets: tuple[CommitId, ...]
+    ref_target: CommitId | None
 
 
 class JjWorkspace(BaseModel):
@@ -132,7 +132,7 @@ class JjWorkspace(BaseModel):
     current: bool
 
 
-ExpectedGitChangeId = str | None | tuple[str | None, ...]
+ExpectedGitChangeId = ChangeId | None | tuple[ChangeId | None, ...]
 
 
 class _ConfigOrigin(BaseModel):
@@ -146,7 +146,7 @@ class Bookmark(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     name: str
-    target: tuple[str, ...]
+    target: tuple[CommitId, ...]
     remote: str | None = None
     tracked: bool
 
@@ -171,7 +171,7 @@ class StaleWorkspaceError(CliError):
 
 class _RenderableCommit(Protocol):
     @property
-    def commit_id(self) -> str: ...
+    def commit_id(self) -> CommitId: ...
 
 
 _NO_CLI_ARGS = JjCliArgs()
@@ -264,15 +264,15 @@ class JjClient:
 
     def query_commits_by_change_ids(
         self,
-        change_ids: Sequence[str],
-    ) -> dict[str, tuple[LocalCommit, ...]]:
+        change_ids: Sequence[ChangeId],
+    ) -> dict[ChangeId, tuple[LocalCommit, ...]]:
         """Return visible commits grouped by logical change ID."""
 
         ordered_change_ids = tuple(dict.fromkeys(change_ids))
         if not ordered_change_ids:
             return {}
 
-        grouped: dict[str, list[LocalCommit]] = {
+        grouped: dict[ChangeId, list[LocalCommit]] = {
             change_id: [] for change_id in ordered_change_ids
         }
         for chunk in batched(ordered_change_ids, QUERY_BATCH_SIZE, strict=False):
@@ -284,7 +284,7 @@ class JjClient:
 
     def query_commits_by_ids(
         self,
-        commit_ids: Sequence[str],
+        commit_ids: Sequence[CommitId],
     ) -> tuple[LocalCommit, ...]:
         """Return locally available commits for the supplied commit IDs in evaluation order."""
 
@@ -292,7 +292,7 @@ class JjClient:
         if not ordered_commit_ids:
             return ()
 
-        commits_by_id: dict[str, LocalCommit] = {}
+        commits_by_id: dict[CommitId, LocalCommit] = {}
         for chunk in batched(ordered_commit_ids, QUERY_BATCH_SIZE, strict=False):
             commits = self._query_commits(_present_symbols_revset(chunk))
             for commit in commits:
@@ -301,13 +301,13 @@ class JjClient:
 
     def query_present_commit_ancestor_membership(
         self,
-        commit_ids: Sequence[str],
+        commit_ids: Sequence[CommitId],
         *,
-        descendant_commit_id: str,
-    ) -> dict[str, bool]:
+        descendant_commit_id: CommitId,
+    ) -> dict[CommitId, bool]:
         """Return presence and ancestry together, omitting unavailable commit IDs."""
 
-        memberships: dict[str, bool] = {}
+        memberships: dict[CommitId, bool] = {}
         for chunk in batched(tuple(dict.fromkeys(commit_ids)), QUERY_BATCH_SIZE, strict=False):
             commits = self._query_commits_with_membership(
                 _present_symbols_revset(chunk),
@@ -319,8 +319,8 @@ class JjClient:
 
     def query_paired_ancestor_membership(
         self,
-        pairs: Sequence[tuple[str, str]],
-    ) -> set[str]:
+        pairs: Sequence[tuple[CommitId, CommitId]],
+    ) -> set[CommitId]:
         """Return subject commit IDs from `pairs` that are ancestors of any paired target.
 
         Each `(subject, target)` pair becomes one term in a unioned revset of the form
@@ -370,14 +370,14 @@ class JjClient:
 
         self._initial_working_copy_snapshot_pending = True
 
-    def diffstats(self, commit_ids: Sequence[str]) -> dict[str, str]:
+    def diffstats(self, commit_ids: Sequence[CommitId]) -> dict[CommitId, str]:
         """Return diffstats for the given commits without rendering their descriptions."""
 
         template = (
             r'"{\"commit_id\":" ++ json(commit_id) ++ '
             r'",\"diffstat\":" ++ json(stringify(self.diff().stat())) ++ "}\n"'
         )
-        result: dict[str, str] = {}
+        result: dict[CommitId, str] = {}
         for chunk in batched(commit_ids, QUERY_BATCH_SIZE, strict=False):
             revset = " | ".join(quote_revset_symbol(commit_id) for commit_id in chunk)
             for line in self._query_template_lines(revset, template):
@@ -412,7 +412,7 @@ class JjClient:
         changes: Sequence[_RenderableCommit],
         *,
         color_when: JjColorWhen,
-    ) -> dict[str, tuple[str, ...]]:
+    ) -> dict[CommitId, tuple[str, ...]]:
         """Render several changes in parallel, keyed by commit_id.
 
         Each `jj log` invocation pays a substantial startup cost, so rendering
@@ -440,17 +440,17 @@ class JjClient:
 
     def render_short_change_ids(
         self,
-        change_ids: Sequence[str],
+        change_ids: Sequence[ChangeId],
         *,
         color_when: JjColorWhen,
-    ) -> dict[str, str]:
+    ) -> dict[ChangeId, str]:
         """Render shortest visible change IDs for the supplied logical change IDs."""
 
         ordered_change_ids = tuple(dict.fromkeys(change_ids))
         if not ordered_change_ids:
             return {}
 
-        rendered: dict[str, str] = {}
+        rendered: dict[ChangeId, str] = {}
         template = _short_change_id_render_template()
         for chunk in batched(ordered_change_ids, QUERY_BATCH_SIZE, strict=False):
             revset = change_ids_revset(chunk)
@@ -518,7 +518,7 @@ class JjClient:
         self,
         *,
         remote: str,
-        commit_id: str,
+        commit_id: CommitId,
     ) -> tuple[str, ...]:
         """Return locally observed remote bookmarks pointing at one commit.
 
@@ -616,11 +616,11 @@ class JjClient:
 
     def visible_pr_bookmark_targets(
         self,
-    ) -> dict[str, frozenset[str]]:
+    ) -> dict[str, frozenset[CommitId]]:
         """Return visible reserved-namespace bookmark targets grouped by name."""
 
         namespace = current_pr_branch_namespace()
-        targets_by_name: dict[str, set[str]] = {}
+        targets_by_name: dict[str, set[CommitId]] = {}
         for row in self.query_bookmarks(namespace.branch_glob):
             targets_by_name.setdefault(row.name, set()).update(row.target)
         return {name: frozenset(targets) for name, targets in sorted(targets_by_name.items())}
@@ -644,14 +644,14 @@ class JjClient:
         )
         return _parse_bookmark_rows(stdout)
 
-    def pr_branch_temp_ref_target(self) -> str | None:
+    def pr_branch_temp_ref_target(self) -> CommitId | None:
         """Return the temporary PR branch import ref target, if it exists."""
 
         target = self._run_git(
             ("rev-parse", "--verify", "--quiet", _PR_BRANCH_TEMP_REF),
             allowed_returncodes=frozenset({0, 1}),
         ).strip()
-        return target or None
+        return CommitId(target) if target else None
 
     def pr_branch_temp_artifacts(self) -> PRTempArtifacts:
         """Observe the fixed temporary import ref and its transient jj bookmark."""
@@ -668,7 +668,7 @@ class JjClient:
         remote: str,
         branch: str,
         expected_target: CommitId,
-        expected_change_id: str | None = None,
+        expected_change_id: ChangeId | None = None,
         expected_chain: Sequence[tuple[str, CommitId, ExpectedGitChangeId]] = (),
         expected_parent_commit_id: CommitId | None = None,
     ) -> Iterator[LocalCommit]:
@@ -738,7 +738,7 @@ class JjClient:
         self,
         *,
         remote: str,
-        commit_id: str,
+        commit_id: CommitId,
     ) -> GitCommitMetadata:
         """Read a Git commit by ID, fetching it without a ref when it is absent."""
 
@@ -758,7 +758,7 @@ class JjClient:
             )
             return self._read_git_commit_metadata(commit_id)
 
-    def _read_git_commit_metadata(self, commit_id: str) -> GitCommitMetadata:
+    def _read_git_commit_metadata(self, commit_id: CommitId) -> GitCommitMetadata:
         """Read one backing-Git commit's change ID, ordered parents, author name, and subject.
 
         A Git commit object is a byte string, so a legacy encoding in its author, committer,
@@ -776,8 +776,8 @@ class JjClient:
         change_ids = values.get("change-id", ())
         author = values.get("author", ("",))[0]
         return GitCommitMetadata(
-            change_id=change_ids[0] if len(change_ids) == 1 else None,
-            parents=tuple(values.get("parent", ())),
+            change_id=ChangeId(change_ids[0]) if len(change_ids) == 1 else None,
+            parents=tuple(CommitId(parent) for parent in values.get("parent", ())),
             author=author.rsplit(" <", 1)[0],
             subject=message.partition("\n")[0],
         )
@@ -890,10 +890,10 @@ class JjClient:
     def query_commits_at_operation(
         self,
         *,
-        change_ids: Sequence[str],
+        change_ids: Sequence[ChangeId],
         operation_id: str,
         cli_args: JjCliArgs = _NO_CLI_ARGS,
-    ) -> dict[str, tuple[LocalCommit, ...]]:
+    ) -> dict[ChangeId, tuple[LocalCommit, ...]]:
         """Return visible commits for logical changes in one unintegrated operation."""
 
         ordered_change_ids = tuple(dict.fromkeys(change_ids))
@@ -911,7 +911,7 @@ class JjClient:
             ),
             cli_args=cli_args,
         )
-        grouped: dict[str, list[LocalCommit]] = {
+        grouped: dict[ChangeId, list[LocalCommit]] = {
             change_id: [] for change_id in ordered_change_ids
         }
         for line in stdout.splitlines():
@@ -926,7 +926,7 @@ class JjClient:
         self._run_jj(("op", "integrate", operation_id), manage_working_copy=True)
         self._run_jj(("workspace", "update-stale"), manage_working_copy=True)
 
-    def git_tree_ids(self, commit_ids: Sequence[str]) -> dict[str, str]:
+    def git_tree_ids(self, commit_ids: Sequence[CommitId]) -> dict[CommitId, str]:
         """Return Git tree IDs for the given commits."""
 
         ordered_commit_ids = tuple(dict.fromkeys(commit_ids))
@@ -1073,11 +1073,11 @@ class JjClient:
             model=_ConfigOrigin,
         )
 
-    def _local_bookmark_targets(self, bookmark: str) -> tuple[str, ...]:
+    def _local_bookmark_targets(self, bookmark: str) -> tuple[CommitId, ...]:
         """Return targets of the named local bookmark, excluding remote entries."""
 
         stdout = self._run_jj(("bookmark", "list", "-T", _BOOKMARK_TEMPLATE, bookmark))
-        targets: list[str] = []
+        targets: list[CommitId] = []
         for row in _parse_bookmark_rows(stdout):
             if row.name != bookmark or row.remote is not None:
                 raise JjCommandError(
@@ -1296,7 +1296,7 @@ def _present_symbols_revset(symbols: Sequence[str]) -> str:
     )
 
 
-def change_ids_revset(change_ids: Sequence[str]) -> str:
+def change_ids_revset(change_ids: Sequence[ChangeId]) -> str:
     """Union change IDs as `change_id(...)` terms.
 
     Every caller wants each change's visible copies, and a bare change-ID symbol fails outright
@@ -1312,7 +1312,7 @@ def change_ids_revset(change_ids: Sequence[str]) -> str:
 
 def _expected_git_change_id_matches(
     expected: ExpectedGitChangeId,
-    actual: str | None,
+    actual: ChangeId | None,
 ) -> bool:
     accepted = expected if isinstance(expected, tuple) else (expected,)
     return actual in accepted

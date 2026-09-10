@@ -40,7 +40,7 @@ from jj_stack.github.resolution import (
     UnresolvedGithubTarget,
     resolve_github_target,
 )
-from jj_stack.identifiers import short_change_id
+from jj_stack.identifiers import ChangeId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.stack.change_state import (
     ChangeObservation,
@@ -62,8 +62,8 @@ HELP = "List the stacks jj-stack is tracking in this repo"
 class StackRow:
     changes: tuple[StackStatusChange, ...]
     current: bool
-    current_change_ids: frozenset[str]
-    head_change_id: str
+    current_change_ids: frozenset[ChangeId]
+    head_change_id: ChangeId
     incomplete: bool
     prs: ui.Message
     size: int
@@ -76,7 +76,7 @@ class OrphanRow:
     """One orphaned PR — its local change has left every current stack."""
 
     branch: str
-    change_id: str
+    change_id: ChangeId
     pr: dict[str, object]
     pr_label: ui.Message
     state: ui.Message
@@ -476,7 +476,7 @@ def _format_pr_summary(
 def _stack_table(
     *,
     orphan_rows: tuple[OrphanRow, ...],
-    rendered_change_ids: dict[str, str],
+    rendered_change_ids: dict[ChangeId, str],
     rows: tuple[StackRow, ...],
 ) -> ui.DataTable:
     stack_table_rows = [

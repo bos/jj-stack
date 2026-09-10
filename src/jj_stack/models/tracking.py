@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from jj_stack.identifiers import CommitId
+from jj_stack.identifiers import ChangeId, CommitId
 
 if TYPE_CHECKING:
     from jj_stack.models.github import GithubPR
@@ -49,4 +49,4 @@ class TrackingState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     version: Literal[8] = 8
-    prs: dict[str, TrackedPR] = Field(default_factory=dict)
+    prs: dict[ChangeId, TrackedPR] = Field(default_factory=dict)

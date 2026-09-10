@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from jj_stack.identifiers import CommitId
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.client import JjClient, JjCommandError, PRRefUpdate
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, TrackingState
 from jj_stack.stack.selected import select_stack_path
@@ -70,7 +70,7 @@ def test_paired_ancestor_membership_ignores_an_unavailable_target(tmp_path: Path
         (
             (ancestor, descendant),
             (descendant, ancestor),
-            (descendant, "f" * 40),
+            (descendant, CommitId("f" * 40)),
         )
     )
 
@@ -162,7 +162,7 @@ def test_change_id_of_a_non_utf8_git_commit_object_is_still_readable(tmp_path: P
         .strip()
     )
 
-    commit = JjClient(repo).read_remote_git_commit(remote="origin", commit_id=commit_id)
+    commit = JjClient(repo).read_remote_git_commit(remote="origin", commit_id=CommitId(commit_id))
 
     assert commit.change_id == "qpvuntsmwlqtpsluzzsnyyzlmlwvmwzz"
     assert (commit.author, commit.subject) == ("Jos\ufffd", "caf\ufffd subject")
@@ -250,7 +250,7 @@ def test_visible_pr_bookmark_does_not_block_broad_operations(
         with client.import_remote_pr_branch_ref(
             remote="origin",
             branch=branch,
-            expected_target=CommitId(commit_id),
+            expected_target=commit_id,
             expected_change_id=change_id,
         ) as imported:
             assert imported.commit_id == commit_id
@@ -261,7 +261,7 @@ def test_visible_pr_bookmark_does_not_block_broad_operations(
 
     state = TrackingState(
         prs={
-            change_id: TrackedPR(
+            ChangeId(change_id): TrackedPR(
                 pr_identity=PRIdentity(pr_number=1, head_ref=branch),
                 submitted_baseline=SubmittedBaseline(commit_id=commit_id),
             )
@@ -278,7 +278,7 @@ def test_visible_pr_bookmark_does_not_block_broad_operations(
     assert selected.commit_id != commit_id
     assert not selected.divergent
     raw = client.query_commits(f"change_id({change_id})")
-    assert client.query_commits_by_change_ids((change_id,))[change_id] == raw
+    assert client.query_commits_by_change_ids((ChangeId(change_id),))[ChangeId(change_id)] == raw
     assert len(raw) == 2
     assert all(commit.divergent for commit in raw)
     assert next(commit for commit in raw if commit.commit_id == commit_id).immutable
@@ -295,8 +295,8 @@ def test_direct_git_pr_branch_ref_operations_use_the_backing_store(
     run_command(["jj", "git", "init", layout_flag, str(repo)], tmp_path)
     commit_file(repo, "base", "base.txt")
     commit_file(repo, "feature", "feature.txt")
-    old_commit = CommitId(jj_commit_id(repo, "@--"))
-    new_commit = CommitId(jj_commit_id(repo, "@-"))
+    old_commit = jj_commit_id(repo, "@--")
+    new_commit = jj_commit_id(repo, "@-")
     new_change_id = _change_id(repo, "@-")
     run_command(["jj", "git", "remote", "add", "origin", str(remote)], repo)
     run_command(["jj", "bookmark", "create", "seed", "-r", "@--"], repo)
@@ -460,8 +460,10 @@ def test_direct_git_pr_branch_ref_operations_use_the_backing_store(
     assert (git_root == repo / ".git") is (layout_flag == "--colocate")
 
 
-def _change_id(repo: Path, revset: str) -> str:
-    return run_command(
-        ["jj", "log", "--no-graph", "-r", revset, "-T", "change_id"],
-        repo,
-    ).stdout.strip()
+def _change_id(repo: Path, revset: str) -> ChangeId:
+    return ChangeId(
+        run_command(
+            ["jj", "log", "--no-graph", "-r", revset, "-T", "change_id"],
+            repo,
+        ).stdout.strip()
+    )

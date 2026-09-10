@@ -35,7 +35,7 @@ from jj_stack.github.error_messages import observe_github_repo, read_or_stop
 from jj_stack.github.resolution import (
     require_github_repo,
 )
-from jj_stack.identifiers import CommitId, short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
@@ -242,11 +242,11 @@ def _recover_interrupted_first_submissions(
     remote: GitRemote,
     remote_targets: Mapping[str, CommitId],
     resolutions: tuple[ResolvedPRBranch, ...],
-    tracked_prs: Mapping[str, TrackedPR],
+    tracked_prs: Mapping[ChangeId, TrackedPR],
 ) -> tuple[ResolvedPRBranch, ...]:
     """Reuse only one suffix candidate whose Git header records the full change ID."""
 
-    candidates_by_change: dict[str, dict[str, str]] = {}
+    candidates_by_change: dict[ChangeId, dict[str, CommitId]] = {}
     unresolved = tuple(
         resolution for resolution in resolutions if resolution.change_id not in tracked_prs
     )
@@ -259,7 +259,7 @@ def _recover_interrupted_first_submissions(
             if pr_branch_matches_change(branch, resolution.change_id)
         }
 
-    replacements: dict[str, str] = {}
+    replacements: dict[ChangeId, str] = {}
     for resolution in unresolved:
         candidates = candidates_by_change[resolution.change_id]
         if not candidates:
@@ -321,7 +321,7 @@ def _submit_remote_branch_queries(
     *,
     base_branch: str | None,
     resolutions: tuple[ResolvedPRBranch, ...],
-    tracked_prs: Mapping[str, TrackedPR],
+    tracked_prs: Mapping[ChangeId, TrackedPR],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     exact_branches = tuple(
         dict.fromkeys(
@@ -390,7 +390,9 @@ async def run_submit_async(
     def observations_by_branch(
         resolutions: tuple[ResolvedPRBranch, ...],
     ) -> dict[str, ChangeObservation]:
-        changes: dict[str, LocalCommit] = {change.change_id: change for change in stack.changes}
+        changes: dict[ChangeId, LocalCommit] = {
+            change.change_id: change for change in stack.changes
+        }
         branches = {resolution.branch: resolution.change_id for resolution in resolutions}
         if explicit_base is not None:
             changes[explicit_base.change.change_id] = explicit_base.change
@@ -516,7 +518,7 @@ async def run_submit_async(
                 tracked_base=explicit_base.tracked,
             )
             bottom_base_branch = explicit_base.branch
-        drafts: dict[str, bool] = {
+        drafts: dict[ChangeId, bool] = {
             prepared.change.change_id: _desired_draft_state(
                 draft_mode=options.draft_mode,
                 pr=prepared.pr,

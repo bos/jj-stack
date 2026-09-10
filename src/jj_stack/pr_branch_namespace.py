@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from jj_stack.identifiers import SHORT_CHANGE_ID_LENGTH, short_change_id
+from jj_stack.identifiers import SHORT_CHANGE_ID_LENGTH, ChangeId, short_change_id
 from jj_stack.models.stack import LocalCommit
 
 _DEFAULT_SLUG = "change"
@@ -75,7 +75,7 @@ def current_pr_branch_namespace() -> PRBranchNamespace:
     return _current_namespace
 
 
-def pr_branch_matches_change(branch: str, change_id: str) -> bool:
+def pr_branch_matches_change(branch: str, change_id: ChangeId) -> bool:
     """Whether a branch carries the change's short-ID suffix."""
 
     return branch.endswith(f"-{short_change_id(change_id)}")

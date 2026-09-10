@@ -6,10 +6,11 @@ import pytest
 
 from jj_stack.cli import main
 from jj_stack.errors import EXIT_PROBE
+from jj_stack.identifiers import ChangeId
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackingState
 from jj_stack.state.store import TrackingStore, resolve_state_path
 
-CHANGE_ID = "abcdefghijklmno"
+CHANGE_ID = ChangeId("abcdefghijklmno")
 
 
 def _jj_workspace(tmp_path: Path) -> Path:

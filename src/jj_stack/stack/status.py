@@ -19,6 +19,7 @@ from jj_stack.github.resolution import (
     GithubRepoAddress,
     GithubTarget,
 )
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR
 from jj_stack.models.stack import LocalCommit
@@ -46,11 +47,11 @@ class StackStatusChange:
     state: ChangeState
 
     @property
-    def change_id(self) -> str:
+    def change_id(self) -> ChangeId:
         return self.change.change_id
 
     @property
-    def commit_id(self) -> str:
+    def commit_id(self) -> CommitId:
         return self.change.commit_id
 
     @property

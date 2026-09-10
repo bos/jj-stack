@@ -8,7 +8,7 @@ from dataclasses import replace
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, DriftError
 from jj_stack.formatting import format_pr_label
-from jj_stack.identifiers import CommitId, short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.models.git import GitRemote
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.models.tracking import TrackedPR
@@ -53,7 +53,7 @@ def prepare_submit_changes(
     prepared: list[PreparedSubmitChange] = []
     for resolution, change in zip(branch_resolutions, stack.changes, strict=True):
         remote_target = remote_targets.get(resolution.branch)
-        observed_target: str | None | Unobserved = remote_target
+        observed_target: CommitId | None | Unobserved = remote_target
         if resolution.recovered:
             # An interrupted first submit left this branch, and its commit's change-ID header
             # already proved it belongs to this change.
@@ -76,7 +76,7 @@ def prepare_submit_changes(
 def _require_submittable(
     state: ChangeState,
     *,
-    head_change_id: str,
+    head_change_id: ChangeId,
 ) -> None:
     short = short_change_id(state.change_id)
     head = short_change_id(head_change_id)
@@ -119,7 +119,7 @@ def require_published_base(
     lookup: ChangeObservation,
     merged_hint: Message,
     remote: GitRemote,
-    remote_target: str | None,
+    remote_target: CommitId | None,
     retry: str,
     tracked_base: TrackedPR,
 ) -> None:

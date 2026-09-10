@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jj_stack.ui as ui
+from jj_stack.identifiers import ChangeId
 from jj_stack.models.github import CheckRollupStatus, GithubPR
 from jj_stack.stack.change_state import (
     BranchClaimed,
@@ -128,7 +129,7 @@ def report_change(state: ChangeState) -> ChangeReport:
     )
 
 
-def submittable_edits(reports: Mapping[str, ChangeReport]) -> tuple[str, ...]:
+def submittable_edits(reports: Mapping[ChangeId, ChangeReport]) -> tuple[ChangeId, ...]:
     """Changes a `submit` would refresh; none when anything in the stack would stop `submit`."""
 
     blocked = any(

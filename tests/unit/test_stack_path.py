@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from jj_stack.errors import EXIT_NO_STACK, AmbiguousSelectionError, CliError
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.models.stack import LocalCommit
 from jj_stack.stack.path import (
     RepoPathObservation,
@@ -62,7 +63,9 @@ def test_selected_path_uses_mutable_copy_beside_fetched_rebase_result() -> None:
             selector_commits=(landed, local),
             select_mutable_copy=True,
             trunk=trunk,
-            trunk_first_parent_ids=frozenset({"old-trunk", "landed", "new-trunk"}),
+            trunk_first_parent_ids=frozenset(
+                {CommitId("old-trunk"), CommitId("landed"), CommitId("new-trunk")}
+            ),
         )
     )
 
@@ -143,11 +146,13 @@ def test_repo_paths_inventory_an_ordinary_shared_prefix() -> None:
 
     projected = project_repo_paths(
         RepoPathObservation(
-            candidate_commit_ids=frozenset({"shared", "left", "right"}),
+            candidate_commit_ids=frozenset(
+                {CommitId("shared"), CommitId("left"), CommitId("right")}
+            ),
             current_tracked_commit_id=None,
-            trunk_first_parent_ids=frozenset({"trunk"}),
+            trunk_first_parent_ids=frozenset({CommitId("trunk")}),
             commits=(right, trunk, shared, left),
-            tracked_change_ids=frozenset({"left-change", "right-change"}),
+            tracked_change_ids=frozenset({ChangeId("left-change"), ChangeId("right-change")}),
             trunk=trunk,
         )
     )
@@ -163,7 +168,7 @@ def _observation(
     head: LocalCommit,
     commits: tuple[LocalCommit, ...],
     trunk: LocalCommit,
-    trunk_first_parent_ids: frozenset[str] | None = None,
+    trunk_first_parent_ids: frozenset[CommitId] | None = None,
     select_mutable_copy: bool = False,
     selector_commits: tuple[LocalCommit, ...] | None = None,
 ) -> SelectedPathObservation:

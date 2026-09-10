@@ -10,6 +10,7 @@ from jj_stack.commands.submit.descriptions import (
     resolve_generated_descriptions,
 )
 from jj_stack.commands.submit.models import GeneratedDescription
+from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead
 from tests.support.change_helpers import make_change
@@ -26,7 +27,7 @@ def _resolve_default_bodies(tmp_path: Path, *, description: str) -> str:
         template=read_pr_template(tmp_path),
     )
     assert stack_description is None
-    return descriptions["ch1"].body
+    return descriptions[ChangeId("ch1")].body
 
 
 def test_bodyless_change_prefers_github_pr_template_over_root(tmp_path: Path) -> None:
@@ -77,13 +78,13 @@ def test_refresh_check_compares_the_body_submit_wrote_not_the_raw_description() 
 
     wrapped_body = "A paragraph that\nwraps across two source lines."
     submitted = {
-        "ch1": make_change(
+        ChangeId("ch1"): make_change(
             commit_id="c1",
             change_id="ch1",
             description=f"feature 1\n\n{wrapped_body}\n",
         ),
-        "ch2": make_change(commit_id="c2", change_id="ch2", description="feature 2\n"),
-        "ch3": make_change(
+        ChangeId("ch2"): make_change(commit_id="c2", change_id="ch2", description="feature 2\n"),
+        ChangeId("ch3"): make_change(
             commit_id="c3",
             change_id="ch3",
             description=f"feature 3\n\n{wrapped_body}\n",
@@ -99,20 +100,22 @@ def test_refresh_check_compares_the_body_submit_wrote_not_the_raw_description() 
             for change_id in submitted
         },
         prs={
-            "ch1": _live_pr(
+            ChangeId("ch1"): _live_pr(
                 body="A paragraph that wraps across two source lines.",
                 title="feature 1",
             ),
-            "ch2": _live_pr(body="## Checklist", title="feature 2"),
-            "ch3": _live_pr(body=wrapped_body, title="feature 3"),
+            ChangeId("ch2"): _live_pr(body="## Checklist", title="feature 2"),
+            ChangeId("ch3"): _live_pr(body=wrapped_body, title="feature 3"),
         },
         submitted_commits=submitted,
         template="## Checklist",
     )
 
-    for change_id in ("ch1", "ch2"):
+    for change_id in (ChangeId("ch1"), ChangeId("ch2")):
         assert preserved[change_id] == GeneratedDescription(
             body=f"fresh body {change_id}",
             title=f"fresh title {change_id}",
         )
-    assert preserved["ch3"] == GeneratedDescription(body=wrapped_body, title="feature 3")
+    assert preserved[ChangeId("ch3")] == GeneratedDescription(
+        body=wrapped_body, title="feature 3"
+    )

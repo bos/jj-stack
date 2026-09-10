@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label
-from jj_stack.identifiers import CommitId, short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.models.github import GithubPR, GithubStack, GithubStackPR
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR, TrackingState
@@ -61,7 +61,7 @@ type _GithubStackEffect = _GithubStackMerge | _GithubStackRebase | None
 
 def build_selected_convergence_plan(
     *,
-    ancestries: dict[str, CommitAncestry],
+    ancestries: dict[CommitId, CommitAncestry],
     github_stacks: tuple[GithubStack, ...],
     head_children: tuple[LocalCommit, ...],
     observation: RepoFacts,
@@ -186,11 +186,11 @@ def build_selected_convergence_plan(
 def _remaining_submitted_prs(
     *,
     remaining_changes: tuple[LocalCommit, ...],
-    prs: dict[str, GithubPR],
-) -> dict[str, GithubPR]:
+    prs: dict[ChangeId, GithubPR],
+) -> dict[ChangeId, GithubPR]:
     """Return the remaining submitted PRs; unsubmitted changes must come after them."""
 
-    submitted: dict[str, GithubPR] = {}
+    submitted: dict[ChangeId, GithubPR] = {}
     saw_unsubmitted = False
     for change in remaining_changes:
         if (pr := prs.get(change.change_id)) is None:
@@ -209,8 +209,8 @@ def _remaining_submitted_prs(
 
 def _member_state(
     *,
-    ancestries: dict[str, CommitAncestry],
-    change_id: str,
+    ancestries: dict[CommitId, CommitAncestry],
+    change_id: ChangeId,
     observation: RepoFacts,
     rerun: str,
     member: GithubStackPR | None = None,
@@ -284,14 +284,16 @@ def divergent_change_error(change_id: str) -> CliError:
 
 def _classify_github_stack(
     *,
-    ancestries: dict[str, CommitAncestry],
+    ancestries: dict[CommitId, CommitAncestry],
     github_stacks: tuple[GithubStack, ...],
     observation: RepoFacts,
     selected: tuple[LocalCommit, ...],
     state: TrackingState,
     trunk_branch: str,
 ) -> _GithubStackEffect:
-    selected_by_id: dict[str, LocalCommit] = {change.change_id: change for change in selected}
+    selected_by_id: dict[ChangeId, LocalCommit] = {
+        change.change_id: change for change in selected
+    }
     by_pr = {
         candidate.pr_identity.pr_number: change_id
         for change_id, candidate in sorted(state.prs.items())
@@ -379,7 +381,7 @@ def _classify_github_stack(
 def _historical_member(
     *,
     candidate: TrackedPR,
-    change_id: str,
+    change_id: ChangeId,
     member_state: WithPR,
     observation: RepoFacts,
     selected: LocalCommit | None,
@@ -415,7 +417,7 @@ def _historical_member(
     )
 
 
-def _is_stack_merge(*, stack: GithubStack, by_pr: dict[int, str]) -> bool:
+def _is_stack_merge(*, stack: GithubStack, by_pr: dict[int, ChangeId]) -> bool:
     merge_mode = any(member.number in by_pr for member in stack.historical_prs)
     if stack.historical_prs and not merge_mode:
         raise _unmatched_rewrite_error(stack)

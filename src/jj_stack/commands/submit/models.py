@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple, Protocol
 
-from jj_stack.identifiers import CommitId
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR
@@ -141,14 +141,14 @@ class PublicationInputs:
 
     client: JjClient
     explicit_base: ExplicitBase | None
-    generated_pr_descriptions: dict[str, GeneratedDescription]
+    generated_pr_descriptions: dict[ChangeId, GeneratedDescription]
     generated_stack_description: GeneratedDescription | None
     is_maximal_path: bool
     pr_template: str
     remote: GitRemote
     stack: LocalStack
     state: TrackingState
-    submitted_commits: dict[str, LocalCommit]
+    submitted_commits: dict[ChangeId, LocalCommit]
 
 
 class PrivateCommitFinder(Protocol):

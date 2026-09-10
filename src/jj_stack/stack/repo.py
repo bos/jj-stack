@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from jj_stack.identifiers import CommitId
 from jj_stack.jj.client import JjClient, quote_revset_symbol
 from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.observation import TRUNK_PATH, observe_stack_commits
@@ -19,7 +20,7 @@ def observe_repo_paths(
     *,
     jj_client: JjClient,
     state: TrackingState,
-    descendant_of: Sequence[str] = (),
+    descendant_of: Sequence[CommitId] = (),
 ) -> RepoStackPaths:
     """Read the commits needed to find local stacks in one batch.
 

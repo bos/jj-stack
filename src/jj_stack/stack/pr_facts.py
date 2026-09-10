@@ -12,6 +12,7 @@ from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_availability import github_stacks_unavailable_error
+from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR, GithubRepo, GithubStack
@@ -31,14 +32,14 @@ class RepoFacts:
     prs_by_base: Mapping[str, tuple[GithubPR, ...]]
     remote: GitRemote | None
     repo: github_resolution.GithubRepoAddress
-    prs: Mapping[str, TrackedPRObservation]
+    prs: Mapping[ChangeId, TrackedPRObservation]
     # The jj config that lets rewrites touch the observed PR-branch commits.
     rewrite_args: JjCliArgs
 
 
 async def observe_prs(
     *,
-    change_ids: tuple[str, ...],
+    change_ids: tuple[ChangeId, ...],
     context: CommandContext,
     github_client: GithubClient,
     remote_name: str,
@@ -146,10 +147,10 @@ async def observe_prs(
 
 def classify_commit_ancestries(
     *,
-    commit_ids: tuple[str | None, ...],
+    commit_ids: tuple[CommitId | None, ...],
     context: CommandContext,
-    trunk_commit_id: str,
-) -> dict[str, CommitAncestry]:
+    trunk_commit_id: CommitId,
+) -> dict[CommitId, CommitAncestry]:
     """Classify commits in one scan while keeping unavailable commits distinct."""
 
     present_commit_ids = tuple(commit_id for commit_id in commit_ids if commit_id is not None)
@@ -168,8 +169,8 @@ def classify_observed_commit_ancestries(
     *,
     context: CommandContext,
     observation: RepoFacts,
-    trunk_commit_id: str,
-) -> dict[str, CommitAncestry]:
+    trunk_commit_id: CommitId,
+) -> dict[CommitId, CommitAncestry]:
     return classify_commit_ancestries(
         commit_ids=tuple(
             commit_id

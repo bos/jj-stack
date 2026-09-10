@@ -9,6 +9,7 @@ from jj_stack.commands.relink import _load_exact_relink_pr
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.identifiers import ChangeId
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, PRState
 from jj_stack.stack.pr_branches import require_unique_pr_claims
 from tests.support.tracking import make_pr_identity
@@ -44,8 +45,10 @@ def test_duplicate_saved_pr_or_branch_claim_is_refused() -> None:
 
     with pytest.raises(CliError, match="already linked"):
         require_unique_pr_claims(
-            saved={"other-change": make_pr_identity(head_ref=branch, pr_number=2)},
-            replacements={"feature1change": make_pr_identity(head_ref=branch, pr_number=1)},
+            saved={ChangeId("other-change"): make_pr_identity(head_ref=branch, pr_number=2)},
+            replacements={
+                ChangeId("feature1change"): make_pr_identity(head_ref=branch, pr_number=1)
+            },
         )
 
 

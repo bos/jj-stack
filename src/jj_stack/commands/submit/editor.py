@@ -11,6 +11,7 @@ from pathlib import Path
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, UsageError
+from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient
 from jj_stack.models.stack import LocalCommit
 
@@ -23,8 +24,8 @@ _EDIT_DRAFT_PREFIX = "JJ: Draft:"
 
 def render_description_edit_document(
     *,
-    descriptions: dict[str, GeneratedDescription],
-    drafts: dict[str, bool],
+    descriptions: dict[ChangeId, GeneratedDescription],
+    drafts: dict[ChangeId, bool],
     changes: tuple[LocalCommit, ...],
 ) -> str:
     """Render the `--edit` document, head change first like `view`."""
@@ -51,17 +52,17 @@ def parse_description_edit_document(
     document: str,
     *,
     changes: tuple[LocalCommit, ...],
-) -> tuple[dict[str, GeneratedDescription], dict[str, bool]]:
+) -> tuple[dict[ChangeId, GeneratedDescription], dict[ChangeId, bool]]:
     """Parse an edited `--edit` document, failing closed on anything malformed."""
 
     known_change_ids = {change.change_id for change in changes}
-    sections: dict[str, list[str]] = {}
-    drafts: dict[str, bool] = {}
-    current_change_id: str | None = None
+    sections: dict[ChangeId, list[str]] = {}
+    drafts: dict[ChangeId, bool] = {}
+    current_change_id: ChangeId | None = None
     current_section: list[str] | None = None
     for line in document.splitlines():
         if line.startswith(_EDIT_SEPARATOR_PREFIX):
-            change_id = line[len(_EDIT_SEPARATOR_PREFIX) :].strip()
+            change_id = ChangeId(line[len(_EDIT_SEPARATOR_PREFIX) :].strip())
             if change_id not in known_change_ids:
                 raise CliError(
                     t"Edited pull request descriptions name unknown change "
@@ -103,7 +104,7 @@ def parse_description_edit_document(
             continue
         current_section.append(line)
 
-    parsed: dict[str, GeneratedDescription] = {}
+    parsed: dict[ChangeId, GeneratedDescription] = {}
     for change in changes:
         section = sections.get(change.change_id)
         if section is None:
@@ -201,12 +202,12 @@ def resume_edit_hint(document_path: Path) -> ui.Message:
 
 def edit_prs_in_editor(
     *,
-    descriptions: dict[str, GeneratedDescription],
-    drafts: dict[str, bool],
+    descriptions: dict[ChangeId, GeneratedDescription],
+    drafts: dict[ChangeId, bool],
     jj_client: JjClient,
     changes: tuple[LocalCommit, ...],
     document_path: Path | None = None,
-) -> tuple[dict[str, GeneratedDescription], dict[str, bool], Path]:
+) -> tuple[dict[ChangeId, GeneratedDescription], dict[ChangeId, bool], Path]:
     editor_command = _resolve_editor_command(jj_client)
     if document_path is None:
         document = render_description_edit_document(

@@ -10,6 +10,7 @@ from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label, format_pr_number
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
+from jj_stack.identifiers import CommitId
 from jj_stack.models.github import GithubStack, GithubStackMerge
 from jj_stack.stack.github_stack_safety import selected_github_stack
 from jj_stack.ui import Message
@@ -273,7 +274,7 @@ def _applied_result(
     execution: MergeExecutionInputs,
     merge: AsyncMergePlan,
     *,
-    final_sha: str,
+    final_sha: CommitId,
     merge_action: str,
     merge_method: str | None,
 ) -> MergeResult:
