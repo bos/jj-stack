@@ -1191,8 +1191,8 @@ class JjClient:
                 capture_output=True,
                 check=False,
                 cwd=self._repo_root,
-                encoding="utf-8" if lossy_text else None,
-                errors="replace" if lossy_text else None,
+                encoding="utf-8",
+                errors="replace" if lossy_text else "strict",
                 text=True,
             )
         except FileNotFoundError as error:
