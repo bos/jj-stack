@@ -74,6 +74,18 @@ jj-stack does not configure Git credentials from it.
 a push. If it succeeds but `submit` cannot push, check the credentials for your remote's push
 URL.
 
+## Logging
+
+`jj-stack` logs warnings and errors to standard error. To see what a command is doing, pass
+`--debug`, which enables debug logging for that run. To change the default level instead, set:
+
+```toml
+[jj-stack.logging]
+level = "INFO"
+```
+
+`level` accepts a Python logging level name such as `DEBUG`, `INFO`, or `WARNING`.
+
 ## Invoke it as `jj stack`
 
 Add a command alias to your `jj` configuration:
