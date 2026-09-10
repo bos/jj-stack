@@ -12,27 +12,12 @@ from jj_stack.stack.trunk_evidence import TrunkEvidenceKind
 
 
 @dataclass(frozen=True, slots=True)
-class FinishPR:
-    change_id: str
-    candidate: TrackedPR
-    pr: GithubPR
-
-
-@dataclass(frozen=True, slots=True)
-class SkipPRFinish:
-    change_id: str
-    candidate: TrackedPR
-
-
-type PRFinishPlan = FinishPR | SkipPRFinish
-
-
-@dataclass(frozen=True, slots=True)
 class OnTrunkChange:
     change_id: str
     candidate: TrackedPR
     evidence_kind: TrunkEvidenceKind
-    finish: PRFinishPlan
+    # The still-open PR to close, or None when GitHub already finished it or rewrote it.
+    close_pr: GithubPR | None
     change: LocalCommit | None
 
 

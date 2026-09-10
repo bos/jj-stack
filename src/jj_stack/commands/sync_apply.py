@@ -26,10 +26,9 @@ from jj_stack.stack.convergence_models import (
     ConvergenceActions,
     GithubStackMergePlan,
     GithubStackRebasePlan,
-    PRFinishPlan,
+    OnTrunkChange,
     RewrittenPRChange,
     SelectedConvergencePlan,
-    SkipPRFinish,
 )
 from jj_stack.stack.convergence_observation import dependent_path_heads
 from jj_stack.stack.observation import observe_change_copies, observe_pr_bookmarks
@@ -46,7 +45,7 @@ class PRFinishResult:
 
 async def apply_pr_finishes(
     *,
-    plans: tuple[PRFinishPlan, ...],
+    plans: tuple[OnTrunkChange, ...],
     dry_run: bool,
     github: GithubClient,
 ) -> tuple[PRFinishResult, ...]:
@@ -82,19 +81,20 @@ async def apply_pr_finishes(
 
 
 async def _apply_pr_finish(
-    *, plan: PRFinishPlan, dry_run: bool, github: GithubClient
+    *, plan: OnTrunkChange, dry_run: bool, github: GithubClient
 ) -> PRFinishResult:
     candidate = plan.candidate
-    if isinstance(plan, SkipPRFinish):
+    pr = plan.close_pr
+    if pr is None:
         return PRFinishResult(plan.change_id, candidate, "already_terminal")
     if dry_run:
         return PRFinishResult(plan.change_id, candidate, "finished")
-    pr_label = format_pr_label(plan.pr.number, url=plan.pr.html_url)
+    pr_label = format_pr_label(pr.number, url=pr.html_url)
     console.output(
         t"Closing {pr_label}: change {ui.change_id(plan.change_id)} is already on trunk."
     )
     try:
-        await github.close_pr(pr_number=plan.pr.number)
+        await github.close_pr(pr_number=pr.number)
     except GithubClientError as error:
         return PRFinishResult(
             plan.change_id,
@@ -129,7 +129,7 @@ async def apply_selected_convergence(
         )
         return 0
     results = await apply_pr_finishes(
-        plans=tuple(change.finish for change in actions.on_trunk),
+        plans=actions.on_trunk,
         dry_run=dry_run,
         github=github,
     )

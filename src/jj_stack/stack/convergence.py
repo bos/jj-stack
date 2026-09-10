@@ -24,15 +24,12 @@ from jj_stack.stack.change_state import (
 )
 from jj_stack.stack.convergence_models import (
     ConvergenceActions,
-    FinishPR,
     GithubStackMergePlan,
     GithubStackRebasePlan,
     OnTrunkChange,
     OrdinaryConvergencePlan,
-    PRFinishPlan,
     RewrittenPRChange,
     SelectedConvergencePlan,
-    SkipPRFinish,
 )
 from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.github_stack_safety import selected_github_stack
@@ -135,13 +132,18 @@ def build_selected_convergence_plan(
                 t"{ui.cmd('jj-stack sync <head-change-id>')} for a stack that still has "
                 t"submitted changes, or {ui.cmd('jj-stack cleanup')} if none remains.",
             )
+        pr = observation.prs[change.change_id].pr
         on_trunk.append(
             OnTrunkChange(
                 change_id=change.change_id,
                 candidate=candidate,
                 evidence_kind=evidence_kind,
-                finish=_finish_plan(
-                    change.change_id, candidate, observation, evidence_kind == "exact"
+                close_pr=(
+                    pr
+                    if evidence_kind == "exact"
+                    and isinstance(pr, GithubPR)
+                    and pr.state == "open"
+                    else None
                 ),
                 change=change,
             )
@@ -399,7 +401,7 @@ def _historical_member(
         change_id,
         candidate,
         member_state.evidence,
-        SkipPRFinish(change_id, candidate),
+        None,
         selected or (mutable_copies[0] if mutable_copies else None),
     )
 
@@ -483,18 +485,6 @@ def _require_no_unpublished_edits(changes: tuple[OnTrunkChange, ...]) -> None:
             t"stack's saved links with "
             t"{ui.cmd(f'jj-stack unstack --local {short}')}.",
         )
-
-
-def _finish_plan(
-    change_id: str,
-    candidate: TrackedPR,
-    observation: RepoFacts,
-    allowed: bool,
-) -> PRFinishPlan:
-    pr = observation.prs[change_id].pr
-    if not allowed or not isinstance(pr, GithubPR) or pr.state != "open":
-        return SkipPRFinish(change_id, candidate)
-    return FinishPR(change_id, candidate, pr)
 
 
 def _require_no_checked_out_merged_changes(

@@ -25,9 +25,7 @@ from jj_stack.stack.change_state import (
     trunk_evidence_reason,
 )
 from jj_stack.stack.convergence_models import (
-    FinishPR,
-    PRFinishPlan,
-    SkipPRFinish,
+    OnTrunkChange,
 )
 from jj_stack.stack.observation import observe_change_copies
 from jj_stack.stack.path import RepoStackPath
@@ -45,7 +43,7 @@ from jj_stack.ui import Message
 @dataclass(frozen=True, slots=True)
 class GlobalConvergencePlan:
     blocked: tuple[tuple[str, TrackedPR, Message], ...]
-    finishes: tuple[PRFinishPlan, ...]
+    finishes: tuple[OnTrunkChange, ...]
     sync_change_ids: tuple[str, ...]
 
 
@@ -119,7 +117,7 @@ async def observe_global_sync(
 def build_global_convergence_plan(*, facts: GlobalSyncFacts) -> GlobalConvergencePlan:
     state = facts.state
     blocked: list[tuple[str, TrackedPR, Message]] = []
-    finishes: list[PRFinishPlan] = []
+    finishes: list[OnTrunkChange] = []
     heads: list[str] = []
     tracked_prs = frozenset(tracked.pr_identity.pr_number for tracked in state.prs.values())
     for change_id, candidate in sorted(state.prs.items()):
@@ -147,7 +145,7 @@ def _classify_global_candidate(
     candidate: TrackedPR,
     facts: GlobalSyncFacts,
     tracked_pr_numbers: frozenset[int],
-) -> tuple[Message | None, PRFinishPlan | None, tuple[str, ...]]:
+) -> tuple[Message | None, OnTrunkChange | None, tuple[str, ...]]:
     ancestry = facts.ancestries[candidate.submitted_baseline.commit_id]
     state = classify(facts.pr_facts.prs[change_id], ancestries=facts.ancestries)
     heads = _candidate_path_heads(change_id, facts=facts)
@@ -177,7 +175,7 @@ def _affected_candidate_plan(
     heads: tuple[str, ...] | None,
     state: TrackedPRState,
     tracked_prs: frozenset[int],
-) -> tuple[Message | None, PRFinishPlan | None, tuple[str, ...]]:
+) -> tuple[Message | None, OnTrunkChange | None, tuple[str, ...]]:
     if heads is None:
         return "local history is not a supported stack", None, ()
     if heads:
@@ -193,10 +191,13 @@ def _affected_candidate_plan(
     )
     if stack_reason is not None:
         return stack_reason, None, ()
-    finish = (
-        SkipPRFinish(state.change_id, candidate)
-        if state.evidence == "rewritten" or historical or state.pr.state != "open"
-        else FinishPR(state.change_id, candidate, state.pr)
+    finished = state.evidence == "rewritten" or historical or state.pr.state != "open"
+    finish = OnTrunkChange(
+        change_id=state.change_id,
+        candidate=candidate,
+        evidence_kind=state.evidence,
+        close_pr=None if finished else state.pr,
+        change=None,
     )
     return None, finish, ()
 
