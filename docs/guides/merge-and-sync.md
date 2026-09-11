@@ -169,13 +169,16 @@ Your pull requests are already merged, so do not retry `jj-stack merge`.
 
 ## When trunk moves without one of your pull requests merging
 
-`sync` handles completed GitHub merges and stack rebases. If trunk merely advanced, fetch it,
-rebase your changes with `jj` if needed, then submit the rewritten changes:
+`jj-stack sync` handles completed GitHub merges and stack rebases. If trunk merely advanced,
+fetch it, rebase your changes with `jj` if needed, then submit the rewritten changes:
 
 ```console
 jj git fetch
-jj rebase -s '<bottom-change-id>' -o 'trunk()'
+jj rebase -b '<change-id>' -o 'trunk()'
 jj-stack submit <head-change-id>
 ```
+
+Use any change in the stack with `-b`; jj finds its base and moves the whole stack, including
+forks. You can even omit `-b` to use jj's default of `@`.
 
 Rebase when your work needs the latest trunk or GitHub requires it before merging.
