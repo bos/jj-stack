@@ -95,9 +95,12 @@ jj-stack sync --pull-request <pr>
 `sync --pull-request` updates the complete local stack containing the named PR, including
 changes above it. The selected PR can already be merged.
 
-If none of the pull requests in your stack has merged and GitHub has not rebased the stack,
-`sync` reports that there are no merged changes and leaves the pull requests unchanged. Run
-`submit` explicitly when you want to publish local changes.
+For a PR outside a GitHub stack, `sync` can also close the PR and clean up after its submitted
+commit reaches trunk through an external fast-forward push.
+
+If no PR has merged, no submitted commit has reached trunk, and GitHub has not rebased the stack,
+`sync` leaves the pull requests unchanged. Run `jj-stack submit` explicitly when you want to
+publish local changes.
 
 After a squash merge, trunk contains a new commit for the merged work, but your remaining
 changes may still depend on the original local changes. `sync` rebases that work onto the

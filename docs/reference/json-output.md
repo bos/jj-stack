@@ -43,7 +43,8 @@ Stack changes use this shape:
 `needs_submit` is true when local edits to a submitted change need publishing. It is false for
 unsubmitted changes, queued PRs, divergence, and lookup or saved-link problems. It does not
 establish that all requirements for submission are satisfied. `needs_sync` is true when the PR
-is merged and the change remains in the reported local stack.
+has merged or jj-stack has confirmed that its submitted work reached trunk, and the change
+remains in the reported local stack.
 
 `current: true` is present when the change is the current working-copy change and omitted
 otherwise.
@@ -73,7 +74,7 @@ Known change statuses are:
 - `draft`: open draft PR
 - `approved`: open PR whose latest review decision is approved
 - `changes_requested`: open PR with requested changes
-- `merged`: PR is merged and local cleanup may be needed
+- `merged`: PR has merged or its submitted work has reached trunk; local cleanup may be needed
 - `closed`: PR is closed without being merged
 - `missing`: tracking data names a PR, but GitHub did not report that PR for the branch
 - `ambiguous`: more than one matching PR was found

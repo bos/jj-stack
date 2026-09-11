@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jj-stack"
-version = "0.1.3"
+version = "0.1.4"
 description = "Stacked GitHub pull requests for Jujutsu"
 readme = "README.md"
 license = "Apache-2.0"

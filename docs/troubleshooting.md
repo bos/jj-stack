@@ -227,9 +227,14 @@ jj-stack submit <head-change-id> --resume-edit /path/to/saved-editor-file.md
 opens a new file. Include any other options from your original command, such as `--base`.
 See [edit every PR at once](reference/descriptions.md#edit-every-pr-at-once) for more details.
 
-For other interruptions, if GitHub completed a merge, run `jj-stack sync <head-change-id>`.
-Otherwise, rerun your original command. jj-stack checks what already succeeded and continues
-from the current state.
+For other interruptions, follow the recovery command in the error. If GitHub completed a merge
+but the local update has not finished, run `jj-stack sync <head-change-id>`. If the local update
+is complete, the hint may instead name `jj-stack submit` to finish updating PRs or
+`jj-stack cleanup --pull-request <pr>` to finish cleanup. Repeating `sync` may have nothing left
+to process.
+
+When no more specific recovery is needed, rerun your original command. jj-stack checks what
+already succeeded and continues from the current state.
 
 ## Your old PR branches remain
 
