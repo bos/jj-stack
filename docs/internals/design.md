@@ -506,14 +506,15 @@ local changes. `sync` recognizes this result only when all of these observations
   order
 - every PR still uses its saved head branch and the expected base branch
 - every PR head and PR branch moved from its submitted baseline to the same reported commit
-- the reported commits form one first-parent chain rooted at trunk
+- the reported commits form one single-parent chain based on trunk's first-parent history
 - none of the selected local changes is divergent
 
-`sync` then computes a rebase of the original local changes without first changing the local DAG.
-The computed change IDs must remain the selected change IDs, conflicts are rejected, and each
-computed commit tree must exactly equal the corresponding GitHub commit tree. This comparison is
-also the recovery check when a previous run integrated the local rebase but failed before moving
-the PR branches.
+`sync` then computes a rebase of the original local changes onto the parent of GitHub's bottom
+commit, without first changing the local DAG. Trunk may have advanced since GitHub rebased the
+stack; the comparison uses the same base as GitHub. The computed change IDs must remain the
+selected change IDs, conflicts are rejected, and each computed commit tree must exactly equal
+the corresponding GitHub commit tree. This comparison is also the recovery check when a previous
+run integrated the local rebase but failed before moving the PR branches.
 
 After these checks pass, `sync` integrates the local rebase, atomically replaces every rewritten
 PR branch with leases requiring each branch to remain at its observed GitHub head, and records the

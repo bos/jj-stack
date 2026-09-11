@@ -203,6 +203,43 @@ def test_view_advises_checkout_or_replace_when_a_pr_branch_moved() -> None:
     assert "Submit needed" not in normalized
 
 
+@pytest.mark.parametrize("with_submitted_child", (False, True))
+def test_view_keeps_short_sync_advice_above_a_moved_stack(with_submitted_child: bool) -> None:
+    head_id = "uowkpmtkykptovmvunrxrywxynlnwpoo"
+    changes = tuple(
+        _status_change(
+            change_id=change_id,
+            pr_identity=make_pr_identity(head_ref=f"jj-stack/{number}", pr_number=number),
+            pr=_pr(number=number, state="open").model_copy(
+                update={"head": GithubPRHead(ref=f"jj-stack/{number}", sha="f" * 40)}
+            ),
+        )
+        for change_id, number in ((head_id, 8), ("ztzvrmuknyosvtltrtwmvpuwunsqmymu", 7))
+    )
+    if with_submitted_child:
+        head_id = "v" * 32
+        changes = (
+            _status_change(
+                change_id=head_id,
+                pr_identity=make_pr_identity(head_ref="jj-stack/feature", pr_number=9),
+                pr=_pr(number=9, state="open"),
+            ),
+            *changes,
+        )
+    lines = _render_lines(
+        *view_module.render_status_advisory_lines(
+            result=_status_result(changes=changes, selected_revset=head_id),
+        )
+    )
+    normalized = " ".join(" ".join(line.split()) for line in lines)
+
+    assert normalized.count(f"jj-stack sync {head_id[:8]}") == 1
+    assert "--dry-run" in normalized
+    assert head_id not in normalized
+    assert ("jj-stack checkout" in normalized) == with_submitted_child
+    assert ("jj-stack relink" in normalized) == with_submitted_child
+
+
 def test_view_closed_pr_advisory_guides_reopen_relink_or_cleanup() -> None:
     change = _status_change(
         change_id="loqvlqrqabcdefghijkl",

@@ -674,15 +674,15 @@ class JjClient:
     ) -> Iterator[LocalCommit]:
         """Import a PR branch at its expected commit, then remove the temporary ref and bookmark.
 
-        An expected chain guards every member's raw Git change ID and first-parent ancestry. A
-        tuple accepts any listed ID, including a missing change-ID header represented by `None`.
+        An expected chain guards every member's raw Git change ID and single-parent ancestry.
+        The bottom parent is pinned only when expected_parent_commit_id is given. A tuple
+        accepts any listed ID, including a missing change-ID header represented by `None`.
         """
 
         ref = f"refs/heads/{branch}"
         chain = tuple(expected_chain)
         if chain and (
-            expected_parent_commit_id is None
-            or chain[-1][:2] != (branch, expected_target)
+            chain[-1][:2] != (branch, expected_target)
             or len({item[0] for item in chain}) != len(chain)
             or (
                 expected_change_id is not None
@@ -711,9 +711,13 @@ class JjClient:
                 expected_parent = expected_parent_commit_id
                 for _chain_branch, target, expected_git_change_id in chain:
                     actual = self._read_git_commit_metadata(target)
-                    if not _expected_git_change_id_matches(
-                        expected_git_change_id, actual.change_id
-                    ) or actual.parents != (expected_parent,):
+                    if (
+                        not _expected_git_change_id_matches(
+                            expected_git_change_id, actual.change_id
+                        )
+                        or len(actual.parents) != 1
+                        or (expected_parent is not None and actual.parents != (expected_parent,))
+                    ):
                         raise CliError(
                             "Imported pull request heads no longer form the expected stack."
                         )

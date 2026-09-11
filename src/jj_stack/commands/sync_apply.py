@@ -16,7 +16,7 @@ from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubTarget
 from jj_stack.identifiers import ChangeId, CommitId, short_change_id
-from jj_stack.jj.client import PRRefUpdate
+from jj_stack.jj.client import PRRefUpdate, quote_revset_symbol
 from jj_stack.models.github import GithubPR, GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import SubmittedBaseline, TrackedPR
@@ -262,7 +262,6 @@ def _apply_github_stack_rebase(
             )
             for item in adopted
         ),
-        expected_parent_commit_id=trunk_commit_id,
     ):
         desired_by_change, operation_id = _verified_local_rebase(
             context=context,
@@ -304,6 +303,19 @@ def _verified_local_rebase(
     trunk_commit_id: CommitId,
 ) -> tuple[dict[ChangeId, LocalCommit], str | None]:
     adopted = plan.rewritten_changes
+    # Trunk may have advanced since GitHub rebased the stack. Compare both versions at the
+    # actual rebase point, including when retrying after a local rewrite or remote push.
+    bases = context.jj_client.query_commits(
+        f"parents({quote_revset_symbol(adopted[0].pr.head.sha)}) & "
+        f"first_ancestors({quote_revset_symbol(trunk_commit_id)})"
+    )
+    if len(bases) != 1:
+        raise CliError(
+            "GitHub's rewritten stack is not based on trunk's first-parent history.",
+            hint=t"Compare the PR branches on GitHub with {ui.revset('trunk()')} before "
+            t"choosing which history to keep.",
+        )
+    base_commit_id = bases[0].commit_id
     local = plan.actions.remaining_changes
     desired = local
     operation_id: str | None = None
@@ -313,7 +325,7 @@ def _verified_local_rebase(
             change_ids=tuple(
                 change.change_id for change in (*local, *plan.actions.working_copy_children)
             ),
-            destination=trunk_commit_id,
+            destination=base_commit_id,
             cli_args=rewrite_args,
         )
         grouped = context.jj_client.query_commits_at_operation(
@@ -328,7 +340,7 @@ def _verified_local_rebase(
             raise CliError(
                 "A local change did not have exactly one commit after rebasing onto trunk."
             )
-    expected_parent = trunk_commit_id
+    expected_parent = base_commit_id
     for change in desired:
         if change.conflict:
             raise CliError(

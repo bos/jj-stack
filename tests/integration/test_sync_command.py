@@ -909,6 +909,7 @@ def test_sync_restores_change_ids_after_an_exact_github_stack_rebase(
         contents="new trunk contents\n",
     )
     github_heads = fake_repo.rebase_stack_onto_base(7, base_ref="main")
+    fake_repo.advance_branch("main", path="later-trunk.txt", contents="after GitHub's rebase\n")
     changed_head = fake_repo.replace_pr_head_contents(
         fake_repo.prs[2],
         path="github-only-edit.txt",
@@ -965,6 +966,9 @@ def test_sync_restores_change_ids_after_an_exact_github_stack_rebase(
     assert state_store.load() == original_state
 
     monkeypatch.setattr(TrackingStore, "relink_prs", real_relink_prs)
+    latest_trunk = fake_repo.advance_branch(
+        "main", path="latest-trunk.txt", contents="after interrupted sync\n"
+    )
     exit_code = run_main(repo, config_path, "sync", original[-1].change_id)
     captured = capsys.readouterr()
 
@@ -986,6 +990,9 @@ def test_sync_restores_change_ids_after_an_exact_github_stack_rebase(
     assert tuple(change.commit_id for change in rewritten[:2]) != github_heads
     assert (repo / "local-trailing.txt").read_text() == "local trailing work\n"
     assert (repo / "github-stack-rebase-trunk.txt").read_text() == "new trunk contents\n"
+    assert JjClient(repo).resolve_commit("trunk()").commit_id == latest_trunk
+    assert not (repo / "later-trunk.txt").exists()
+    assert not (repo / "latest-trunk.txt").exists()
     assert JjClient(repo).pr_branch_temp_artifacts().ref_target is None
 
 

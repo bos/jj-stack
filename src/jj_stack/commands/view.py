@@ -657,8 +657,29 @@ def render_status_advisory_lines(
                 ),
             )
         )
+    submitted_reports = [
+        reports[change.change_id] for change in result.changes if change.tracked is not None
+    ]
+    all_pr_branches_moved = len(submitted_reports) > 1 and all(
+        report.problem == "branch_moved" for report in submitted_reports
+    )
+    if any(report.problem == "branch_moved" for report in reports.values()):
+        rows.append(
+            (
+                "GitHub stack rebase",
+                (
+                    "If GitHub rebased the stack, run ",
+                    ui.cmd(f"jj-stack sync {short_change_id(result.changes[0].change_id)}"),
+                    " (preview with ",
+                    ui.option("--dry-run"),
+                    ").",
+                ),
+            )
+        )
     for change in repair_changes:
         report = reports[change.change_id]
+        if all_pr_branches_moved and report.problem == "branch_moved":
+            continue
         rows.append(
             (
                 ui.change_id(change.change_id),
@@ -668,19 +689,6 @@ def render_status_advisory_lines(
                     report.reason or "",
                     "; ",
                     report.repair or "",
-                ),
-            )
-        )
-    if any(report.problem == "branch_moved" for report in reports.values()):
-        rows.append(
-            (
-                "GitHub stack rebase",
-                (
-                    "If GitHub rewrote the stack, apply its result with ",
-                    ui.cmd(f"jj-stack sync {result.selected_revset}"),
-                    " (preview with ",
-                    ui.option("--dry-run"),
-                    ").",
                 ),
             )
         )

@@ -93,7 +93,7 @@ class StackMachine(RuleBasedStateMachine):
         self.foreign: set[str] = set()
         self.conflicts: set[str] = set()
         self.contents: dict[str, dict[str, str]] = {}
-        self.rebased: dict[str, str] = {}
+        self.rebased: set[str] = set()
         self.pr_count = 0
         self.last_error: CliError | None = None
         config = self.root / "jj-config.toml"
@@ -218,7 +218,7 @@ class StackMachine(RuleBasedStateMachine):
             if not self.merged(path)
             and not self.foreign.intersection(path)
             and not self.conflicts.intersection(path)
-            and not self.rebased.keys() & set(path)
+            and not self.rebased.intersection(path)
         ]
 
     def edits(self) -> list[tuple[int, StackEditOperation]]:
@@ -227,7 +227,7 @@ class StackMachine(RuleBasedStateMachine):
             if (
                 self.foreign.intersection(path)
                 or self.conflicts.intersection(path)
-                or self.rebased.keys() & set(path)
+                or self.rebased.intersection(path)
             ):
                 continue
             merged = self.merged(path)
@@ -406,7 +406,7 @@ class StackMachine(RuleBasedStateMachine):
                 failures.add((1, "saved_pr_missing"))
         if self.queued(path):
             failures.add((1, None))
-        if self.rebased.keys() & set(path):
+        if self.rebased.intersection(path):
             failures.add((1, "remote_branch_moved"))
         selected = {self.pr(label).number for label in path if label in self.submitted}
         for members in self.fake.github_stacks.values():
@@ -701,9 +701,7 @@ class StackMachine(RuleBasedStateMachine):
         stack = self.fake.stack_number_for_pr(self.pr(path[0]).number)
         assert stack is not None
         self.fake.rebase_stack_onto_base(stack, base_ref="main")
-        base = self.fake.ref_target("main")
-        assert base is not None
-        self.rebased[path[0]] = base
+        self.rebased.add(path[0])
 
     def sync_conflicts(self, path: tuple[str, ...]) -> set[str]:
         merged = self.merged(path)
@@ -769,10 +767,6 @@ class StackMachine(RuleBasedStateMachine):
                 commits[self.ids[label]] != self.submitted[label].submitted_baseline.commit_id
                 for label in merged
             )
-            or bool(
-                self.rebased.keys() & set(path)
-                and self.rebased[path[0]] != self.fake.ref_target("main")
-            )
         )
 
     def sync_path(self, index: int) -> None:
@@ -801,9 +795,9 @@ class StackMachine(RuleBasedStateMachine):
             else int(any(self.dependents(label) for label in self.merged(scope)))
         )
         assert code == expected, (self.last_error, output)
-        if self.rebased.keys() & set(path):
+        if self.rebased.intersection(path):
             self.accept_submit(path, publish=False)
-            del self.rebased[path[0]]
+            self.rebased.remove(path[0])
         else:
             self.accept_sync(index, conflicts, refs)
         assert self.outside(scope) == outside
@@ -1168,7 +1162,7 @@ class StackMachine(RuleBasedStateMachine):
         indices = [
             i
             for i, p in enumerate(self.paths)
-            if self.merged(p) or self.queued(p) or self.rebased.keys() & set(p)
+            if self.merged(p) or self.queued(p) or self.rebased.intersection(p)
         ]
         self.sync_path(data.draw(st.sampled_from(indices), label="stack"))
 
@@ -1232,7 +1226,7 @@ class StackMachine(RuleBasedStateMachine):
         labels = [
             label
             for p in self.paths
-            if not self.merged(p) and not self.rebased.keys() & set(p)
+            if not self.merged(p) and not self.rebased.intersection(p)
             for label in p
             if label in self.submitted
             and not self.pr(label).is_queued
