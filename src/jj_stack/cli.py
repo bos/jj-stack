@@ -294,7 +294,7 @@ def build_parser() -> ArgumentParser:
         metavar="TARGET=FILE",
         action="append",
         help=(
-            t"Read a PR body from {ui.metavar('FILE')}; {ui.metavar('TARGET')} is a change ID "
+            t"Read a PR body from {ui.metavar('FILE')}; {ui.metavar('TARGET')} is a change ID, "
             t"or {ui.code('stack')} for an overview comment on the head PR"
         ),
     )

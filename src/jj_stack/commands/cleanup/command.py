@@ -12,9 +12,9 @@ stack, first run `jj-stack unstack`, then close each PR from the top of the stac
 
 Without `--close`, open pull requests are left alone.
 
-Cleanup keeps a branch while another open or reopenable closed PR uses it as a base, or an
-unmerged PR in a GitHub stack needs it. The message names the PR or stack to update before
-retrying cleanup.
+Cleanup keeps a branch while another PR still uses it as its base (an open PR, or a closed PR
+that GitHub could still reopen), or while an unmerged PR in a GitHub stack needs it. The message
+names the PR or stack to update before retrying cleanup.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock
 from jj_stack.ui import plain_text
 
-HELP = "Remove unused PR branches, stack overviews, and saved links"
+HELP = "Remove unused PR branches, stack overview comments, and saved links"
 
 
 @dataclass(frozen=True, slots=True)
