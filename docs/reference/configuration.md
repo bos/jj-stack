@@ -23,10 +23,11 @@ merge_method = "squash"
 - `reviewers` contains GitHub usernames.
 - `team_reviewers` contains team slugs without the organization prefix.
 - `labels` contains labels added on submit.
-- `merge_method` is `merge`, `rebase`, or `squash`. Without it or `--method`, immediate merges
-  use the only allowed method or prefer rebase, then squash, then merge. When several methods
-  are allowed, signed commits require an explicit choice because merging can discard their
-  signatures. Merge queues choose their own method. See
+- `merge_method` is `merge`, `rebase`, or `squash`. Without it or `--method`, a direct merge
+  (one GitHub performs immediately rather than through a merge queue) uses the only allowed
+  method, or prefers rebase, then squash, then a merge commit. When several methods are allowed,
+  signed commits require an explicit choice because merging can discard their signatures. Merge
+  queues choose their own method. See
   [merge methods](../guides/merge-and-sync.md#choose-a-merge-method) for signature considerations.
 
 Command-line options override the corresponding defaults for that invocation. Omitting an

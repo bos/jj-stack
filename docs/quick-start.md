@@ -145,8 +145,8 @@ means its title, body, and other PR details needed no update.
 ## Merge A and keep working on B and C
 
 Once A meets the repo's review and check requirements, you can merge its PR. Replace `1` with
-its PR number in your repo. This example uses squash merging, but you can choose another
-method if your repo requires it:
+its PR number in your repo. This example chooses squash merging; without `--method`, `jj-stack`
+picks a merge method your repo allows:
 
 ```console
 jj-stack merge --pull-request 1 --method squash

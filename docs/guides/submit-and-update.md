@@ -87,10 +87,11 @@ look again:
 jj-stack submit --re-request
 ```
 
-## PR history
+## Revision history
 
-After updates, jj-stack maintains a comment on each PR listing its recent versions with links
-to the diffs. Reviewers can use it to see what changed since their last review.
+After updates, jj-stack maintains a **Revision history** comment on each PR. It lists the PR's
+recent versions with links to the diff between each version and the next, so reviewers can see
+what changed since their last review.
 
 For edits made directly on GitHub, see [work with a stack on GitHub](working-on-github.md).
 If you move changes between stacks, follow

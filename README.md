@@ -71,8 +71,8 @@ your edit.
 2. Run `jj-stack submit`.
 3. Revise, add, remove, or reorder the changes locally as reviews come in.
 4. Run `jj-stack submit` again to refresh GitHub.
-5. Run `jj-stack merge --pull-request <last-pr-to-merge> --method squash` when the bottom
-   portion is ready. Choose a merge method your repo allows. Queues choose their own method.
+5. Run `jj-stack merge` when the PRs at the bottom are ready. Pass `--pull-request <pr>` to
+   stop at an earlier PR, and `--method` to choose a merge method your repo allows.
 6. After a queued merge or a merge made through GitHub finishes, run
    `jj-stack sync <head-change-id>`.
 

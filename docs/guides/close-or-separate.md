@@ -57,9 +57,10 @@ jj-stack cleanup <head-change-id>
 
 ### If cleanup keeps a branch
 
-Cleanup keeps a PR branch while another open or reopenable closed PR uses it as its base. The
-message names the dependent PR. Retarget an open PR to trunk. For a closed PR, either reopen and
-retarget it or delete its head branch if you no longer need to reopen it. Then rerun cleanup.
+Cleanup keeps a PR branch while another PR still uses it as its base: an open PR, or a closed PR
+that GitHub could still reopen. The message names that PR. Retarget an open PR to trunk. For a
+closed PR, either reopen and retarget it, or delete its head branch if you no longer need to
+reopen it. Then rerun cleanup.
 
 A branch also stays while an unmerged PR in a GitHub stack needs it. Remove that stack with
 `jj-stack unstack` before retrying cleanup.

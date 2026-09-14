@@ -20,26 +20,19 @@ authentication error:
 jj-stack doctor --fix
 ```
 
-`jj-stack doctor` checks your repo, Git remote, GitHub access and push permission, trunk, and
-that GitHub's Stacks feature is available for your remote. With `--fix`, it also fixes up your
-fetch config to hide GitHub book-keeping branches, and removes leftovers from interrupted
-commands. Follow the guidance for any checks that still fail. It does not change GitHub.
+`jj-stack doctor` checks your Git remote, GitHub access and push permission, the trunk branch,
+and whether GitHub stacked pull requests are available for your repo. With `--fix`, it also
+configures fetches to skip jj-stack's PR branches and removes leftovers from interrupted commands.
+Follow the guidance for any checks that still fail. It does not change GitHub.
 
 ## The pull requests in a stack are not numbered in ascending order
 
-This is expected. I didn't consider preserving ascending numeric order to be worth the cost in
-perceived performance.
+This is expected. Each GitHub API call takes hundreds of milliseconds, so `jj-stack` creates
+and updates a stack's PRs concurrently rather than one at a time. GitHub may therefore number a
+PR before the PR below it, so PR 42 can end up based on PR 43.
 
-GitHub's API is very slow, costing many hundreds of milliseconds per round-trip, with high
-variability. To be as fast as possible, `jj-stack` creates and updates PRs in a stack
-concurrently. This means that e.g. PR 42 may be created with PR 43 as its parent, because GitHub
-assigned 43 a number a moment earlier than 42.
-
-I chose this in part because I don't personally care about the numeric ordering, but there's a
-logic to it too. You can move changes around or create new ones inside a stack any time, which
-will naturally change the order of the PRs when you `submit` again. So "a higher-numbered PR is
-always a descendant of a lower-numbered PR" was at best an occasional rule of thumb rather than
-something that could be depended on.
+PR numbers never determine the order of a stack. Your local `jj` history does, and reordering or
+inserting changes would change the order of existing PRs anyway.
 
 ## You want to use the same PRs again after `unstack --local`
 
@@ -245,9 +238,9 @@ cleanup, run:
 jj-stack cleanup <head-change-id>
 ```
 
-Cleanup keeps a branch while another open or reopenable closed PR uses it as a base, or an
-unmerged PR in a GitHub stack needs it. See [what to do when cleanup keeps a branch](
-guides/close-or-separate.md#if-cleanup-keeps-a-branch).
+Cleanup keeps a branch while another PR still uses it as its base (an open PR, or a closed PR
+that GitHub could still reopen), or while an unmerged PR in a GitHub stack needs it. See
+[what to do when cleanup keeps a branch](guides/close-or-separate.md#if-cleanup-keeps-a-branch).
 
 ## “The selector resolved to more than one commit”
 
@@ -262,7 +255,8 @@ Two or more local commits share a change ID. This can happen when separate works
 change independently, or when `jj-stack checkout --pull-request` brings in a PR's version of a
 change you also edited locally. jj-stack cannot choose which version belongs in your stack.
 
-Show the versions and compare their diffs:
+The error's hint names a `jj converge` command that combines the versions into one commit. If
+you would rather keep one version, show the versions and compare their diffs:
 
 ```console
 jj log -r 'change_id(<change-id>)'

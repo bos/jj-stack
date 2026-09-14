@@ -29,7 +29,7 @@ version appears first and is marked **current**. Use **Changes from previous ver
 what changed in that update. Use **Submitted commit** to inspect the exact commit published for
 that version.
 
-The comment lists recent available versions. If you missed several updates, follow their diff
+The comment lists the most recent versions. If you missed several updates, follow their diff
 links in order; use the PR's **Files changed** tab to review the current layer as a whole.
 
 ## Review and merge in order

@@ -30,9 +30,9 @@ checks, approvals, conflicts, and repo rules allow the merge.
 
 ## Choose a merge method
 
-Direct merges happen immediately on GitHub. If your repo allows only one merge method, `merge`
-uses it automatically. With several allowed methods and an unsigned stack, it prefers rebase,
-then squash, then a merge commit. Choose an allowed method with `--method`, or set a default once:
+For a direct merge, `merge` uses your repo's only allowed merge method if there is just one.
+With several allowed methods and an unsigned stack, it prefers rebase, then squash, then a merge
+commit. Choose an allowed method with `--method`, or set a default once:
 
 ```console
 jj config set --repo jj-stack.merge_method squash
@@ -95,8 +95,8 @@ jj-stack sync --pull-request <pr>
 `sync --pull-request` updates the complete local stack containing the named PR, including
 changes above it. The selected PR can already be merged.
 
-For a PR outside a GitHub stack, `sync` can also close the PR and clean up after its submitted
-commit reaches trunk through an external fast-forward push.
+If someone pushes a PR's submitted commit straight to trunk instead of merging the PR, `sync`
+closes that PR and cleans up, provided the PR is not part of a GitHub stack.
 
 If no PR has merged, no submitted commit has reached trunk, and GitHub has not rebased the stack,
 `sync` leaves the pull requests unchanged. Run `jj-stack submit` explicitly when you want to
@@ -163,7 +163,7 @@ jj-stack sync <head-change-id>
 ```
 
 If only cleanup failed, run the `jj-stack cleanup --pull-request <pr>` commands in the hint.
-The local changes may already be gone, so their former head cannot select the remaining cleanup.
+The hint names each PR because the merged local changes may already be gone.
 
 Your pull requests are already merged, so do not retry `jj-stack merge`.
 

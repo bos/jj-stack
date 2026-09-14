@@ -58,11 +58,11 @@ publish one pull request per change. Only `jj-stack` manages native GitHub stack
 from the author. Reviewers can use GitHub's commit list to follow each version and see what
 changed. Those update commits are squash-merged into one commit when the PR lands.
 
-`jj-stack` force-pushes the current version of your change and maintains a PR history comment
-with links to earlier versions and the differences between them. You don't need to write an
-update-commit message, but reviewers must use that comment to compare versions, as the "Changes
-since your last review" view is empty when you use GitHub stacks. (`gh stack` has the same
-problem. Looks like a bug in GitHub!)
+`jj-stack` force-pushes the current version of your change and maintains a **Revision history**
+comment with links to earlier versions and the differences between them. You don't need to write
+an update-commit message, but reviewers must use that comment to compare versions, as the
+"Changes since your last review" view is empty when you use GitHub stacks. (`gh stack` has the
+same problem. Looks like a bug in GitHub!)
 
 ### Dependent and independent changes
 

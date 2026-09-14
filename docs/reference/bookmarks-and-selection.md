@@ -104,8 +104,8 @@ beginning with `jj-stack/`. These are separate from your ordinary bookmarks, eve
 points to the same change.
 
 The managed PR branches normally stay out of local bookmark output. Do not create, move, or
-delete bookmarks in the `jj-stack/` namespace yourself. See
-[Configuration](configuration.md#pr-branch-names) if you need to choose a different namespace
+delete bookmarks whose names start with `jj-stack/` yourself. See
+[Configuration](configuration.md#pr-branch-names) if you need a different prefix; choose it
 before your first submit.
 
 ## When a bookmark makes a change immutable
@@ -121,7 +121,7 @@ Use `jj bookmark list --all-remotes` to see whether a remote bookmark points to 
 so, handle that bookmark through your normal `jj` workflow. For example, track it if it is a
 branch you intend to work on, or move your mutable changes onto the intended base with `jj`.
 
-If PR bookmarks in the `jj-stack/` namespace appear in your local output, run
-`jj-stack doctor --fix` to remove untracked PR bookmarks and keep them out of future fetches.
+If bookmarks whose names start with `jj-stack/` appear in your local bookmark output, run
+`jj-stack doctor --fix` to remove them and keep them out of future fetches.
 If the change is still immutable, inspect other remote bookmarks, tags, and your
 `immutable_heads()` configuration before deciding how to proceed.
