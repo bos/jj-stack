@@ -362,9 +362,10 @@ def _resolve_merge_method(
     signed = tuple(change.change_id for change in changes if change.signed)
     if signed:
         raise CliError(
-            t"Stack contains signed commits: {ui.join(ui.change_id, signed)}.",
-            hint=t"Choose a merge method with {ui.cmd('--method')} or "
-            t"{ui.code('jj-stack.merge_method')}.",
+            t"Stack contains signed commits ({ui.join(ui.change_id, signed)}), and this repo "
+            t"allows several merge methods.",
+            hint=t"Merging can discard signatures, so choose a method with {ui.cmd('--method')} "
+            t"or {ui.code('jj-stack.merge_method')}.",
         )
     return allowed_methods[0]
 

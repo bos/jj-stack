@@ -65,30 +65,31 @@ def parse_description_edit_document(
             change_id = ChangeId(line[len(_EDIT_SEPARATOR_PREFIX) :].strip())
             if change_id not in known_change_ids:
                 raise CliError(
-                    t"Edited pull request descriptions name unknown change "
-                    t"{ui.change_id(change_id)}."
+                    t"The editor file names an unknown change {ui.change_id(change_id)}."
                 )
             if change_id in sections:
                 raise CliError(
-                    t"Edited pull request descriptions repeat change {ui.change_id(change_id)}."
+                    t"The editor file lists change {ui.change_id(change_id)} more than once."
                 )
             current_change_id = change_id
             current_section = sections[change_id] = []
             continue
         if line.startswith(_EDIT_DRAFT_PREFIX):
             if current_change_id is None:
-                raise CliError("Edited draft state appears before the first change separator.")
+                raise CliError(
+                    "The editor file sets a draft state before the first change separator."
+                )
             if current_change_id in drafts:
                 raise CliError(
-                    t"Edited pull request repeats draft state for "
-                    t"{ui.change_id(current_change_id)}."
+                    t"The editor file sets the draft state for "
+                    t"{ui.change_id(current_change_id)} more than once."
                 )
             value = line[len(_EDIT_DRAFT_PREFIX) :].strip()
             normalized = value.lower()
             if normalized not in {"yes", "y", "no", "n"}:
                 raise CliError(
-                    t"Edited pull request draft state for "
-                    t"{ui.change_id(current_change_id)} is {ui.code(value or '(empty)')}; "
+                    t"The editor file sets the draft state for "
+                    t"{ui.change_id(current_change_id)} to {ui.code(value or '(empty)')}; "
                     t"expected yes or no (y or n also work)."
                 )
             drafts[current_change_id] = normalized in {"yes", "y"}
@@ -97,10 +98,7 @@ def parse_description_edit_document(
             continue
         if current_section is None:
             if line.strip():
-                raise CliError(
-                    "Edited pull request descriptions have content before the first "
-                    "change separator."
-                )
+                raise CliError("The editor file has content before the first change separator.")
             continue
         current_section.append(line)
 
@@ -108,13 +106,10 @@ def parse_description_edit_document(
     for change in changes:
         section = sections.get(change.change_id)
         if section is None:
-            raise CliError(
-                t"Edited pull request descriptions are missing change "
-                t"{ui.change_id(change.change_id)}."
-            )
+            raise CliError(t"The editor file is missing change {ui.change_id(change.change_id)}.")
         if change.change_id not in drafts:
             raise CliError(
-                t"Edited pull request is missing draft state for "
+                t"The editor file is missing the draft state for "
                 t"{ui.change_id(change.change_id)}."
             )
         title_index = 0
@@ -122,8 +117,7 @@ def parse_description_edit_document(
             title_index += 1
         if title_index == len(section):
             raise CliError(
-                t"Edited pull request description for "
-                t"{ui.change_id(change.change_id)} has no title line."
+                t"The editor file has no title line for {ui.change_id(change.change_id)}."
             )
         parsed[change.change_id] = GeneratedDescription(
             body="\n".join(section[title_index + 1 :]).strip(),

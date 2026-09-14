@@ -886,7 +886,10 @@ def test_github_client_quotes_githubs_own_explanation_for_a_refusal(
 def test_user_facing_reason_reports_auth_failure_for_401() -> None:
     error = GithubClientError("GitHub request failed: 401", status_code=401)
 
-    assert error.user_facing_reason() == "auth failed - check GITHUB_TOKEN"
+    assert (
+        error.user_facing_reason()
+        == "authentication failed - check GITHUB_TOKEN, GH_TOKEN, or your gh login"
+    )
 
 
 @pytest.mark.parametrize(
@@ -965,7 +968,8 @@ def test_github_client_reports_a_permissions_403_as_access_denied() -> None:
         asyncio.run(run_test())
 
     assert (
-        raised.value.user_facing_reason() == "access denied - check GITHUB_TOKEN and repo access"
+        raised.value.user_facing_reason()
+        == "access denied - check that your token can access the repo"
     )
     # Waiting cannot fix a permissions failure, so it must not be retried either.
     assert attempts == 1

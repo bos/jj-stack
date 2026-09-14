@@ -78,7 +78,6 @@ def _require_submittable(
     *,
     head_change_id: ChangeId,
 ) -> None:
-    short = short_change_id(state.change_id)
     head = short_change_id(head_change_id)
     if isinstance(state, Queued):
         pr_label = format_pr_label(state.pr.number, url=state.pr.html_url)
@@ -95,10 +94,11 @@ def _require_submittable(
         raise _not_open_error(
             state,
             hint=(
-                t"Run {ui.cmd(f'jj-stack sync {short}')} to update the local stack."
+                t"Run {ui.cmd(f'jj-stack sync {head}')} to update the local stack."
                 if isinstance(state, Merged)
-                else t"Reopen the PR, or run {ui.cmd(f'jj-stack cleanup {short}')} before "
-                t"submitting a new PR."
+                else t"Reopen the PR on GitHub, or run "
+                t"{ui.cmd(f'jj-stack cleanup --pull-request {state.pr.number}')} and submit "
+                t"again to create a new PR."
             ),
         )
 
@@ -149,5 +149,7 @@ def require_published_base(
     if isinstance(state, Closed):
         raise _not_open_error(
             state,
-            hint=t"Reopen the PR, or run {ui.cmd('jj-stack cleanup')} before submitting again.",
+            hint=t"Reopen the PR on GitHub, or run "
+            t"{ui.cmd(f'jj-stack cleanup --pull-request {state.pr.number}')} and submit the "
+            t"parent stack again before retrying.",
         )

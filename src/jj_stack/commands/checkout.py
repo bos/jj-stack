@@ -225,7 +225,8 @@ async def _checkout_pr_stack(
         pr_label = format_pr_label(top_pr.number, url=top_pr.html_url)
         raise CliError(
             t"{pr_label} and remote branch "
-            t"{ui.bookmark(top_pr.head.ref)} no longer identify the same commit."
+            t"{ui.bookmark(top_pr.head.ref)} no longer identify the same commit.",
+            hint="Retry in a moment; GitHub may still be catching up with a recent push.",
         )
 
     # A hidden local copy of the head still needs the import so it becomes visible again.
@@ -412,7 +413,8 @@ def _save_checkout_tracking(
         if remote_targets.get(pr.head.ref) != head_sha:
             raise CliError(
                 t"{pr_label} and branch "
-                t"{ui.bookmark(pr.head.ref)} no longer identify the same commit."
+                t"{ui.bookmark(pr.head.ref)} no longer identify the same commit.",
+                hint="Retry in a moment; GitHub may still be catching up with a recent push.",
             )
         replacements[change.change_id] = TrackedPR(
             pr_identity=PRIdentity(

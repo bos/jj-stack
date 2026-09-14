@@ -225,8 +225,9 @@ async def _load_exact_relink_pr(
     pr_number_label = format_pr_number(pr.number, url=pr.html_url)
     if pr.state != "open":
         raise CliError(
-            t"Pull request {pr_number_label} is not open; cannot relink {pr.state} PRs.",
-            hint=t"Select an open PR. If this PR was closed without merging, reopen it on "
-            t"GitHub first. For a merged PR, run {ui.cmd('jj-stack sync')} for its local stack.",
+            t"Pull request {pr_number_label} is {pr.state}, so it cannot be relinked.",
+            hint=t"Only open pull requests can be relinked. If this PR was closed without "
+            t"merging, reopen it on GitHub first. For a merged PR, run {ui.cmd('jj-stack sync')} "
+            t"for its local stack.",
         )
     return pr, require_managed_pr_head(pr=pr, repo=repo)

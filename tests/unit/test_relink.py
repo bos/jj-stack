@@ -18,7 +18,7 @@ from tests.support.tracking import make_pr_identity
 @pytest.mark.parametrize(
     ("head_owner", "state", "message"),
     (
-        ("octo-org", "closed", "is not open"),
+        ("octo-org", "closed", "cannot be relinked"),
         ("someone-else", "open", "does not belong to octo-org/stacked-prs"),
     ),
 )

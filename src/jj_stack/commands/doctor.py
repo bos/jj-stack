@@ -292,7 +292,7 @@ def _check_github_auth() -> tuple[CheckResult, str | None]:
         CheckResult(
             "GitHub auth",
             "fail",
-            t"no token found; set GITHUB_TOKEN or run {ui.cmd('gh auth login')}",
+            t"no token found; set GITHUB_TOKEN or GH_TOKEN, or run {ui.cmd('gh auth login')}",
         ),
         None,
     )

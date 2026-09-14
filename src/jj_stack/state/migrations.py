@@ -16,7 +16,8 @@ def migrate_tracking_state(raw: dict[str, object]) -> dict[str, object]:
         raise ValueError("tracking schema version must be an integer")
     if version > (current_version := TrackingState().version):
         raise TrackingStateError(
-            f"schema version {version} is newer than supported version {current_version}",
+            f"Tracking data uses format version {version}, which is newer than supported "
+            f"version {current_version}.",
             hint="Upgrade jj-stack to read this tracking data.",
         )
     if version == current_version:

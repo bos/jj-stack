@@ -38,7 +38,9 @@ _GRAPHQL_PR_BATCH_SIZE = 25
 # GitHub's largest page.
 PR_PAGE_SIZE = 100
 
-REPO_NOT_FOUND_REASON = "repo not found or inaccessible - check GITHUB_TOKEN or gh auth"
+REPO_NOT_FOUND_REASON = (
+    "repo not found or inaccessible - check GITHUB_TOKEN, GH_TOKEN, or your gh login"
+)
 _DEFAULT_RATE_LIMIT_RETRIES = 3
 _DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 1.0
 _MAX_RATE_LIMIT_WAIT_SECONDS = 60.0
@@ -129,7 +131,7 @@ class GithubClientError(SummarizedError):
         """Render a concise failure reason suitable after an action prefix."""
 
         if self.status_code == 401:
-            return "auth failed - check GITHUB_TOKEN"
+            return "authentication failed - check GITHUB_TOKEN, GH_TOKEN, or your gh login"
         if self.status_code == 403:
             # GitHub refuses a rate-limited request with the same status as a token problem,
             # and the retries give up long before a primary limit resets.
@@ -138,7 +140,7 @@ class GithubClientError(SummarizedError):
                 minutes = None if reset is None else max(1, ceil(reset / 60))
                 resets = "" if minutes is None else f", resets in about {minutes} min"
                 return f"GitHub {self.rate_limit} rate limit reached{resets} - rerun later"
-            return "access denied - check GITHUB_TOKEN and repo access"
+            return "access denied - check that your token can access the repo"
         if self.is_repo_not_found():
             return REPO_NOT_FOUND_REASON
         return f"request failed ({self.request_failure_detail()})"

@@ -63,14 +63,13 @@ def prepare_submit_inputs(
             raise CliError(
                 t"Base {ui.change_id(base.change_id)} has no submitted PR.",
                 hint=t"Inspect the parent with {ui.cmd(f'jj-stack view {short_base}')}, "
-                t"submit it using its usual submit command, then run {retry}.",
+                t"submit the stack that contains it, then run {retry}.",
             )
         if tracked_base.submitted_baseline.commit_id != base.commit_id:
             raise CliError(
                 t"Base {ui.change_id(base.change_id)} has changed since its last submit.",
                 hint=t"Inspect the parent with {ui.cmd(f'jj-stack view {short_base}')}, "
-                t"refresh it using its usual submit command, "
-                t"then run {retry}.",
+                t"submit the stack that contains it again, then run {retry}.",
             )
         explicit_base = ExplicitBase(change=base, tracked=tracked_base)
     if options.edit and options.describe_with is not None:

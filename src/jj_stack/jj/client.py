@@ -1140,8 +1140,8 @@ class JjClient:
                     t"is immutable here.",
                     hint=t"Run {ui.cmd('jj bookmark list --all-remotes')} to check for an "
                     t"untracked remote bookmark. If it is a branch you intend to edit, track "
-                    t"it with {ui.cmd('jj bookmark track NAME@REMOTE')}. Otherwise, check your "
-                    t"{ui.code('immutable_heads()')} configuration before retrying.",
+                    t"it with {ui.cmd('jj bookmark track <bookmark>@<remote>')}. Otherwise, "
+                    t"check your {ui.code('immutable_heads()')} configuration before retrying.",
                     stderr=message,
                 )
             displayed_command = _redact_http_url_userinfo(shlex.join(command))

@@ -44,7 +44,7 @@ def test_edit_document_parse_rejects_repeated_change_section() -> None:
         "====== change bottomchange\nfeature 1\n"
     )
 
-    with pytest.raises(CliError, match="repeat change"):
+    with pytest.raises(CliError, match="more than once"):
         parse_description_edit_document(document, changes=changes)
 
 

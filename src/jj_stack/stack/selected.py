@@ -163,6 +163,10 @@ def require_submittable_changes(changes: tuple[LocalCommit, ...]) -> None:
             raise UnsupportedStackError.stack_shape(
                 change.change_id,
                 "immutable changes cannot be submitted.",
+                hint=t"Run {ui.cmd('jj bookmark list --all-remotes')} to see whether a remote "
+                t"bookmark or tag points at it. Track a bookmark you intend to work on with "
+                t"{ui.cmd('jj bookmark track <bookmark>@<remote>')}, or check your "
+                t"{ui.code('immutable_heads()')} configuration.",
                 reason="immutable_commit",
             )
         if change.divergent:
@@ -186,7 +190,7 @@ def require_submittable_changes(changes: tuple[LocalCommit, ...]) -> None:
         if not change.description.strip():
             raise UnsupportedStackError.stack_shape(
                 change.change_id,
-                t"describe it with "
+                t"this change has no description; describe it with "
                 t"{ui.cmd(f'jj describe {short_change_id(change.change_id)}')} and retry.",
                 reason="undescribed_change",
             )
@@ -293,11 +297,16 @@ def _project_rows(
     ):
         raise UnsupportedStackError(
             "The selected stack includes a change with multiple parents.",
+            hint=t"jj-stack submits only linear stacks. Rearrange the changes into a single "
+            t"chain with {ui.cmd('jj rebase')}, or select a head below the merge change.",
             reason="merge_commit",
         )
     if any(not commit.parents for commit in path_commits):
         raise UnsupportedStackError(
             t"The selected change does not descend from {ui.revset('trunk()')}.",
+            hint=t"Rebase it onto {ui.revset('trunk()')} with {ui.cmd('jj rebase')}, or run "
+            t"{ui.cmd('jj-stack doctor')} to check that {ui.revset('trunk()')} names the "
+            t"intended branch.",
             reason="reached_root_before_trunk",
         )
     path = project_selected_path(
@@ -351,7 +360,7 @@ def _validate_selected_path(
         if change.is_working_copy and not change.description.strip():
             raise UnsupportedStackError.stack_shape(
                 change.change_id,
-                t"describe it with "
+                t"this change has no description; describe it with "
                 t"{ui.cmd(f'jj describe {short_change_id(change.change_id)}')} and retry.",
                 reason="undescribed_change",
             )
