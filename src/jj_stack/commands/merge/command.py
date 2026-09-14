@@ -50,7 +50,7 @@ from jj_stack.github.error_messages import (
     require_github_target,
 )
 from jj_stack.github.resolution import GithubTarget
-from jj_stack.identifiers import ChangeId
+from jj_stack.identifiers import ChangeId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepo
 from jj_stack.models.stack import LocalCommit, LocalStack
@@ -161,7 +161,7 @@ async def _run_merge(
                 raise CliError(
                     "Could not update the local stack after the completed merge.",
                     hint=t"Resolve the GitHub error, then run "
-                    t"{ui.cmd('jj-stack sync')} {ui.change_id(sync_change_id)}",
+                    t"{ui.cmd(f'jj-stack sync {short_change_id(sync_change_id)}')}.",
                 ) from error
             raise
         if exit_code:
@@ -177,7 +177,7 @@ def _warn_incomplete_post_merge_sync(
             t"GitHub completed the merge, but the follow-up work did not finish. Do not run "
             t"{ui.cmd('jj-stack merge')} again.",
             (
-                t" Continue with {ui.cmd('jj-stack sync')} {ui.change_id(sync_change_id)}."
+                t" Continue with {ui.cmd(f'jj-stack sync {short_change_id(sync_change_id)}')}."
                 if not has_recovery_hint
                 else ""
             ),

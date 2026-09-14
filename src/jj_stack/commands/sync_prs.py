@@ -60,7 +60,7 @@ async def refresh_selected_prs(
             error.message,
             hint=t"The local rebase is complete. Resolve the conflicts with {ui.cmd('jj')}, "
             t"then update the remaining pull requests with "
-            t"{ui.cmd(f'jj-stack submit {short_change_id(selected_ids[-1])}')}",
+            t"{ui.cmd(f'jj-stack submit {short_change_id(selected_ids[-1])}')}.",
         ) from error
     prepared: list[PreparedSubmitChange] = []
     remote_targets: dict[str, CommitId] = {}

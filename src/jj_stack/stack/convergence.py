@@ -70,9 +70,12 @@ def build_selected_convergence_plan(
 ) -> SelectedConvergencePlan:
     selected = prepared.stack.changes
     state = prepared.state
+    head = short_change_id(selected[-1].change_id)
+    rerun = f"jj-stack sync {head}"
     effect = _classify_github_stack(
         ancestries=ancestries,
         github_stacks=github_stacks,
+        head=head,
         observation=observation,
         selected=selected,
         state=state,
@@ -85,7 +88,6 @@ def build_selected_convergence_plan(
     on_trunk = list(history)
     remaining_changes: list[LocalCommit] = []
     surviving_prs = {item.change_id: item.pr for item in adopted}
-    rerun = f"jj-stack sync {short_change_id(selected[-1].change_id)}"
     for change in (item for item in selected if item.change_id not in history_ids):
         candidate = state.prs.get(change.change_id)
         if candidate is None or change.change_id in active_ids:
@@ -149,10 +151,10 @@ def build_selected_convergence_plan(
             )
         )
 
-    _require_no_unpublished_edits(tuple(on_trunk))
+    _require_no_unpublished_edits(tuple(on_trunk), head=head)
     _require_no_checked_out_merged_changes(tuple(on_trunk))
     submitted = _remaining_submitted_prs(
-        remaining_changes=tuple(remaining_changes), prs=surviving_prs
+        remaining_changes=tuple(remaining_changes), prs=surviving_prs, head=head
     )
     local_head = selected[-1]
     working_copy_children = tuple(
@@ -168,7 +170,9 @@ def build_selected_convergence_plan(
         rewrite_args=observation.rewrite_args,
     )
     adopting = isinstance(effect, _GithubStackMerge) and all_at_baseline(adopted)
-    _require_no_divergent_remaining_changes(actions, adopted=adopted if adopting else ())
+    _require_no_divergent_remaining_changes(
+        actions, adopted=adopted if adopting else (), head=head
+    )
     if isinstance(effect, _GithubStackRebase):
         return GithubStackRebasePlan(actions=actions, rewritten_changes=adopted)
     if isinstance(effect, _GithubStackMerge):
@@ -187,6 +191,7 @@ def _remaining_submitted_prs(
     *,
     remaining_changes: tuple[LocalCommit, ...],
     prs: dict[ChangeId, GithubPR],
+    head: str,
 ) -> dict[ChangeId, GithubPR]:
     """Return the remaining submitted PRs; unsubmitted changes must come after them."""
 
@@ -200,7 +205,7 @@ def _remaining_submitted_prs(
             raise CliError(
                 t"Cannot sync because submitted {ui.change_id(change.change_id)} appears "
                 t"above an unsubmitted change.",
-                hint=t"Submit the complete stack with {ui.cmd('jj-stack submit HEAD')}, or "
+                hint=t"Submit the complete stack with {ui.cmd(f'jj-stack submit {head}')}, or "
                 t"select a stack that ends below the unsubmitted change.",
             )
         submitted[change.change_id] = pr
@@ -235,8 +240,9 @@ def _member_state(
         raise CliError(
             t"{pr_label} no longer matches the saved pull request link for "
             t"{ui.change_id(change_id)}.",
-            hint=t"Relink it with {ui.cmd(f'jj-stack relink PR {short_change_id(change_id)}')}, "
-            t"or forget the selected stack's links with "
+            hint=t"Relink it with "
+            t"{ui.cmd(f'jj-stack relink <pr> {short_change_id(change_id)}')}, or forget the "
+            t"selected stack's links with "
             t"{ui.cmd(f'jj-stack unstack --local {short_change_id(change_id)}')} before "
             t"submitting again.",
         )
@@ -257,11 +263,12 @@ def _require_no_divergent_remaining_changes(
     actions: ConvergenceActions,
     *,
     adopted: tuple[RewrittenPRChange, ...],
+    head: str,
 ) -> None:
     adopted_ids = {item.change_id for item in adopted}
     for change in (*actions.remaining_changes, *actions.working_copy_children):
         if change.divergent and change.change_id not in adopted_ids:
-            raise divergent_change_error(change.change_id)
+            raise divergent_change_error(change.change_id, head=head)
 
 
 def all_at_baseline(items: tuple[RewrittenPRChange, ...]) -> bool:
@@ -271,13 +278,13 @@ def all_at_baseline(items: tuple[RewrittenPRChange, ...]) -> bool:
     )
 
 
-def divergent_change_error(change_id: str) -> CliError:
+def divergent_change_error(change_id: str, *, head: str) -> CliError:
     return CliError(
         t"Cannot rebase remaining {ui.change_id(change_id)} because it has multiple visible "
         t"commits.",
         hint=divergence_recovery_hint(
             change_id,
-            retry=t"rerun {ui.cmd('jj-stack sync HEAD')} for this stack",
+            retry=t"rerun {ui.cmd(f'jj-stack sync {head}')} for this stack",
         ),
     )
 
@@ -286,6 +293,7 @@ def _classify_github_stack(
     *,
     ancestries: dict[CommitId, CommitAncestry],
     github_stacks: tuple[GithubStack, ...],
+    head: str,
     observation: RepoFacts,
     selected: tuple[LocalCommit, ...],
     state: TrackingState,
@@ -311,17 +319,16 @@ def _classify_github_stack(
     if members != tuple(number for number in stack.pr_numbers if number in members):
         raise CliError(
             t"The local PR order differs from GitHub stack #{stack.number}.",
-            hint=t"Update GitHub with "
-            t"{ui.cmd(f'jj-stack submit {short_change_id(selected[-1].change_id)}')}, or remove "
+            hint=t"Update GitHub with {ui.cmd(f'jj-stack submit {head}')}, or remove "
             t"the GitHub stack with {ui.cmd(f'jj-stack unstack --stack {stack.number}')} and "
             t"resubmit.",
         )
-    merge_mode = _is_stack_merge(stack=stack, by_pr=by_pr)
+    merge_mode = _is_stack_merge(stack=stack, by_pr=by_pr, head=head)
     history: list[OnTrunkChange] = []
     adopted: list[RewrittenPRChange] = []
     expected_base = trunk_branch
     merge_result: CommitId | None = None
-    rerun = f"jj-stack sync {short_change_id(selected[-1].change_id)}"
+    rerun = f"jj-stack sync {head}"
     for member in stack.prs:
         change_id = by_pr.get(member.number)
         if change_id is None:
@@ -341,6 +348,7 @@ def _classify_github_stack(
                 _historical_member(
                     candidate=candidate,
                     change_id=change_id,
+                    head=head,
                     member_state=member_state,
                     observation=observation,
                     selected=selected_by_id.get(change_id),
@@ -355,10 +363,11 @@ def _classify_github_stack(
             raise CliError(
                 t"PR #{pr.number} is merged, but GitHub stack #{stack.number} still lists "
                 t"it as active.",
-                hint="Wait for GitHub to update the stack, then rerun sync.",
+                hint=t"Wait for GitHub to update the stack, then rerun {ui.cmd(rerun)}.",
             )
         _validate_active_member(
             expected_base=expected_base,
+            head=head,
             merge_mode=merge_mode,
             member=member,
             observation=observation,
@@ -373,7 +382,7 @@ def _classify_github_stack(
         if any(
             item.pr.head.sha == item.candidate.submitted_baseline.commit_id for item in result
         ):
-            raise _unmatched_rewrite_error(stack)
+            raise _unmatched_rewrite_error(stack, head=head)
         return _GithubStackRebase(result)
     return _GithubStackMerge(tuple(history), result, merge_result)
 
@@ -382,6 +391,7 @@ def _historical_member(
     *,
     candidate: TrackedPR,
     change_id: ChangeId,
+    head: str,
     member_state: WithPR,
     observation: RepoFacts,
     selected: LocalCommit | None,
@@ -397,7 +407,7 @@ def _historical_member(
             t"one mutable local copy.",
             hint=divergence_recovery_hint(
                 change_id,
-                retry=t"rerun {ui.cmd('jj-stack sync HEAD')}",
+                retry=t"rerun {ui.cmd(f'jj-stack sync {head}')}",
             ),
         )
     if not isinstance(member_state, Landed):
@@ -406,7 +416,7 @@ def _historical_member(
             t"Cannot remove the saved link for merged {pr_label}: "
             t"{trunk_evidence_reason(member_state)}.",
             hint=t"Check that {ui.revset('trunk()')} selects the branch the PR merged into, "
-            t"then rerun {ui.cmd('jj-stack sync HEAD')}.",
+            t"then rerun {ui.cmd(f'jj-stack sync {head}')}.",
         )
     return OnTrunkChange(
         change_id,
@@ -417,16 +427,17 @@ def _historical_member(
     )
 
 
-def _is_stack_merge(*, stack: GithubStack, by_pr: dict[int, ChangeId]) -> bool:
+def _is_stack_merge(*, stack: GithubStack, by_pr: dict[int, ChangeId], head: str) -> bool:
     merge_mode = any(member.number in by_pr for member in stack.historical_prs)
     if stack.historical_prs and not merge_mode:
-        raise _unmatched_rewrite_error(stack)
+        raise _unmatched_rewrite_error(stack, head=head)
     return merge_mode
 
 
 def _validate_active_member(
     *,
     expected_base: str,
+    head: str,
     merge_mode: bool,
     member: GithubStackPR,
     observation: RepoFacts,
@@ -444,7 +455,7 @@ def _validate_active_member(
             t"mutable local copy.",
             hint=divergence_recovery_hint(
                 change_id,
-                retry=t"rerun {ui.cmd('jj-stack sync HEAD')} for this stack",
+                retry=t"rerun {ui.cmd(f'jj-stack sync {head}')} for this stack",
             ),
         )
     if selected_change.immutable and selected_change.commit_id != member.head.sha:
@@ -452,15 +463,15 @@ def _validate_active_member(
             t"GitHub still lists {pr_label} as active in stack #{stack.number}, but its local "
             t"change {ui.change_id(change_id)} is immutable and differs from GitHub's commit.",
             hint=t"Check the PR with {ui.cmd(f'jj-stack view {short_change_id(change_id)}')}. "
-            t"Once GitHub reports the merge, rerun {ui.cmd('jj-stack sync HEAD')}.",
+            t"Once GitHub reports the merge, rerun {ui.cmd(f'jj-stack sync {head}')}.",
         )
     if pr.head.sha != member.head.sha or observed.remote_target != member.head.sha:
         raise CliError(
             t"{pr_label}, its PR branch, and GitHub stack #{stack.number} point to different "
             t"commits.",
             hint=t"Check the stack with {ui.cmd(f'jj-stack view {short_change_id(change_id)}')}, "
-            t"update it with {ui.cmd('jj-stack submit HEAD')}, then rerun "
-            t"{ui.cmd('jj-stack sync HEAD')}.",
+            t"update it with {ui.cmd(f'jj-stack submit {head}')}, then rerun "
+            t"{ui.cmd(f'jj-stack sync {head}')}.",
         )
     if not merge_mode and pr.base.ref != expected_base:
         raise CliError(
@@ -470,16 +481,16 @@ def _validate_active_member(
         )
 
 
-def _unmatched_rewrite_error(stack: GithubStack) -> CliError:
+def _unmatched_rewrite_error(stack: GithubStack, *, head: str) -> CliError:
     return CliError(
         t"GitHub stack #{stack.number} changed, but jj-stack cannot verify a merge or a rebase "
         t"of the complete stack from the PRs tracked here.",
-        hint=t"Check the stack with {ui.cmd('jj-stack view HEAD')}. Restore or resubmit its PR "
-        t"branches, then rerun {ui.cmd('jj-stack sync HEAD')}.",
+        hint=t"Check the stack with {ui.cmd(f'jj-stack view {head}')}. Restore or resubmit its "
+        t"PR branches, then rerun {ui.cmd(f'jj-stack sync {head}')}.",
     )
 
 
-def _require_no_unpublished_edits(changes: tuple[OnTrunkChange, ...]) -> None:
+def _require_no_unpublished_edits(changes: tuple[OnTrunkChange, ...], *, head: str) -> None:
     for item in changes:
         local, baseline = item.change, item.candidate.submitted_baseline.commit_id
         if local is None or not local.holds_unpublished_edit(baseline):
@@ -488,11 +499,11 @@ def _require_no_unpublished_edits(changes: tuple[OnTrunkChange, ...]) -> None:
         raise CliError(
             t"Cannot remove merged {ui.change_id(item.change_id)}: its local commit changed "
             t"since submit and is not empty. Removing it could discard local work.",
-            hint=t"Run {ui.cmd(f"jj rebase -s {short} -d 'trunk()'")} and rerun "
-            t"{ui.cmd('jj-stack sync HEAD')}. If "
+            hint=t"Run {ui.cmd(f"jj rebase -s {short} -o 'trunk()'")} and rerun "
+            t"{ui.cmd(f'jj-stack sync {head}')}. If "
             t"{ui.cmd(f'jj diff -r {short}')} still shows changes, move anything still needed "
             t"to another change, then drop this copy with {ui.cmd(f'jj abandon {short}')} and "
-            t"rerun {ui.cmd('jj-stack sync HEAD')}, or keep it and forget the selected "
+            t"rerun {ui.cmd(f'jj-stack sync {head}')}, or keep it and forget the selected "
             t"stack's saved links with "
             t"{ui.cmd(f'jj-stack unstack --local {short}')}.",
         )

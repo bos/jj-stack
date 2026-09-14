@@ -231,7 +231,7 @@ class PRMissing(Stop, _State):
 
     @property
     def repair(self) -> Message:
-        return _RELINK
+        return _relink(self.change_id)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -249,7 +249,7 @@ class PRIdentityMismatch(Stop, WithPR):
 
     @property
     def repair(self) -> Message:
-        return _RELINK
+        return _relink(self.change_id)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -270,7 +270,7 @@ class PRAmbiguous(Stop, _State):
 
     @property
     def repair(self) -> Message:
-        return _RELINK
+        return _relink(self.change_id)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -298,7 +298,7 @@ class CompetingOpenPR(Stop, WithPR):
     @property
     def repair(self) -> Message:
         others = ui.join(_pr_label, self.competitors)
-        return t"close or retarget {others}, or {_RELINK}"
+        return t"close or retarget {others}, or {_relink(self.change_id)}"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -319,7 +319,13 @@ class UntrackedPRExists(Stop, _State):
 
     @property
     def repair(self) -> Message:
-        return t"choose the intended PR and link it with {ui.cmd('jj-stack relink PR CHANGE')}"
+        short = short_change_id(self.change_id)
+        if len(self.open_prs_on_branch) == 1:
+            number = self.open_prs_on_branch[0].number
+            return t"link it with {ui.cmd(f'jj-stack relink {number} {short}')}"
+        return (
+            t"choose the intended PR and link it with {ui.cmd(f'jj-stack relink <pr> {short}')}"
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -440,10 +446,13 @@ type ChangeState = (
     TrackedPRState | Unpublished | NotInspected | LookupFailed | UntrackedPRExists | BranchClaimed
 )
 
-_RELINK: Message = (
-    t"check the change with {ui.cmd('jj-stack view CHANGE')}, then link the intended pull "
-    t"request with {ui.cmd('jj-stack relink PR CHANGE')}"
-)
+
+def _relink(change_id: ChangeId) -> Message:
+    short = short_change_id(change_id)
+    return (
+        t"check the change with {ui.cmd(f'jj-stack view {short}')}, then link the intended pull "
+        t"request with {ui.cmd(f'jj-stack relink <pr> {short}')}"
+    )
 
 
 def _pr_label(pr: GithubPR) -> Message:

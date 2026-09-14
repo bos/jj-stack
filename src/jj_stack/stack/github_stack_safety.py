@@ -95,7 +95,7 @@ async def dissolve_github_stack(
             raise CliError(
                 t"GitHub could not remove any pull requests from stack #{stack.number}.",
                 hint=t"Resolve its locked pull requests, then retry "
-                t"{ui.cmd(f'jj-stack unstack --stack {stack.number}')}",
+                t"{ui.cmd(f'jj-stack unstack --stack {stack.number}')}.",
             ) from None
         raise CliError(t"Could not remove GitHub stack #{stack.number}.") from error
     if remaining is not None and remaining.active_pr_numbers:

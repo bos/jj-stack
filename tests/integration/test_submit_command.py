@@ -1978,7 +1978,7 @@ def test_submit_requires_relink_after_state_loss(
 
     assert run_main(repo, config_path, "submit", change_id) == 1
     rejected = capsys.readouterr()
-    assert "jj-stack relink PR CHANGE" in rejected.err
+    assert f"jj-stack relink {pr_number} {change_id[:8]}" in " ".join(rejected.err.split())
 
     exit_code = run_main(
         repo, config_path, "relink", "--replace-remote", str(pr_number), change_id

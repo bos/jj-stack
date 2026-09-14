@@ -46,15 +46,17 @@ def resolve_linked_change_for_pr(
             hint=(
                 t"Fetch and link the PR stack with "
                 t"{ui.cmd(f'jj-stack checkout --pull-request {pr_number}')}, or link an "
-                t"existing local change with {ui.cmd(f'jj-stack relink {pr_number} CHANGE')}."
+                t"existing local change with "
+                t"{ui.cmd(f'jj-stack relink {pr_number} <change-id>')}."
             ),
         )
     if len(matching_change_ids) > 1:
         raise AmbiguousSelectionError(
             t"{pr_label} is linked to multiple local changes.",
             hint=t"Run {ui.cmd('jj-stack list')} to find the conflicting saved links. Forget "
-            t"the incorrect stack's links with {ui.cmd('jj-stack unstack --local CHANGE')}, "
-            t"then link the intended change with {ui.cmd('jj-stack relink PR CHANGE')}.",
+            t"the incorrect stack's links with {ui.cmd('jj-stack unstack --local <change-id>')}, "
+            t"then link the intended change with "
+            t"{ui.cmd(f'jj-stack relink {pr_number} <change-id>')}.",
         )
 
     change_id = matching_change_ids[0]

@@ -28,10 +28,12 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands.cleanup.actions import (
+    UNTRUSTED_PR_STATES,
     CleanupAction,
     CleanupResult,
     apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
+    blocked_pr_action,
     check_tracked_pr,
     close_pr_on_trunk,
     github_stack_cleanup_blockers,
@@ -555,8 +557,8 @@ def _preflight_tracked_pr_cleanup(
     preview_local_removals: frozenset[ChangeId],
 ) -> CleanupPreflight:
     state = check_tracked_pr(change_id=change_id, observation=initial_observation)
-    if isinstance(state, CleanupAction):
-        return state
+    if isinstance(state, UNTRUSTED_PR_STATES):
+        return blocked_pr_action(state)
     local_commits = state.local
     pr = state.pr
     if pr.state == "open" and not prepared_cleanup.close_open_prs:

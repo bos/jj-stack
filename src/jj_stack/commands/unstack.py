@@ -19,16 +19,17 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands.cleanup.actions import CleanupAction, check_tracked_pr
+from jj_stack.commands.cleanup.actions import UNTRUSTED_PR_STATES, check_tracked_pr
 from jj_stack.errors import CliError, UsageError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.error_messages import require_github_target
 from jj_stack.github.resolution import resolve_github_target
-from jj_stack.identifiers import ChangeId
+from jj_stack.identifiers import ChangeId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalStack
 from jj_stack.models.tracking import TrackingState
+from jj_stack.stack.change_state import stop_error
 from jj_stack.stack.github_stack_safety import (
     dissolve_github_stack,
     selected_github_stack,
@@ -39,7 +40,6 @@ from jj_stack.stack.selection import (
     resolve_linked_change_for_pr,
 )
 from jj_stack.state.operation_lock import operation_lock
-from jj_stack.ui import plain_text
 
 HELP = "Remove a GitHub stack without closing its pull requests"
 
@@ -227,10 +227,11 @@ async def _check_selected_prs(
     except GithubClientError as error:
         raise CliError("Could not inspect the selected pull requests.") from error
 
+    rerun = f"jj-stack unstack {short_change_id(change_ids[-1])}"
     for change_id in change_ids:
-        state_or_blocker = check_tracked_pr(change_id=change_id, observation=observation)
-        if isinstance(state_or_blocker, CleanupAction):
-            raise CliError(plain_text(state_or_blocker.body))
+        pr_state = check_tracked_pr(change_id=change_id, observation=observation)
+        if isinstance(pr_state, UNTRUSTED_PR_STATES):
+            raise stop_error(pr_state, rerun=rerun)
 
 
 def _run_local_unstack(

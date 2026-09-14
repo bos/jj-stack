@@ -501,7 +501,7 @@ def _prompt_picker_choice(
     if not choices:
         raise CliError(
             "No active local or GitHub stacks to pick from.",
-            hint=t"Use {ui.cmd('jj-stack checkout --pull-request PR')} to link a pull request "
+            hint=t"Use {ui.cmd('jj-stack checkout --pull-request <pr>')} to link a pull request "
             t"directly.",
         )
     console.output("Available stacks:")

@@ -643,7 +643,7 @@ def test_sync_preserves_a_conflict_resolution_that_restores_the_submitted_tree(
     assert blocked == 1
     assert "could discard local work" in captured.err
     error = " ".join(captured.err.split())
-    assert f"jj rebase -s {submitted.change_id[:8]} -d 'trunk()'" in error, error
+    assert f"jj rebase -s {submitted.change_id[:8]} -o 'trunk()'" in error, error
     assert f"jj diff -r {submitted.change_id[:8]}" in error, error
     assert JjClient(repo).resolve_commit(submitted.change_id).commit_id == resolved.commit_id
     assert state_store.load() == state_before

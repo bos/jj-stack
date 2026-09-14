@@ -163,8 +163,8 @@ class TrackingStore:
             message,
             hint=(
                 t"Move the file aside with {ui.cmd(move_command)}, then relink pull requests "
-                t"with {ui.cmd('jj-stack checkout --pull-request PR')} or "
-                t"{ui.cmd('jj-stack relink PR CHANGE')}."
+                t"with {ui.cmd('jj-stack checkout --pull-request <pr>')} or "
+                t"{ui.cmd('jj-stack relink <pr> <change-id>')}."
             ),
         )
 

@@ -46,17 +46,26 @@ class CleanupResult:
     actions: tuple[CleanupAction, ...]
 
 
-def check_tracked_pr(*, change_id: ChangeId, observation: RepoFacts) -> WithPR | CleanupAction:
-    """Return the classified saved PR, or the reason its identity cannot be trusted."""
+type UntrustedPR = PRAmbiguous | PRIdentityMismatch | PRMissing
 
-    state = classify(observation.prs[change_id])
-    if isinstance(state, (PRMissing, PRAmbiguous, PRIdentityMismatch)):
-        return CleanupAction(
-            kind="pull request",
-            body=t"{state.reason}; {state.repair}",
-            status="blocked",
-        )
-    return state
+# The saved link no longer identifies one open pull request, so nothing may act on it.
+UNTRUSTED_PR_STATES = (PRAmbiguous, PRIdentityMismatch, PRMissing)
+
+
+def check_tracked_pr(*, change_id: ChangeId, observation: RepoFacts) -> WithPR | UntrustedPR:
+    """Return the classified saved PR; an `UntrustedPR` says its identity cannot be trusted."""
+
+    return classify(observation.prs[change_id])
+
+
+def blocked_pr_action(state: UntrustedPR) -> CleanupAction:
+    """Report a saved PR that cleanup must leave alone, with its shared reason and repair."""
+
+    return CleanupAction(
+        kind="pull request",
+        body=t"{state.reason}; {state.repair}",
+        status="blocked",
+    )
 
 
 async def close_pr_on_trunk(
