@@ -52,5 +52,9 @@ both from the local `jj` history. To change the base or order, make that change 
 submit again. To remove the GitHub stack while leaving the PRs open, see
 [separate a stack](close-or-separate.md#remove-a-github-stack).
 
+Do not enable auto-merge, shown as **Merge when ready** with a merge queue, on a pull request
+you will stack more changes on. GitHub refuses to add such a PR to a stack, so the next submit
+stops until you disable it.
+
 For reviewer and repo configuration guidance, see
 [review and merge a stack on GitHub](review-a-stack.md).

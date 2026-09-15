@@ -90,6 +90,29 @@ def _assert_stack_prs_match_dag(
         assert pr.base_ref == expected_base
 
 
+def test_submit_names_the_auto_merge_pr_that_github_refuses_to_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    # Merge when ready was clicked on the single PR before a second change was stacked on it.
+    fake_repo.prs[1].auto_merge_enabled = True
+    commit_file(repo, "feature 2", "feature-2.txt")
+    head = selected_stack(repo).head.change_id
+
+    assert run_main(repo, config_path, "submit", head) == EXIT_GITHUB
+    captured = capsys.readouterr()
+    assert "Pull request #1 has auto-merge enabled" in captured.err
+    assert "Disable auto-merge on that pull request on GitHub" in captured.err
+    assert fake_repo.github_stacks == {}
+
+    fake_repo.prs[1].auto_merge_enabled = False
+    assert run_main(repo, config_path, "submit", head) == 0
+    assert tuple(fake_repo.github_stacks.values()) == ((1, 2),)
+
+
 def test_submit_uses_configured_namespace_and_adds_stack_only_when_needed(
     tmp_path: Path,
     monkeypatch,

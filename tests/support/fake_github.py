@@ -1567,9 +1567,13 @@ def _validate_stack_members(
         raise HTTPException(status_code=422, detail="Pull request does not exist.")
     resolved = {number: pr for number, pr in prs.items() if pr is not None}
     repo.refresh_prs(resolved.values())
+    for number in admitted_members:
+        if resolved[number].auto_merge_enabled:
+            raise HTTPException(
+                status_code=422, detail=f"Pull request #{number} has auto-merge enabled"
+            )
     if any(
-        (pr := resolved[number]).state != "open" or pr.auto_merge_enabled or pr.is_queued
-        for number in admitted_members
+        (pr := resolved[number]).state != "open" or pr.is_queued for number in admitted_members
     ):
         raise HTTPException(status_code=422, detail="Pull request is not admissible.")
     if any(

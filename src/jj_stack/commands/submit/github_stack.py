@@ -124,7 +124,14 @@ async def apply_github_stack_plan(
         if plan.creates_stack(len(pr_numbers)):
             return await github_client.create_stack(pr_numbers=pr_numbers)
     except GithubClientError as error:
-        raise CliError("Could not update the GitHub stack") from error
+        # GitHub names the pull request in its 422; retrying cannot clear this one.
+        hint = (
+            "GitHub does not add a pull request with auto-merge enabled to a stack. Disable "
+            "auto-merge on that pull request on GitHub first."
+            if "auto-merge" in error.github_message().casefold()
+            else None
+        )
+        raise CliError("Could not update the GitHub stack", hint=hint) from error
     return None
 
 
