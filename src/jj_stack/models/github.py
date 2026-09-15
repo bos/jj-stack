@@ -263,6 +263,8 @@ def _normalize_graphql_review_decision(value: object) -> str | None:
         return "approved"
     if normalized == "CHANGES_REQUESTED":
         return "changes_requested"
+    if normalized == "REVIEW_REQUIRED":
+        return "review_required"
     return None
 
 

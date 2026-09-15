@@ -60,7 +60,11 @@ def test_status_shows_merge_blocked_despite_approval_and_passing_checks(
     assert change["status"] == "approved"
 
     assert run_main(repo, config_path, "view") == 0
-    assert_output_contains(capsys.readouterr().out, "approved, checks passed, merge blocked")
+    assert_output_contains(
+        capsys.readouterr().out,
+        "approved, checks passed, merge blocked",
+        "jj-stack view --verbose",
+    )
 
     run_command(["jj", "describe", "-r", change_id, "-m", "feature \x1bc"], repo)
     assert run_main(repo, config_path, "list", "--color=always") == 0

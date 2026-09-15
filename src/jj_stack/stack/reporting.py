@@ -42,6 +42,7 @@ type ReportStatus = Literal[
     "draft",
     "approved",
     "changes_requested",
+    "review_required",
     "merged",
     "closed",
     "missing",
@@ -160,6 +161,8 @@ def _pr_status(pr: GithubPR) -> ReportStatus:
         return "approved"
     if pr.review_decision == "changes_requested":
         return "changes_requested"
+    if pr.review_decision == "review_required":
+        return "review_required"
     return "open"
 
 
@@ -171,6 +174,7 @@ _STATUS_LABELS: dict[ReportStatus, tuple[str, str, str | None]] = {
     "draft": ("draft", "drafts", "hint"),
     "approved": ("approved", "approved", "hint"),
     "changes_requested": ("changes requested", "changes requested", "warning"),
+    "review_required": ("review required", "need review", "hint"),
     "merged": ("sync needed", "merged, sync needed", "warning"),
     "closed": ("closed", "closed", "warning"),
     "missing": ("missing PR", "missing PRs", "warning"),

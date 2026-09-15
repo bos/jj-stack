@@ -421,7 +421,7 @@ def build_parser() -> ArgumentParser:
         "-v",
         "--verbose",
         action="store_true",
-        help="Show every change instead of collapsing the middle of a long stack",
+        help="Show every change, plus unresolved review threads and check results with links",
     )
     list_parser = _add_command_parser(
         subcommands,

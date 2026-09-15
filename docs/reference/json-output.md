@@ -62,8 +62,9 @@ When jj-stack has only a saved PR number, `pr` contains `number` alone. This is 
 `submitted` changes and orphan rows. `url` requires a live GitHub lookup; `checks` is included
 only when GitHub reports a check result.
 
-`checks` is `passed`, `failed`, or `pending`; `pending` includes checks that GitHub expects but
-has not started.
+`checks` is `passed`, `failed`, or `pending`, combining the check results GitHub has received;
+`pending` includes checks that GitHub expects but has not started. Passing does not mean every
+required check has run: a required check that has not reported yet is absent.
 
 `merge_state_status`, when present, is the merge state GitHub reports for the PR, such as
 `BLOCKED`, `DIRTY`, `BEHIND`, or `CLEAN`. It is independent of reviews and checks, and scripts
@@ -78,6 +79,7 @@ Known change statuses are:
 - `queued`: open PR waiting in GitHub's merge queue
 - `draft`: open draft PR
 - `approved`: open PR whose latest review decision is approved
+- `review_required`: open PR for which GitHub still requires a review
 - `changes_requested`: open PR with requested changes
 - `merged`: PR has merged or its submitted work has reached trunk; local cleanup may be needed
 - `closed`: PR is closed without being merged
@@ -122,6 +124,25 @@ the bottom, matching the text display. `head_change_id` identifies the head, whi
 
 `selector` is present only when the stack came from an explicit selector such as a
 revset argument or `--pull-request`.
+
+### Verbose merge details
+
+`view --verbose --json` adds `pr.merge_details` for inspected open PRs. Drafts, queued PRs,
+divergent changes, and PRs with lookup or saved-link problems omit it. The object contains:
+
+- `unresolved_threads`: all unresolved review threads, including outdated ones. Each has `path`,
+  nullable `line`, `is_outdated`, the first comment's plain-text `body`, and nullable `url`.
+- `checks`: all check runs and commit statuses GitHub has received. Each has `name`, `state`,
+  and nullable `url`. `state` is GitHub's check conclusion, or its current status when no
+  conclusion exists.
+
+Both arrays include all available pages. Unlike the text display, JSON includes successful
+checks and does not shorten comment bodies. These results do not identify which repo rules are
+required or establish merge readiness.
+
+If details cannot be read, or the PR head changes during inspection, the PR instead contains a
+plain-text `merge_details_error`. The basic summary remains available and the command exits 10.
+Rerun `jj-stack view --verbose --json` to refresh the report.
 
 ## `list --json`
 
@@ -190,6 +211,7 @@ current stack. It has its own `change_id`, `branch`, and optional `pr`, without 
 when `@` is an empty change above it. Other stack rows omit the field. To locate `@` itself, look
 for `current: true` on an individual change.
 
-A stack row's `status`, such as `1 approved, open, checks pending`, is a human-readable summary.
-Its wording can change. Scripts should inspect the individual changes' documented `status`
-values, even for a stack with only one change. An orphan row always uses `"status": "orphan"`.
+A stack row's `status`, such as `1 approved, open, checks pending`, is a human-readable
+summary. Its wording can change. Scripts should inspect the individual changes' documented
+`status` values, even for a stack with only one change. An orphan row always uses
+`"status": "orphan"`.

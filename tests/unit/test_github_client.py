@@ -11,6 +11,7 @@ import pytest
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import CommitId
+from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead
 
 
 def _github_client(handler) -> GithubClient:
@@ -24,6 +25,93 @@ def _github_client(handler) -> GithubClient:
             repo="stacked-prs",
         ),
     )
+
+
+@pytest.mark.parametrize("head_moved", [False, True])
+def test_merge_details_paginate_without_mixing_pr_heads(head_moved: bool) -> None:
+    pr = GithubPR(
+        base=GithubBranchRef(ref="main"),
+        head=GithubPRHead(ref="feature", sha="a" * 40),
+        html_url="https://github.test/octo-org/stacked-prs/pull/1",
+        node_id="PR_1",
+        number=1,
+        state="open",
+        title="feature",
+    )
+    resolved = {"isResolved": True, "isOutdated": False, "path": "a.py", "line": 1}
+    unresolved = {
+        **resolved,
+        "isResolved": False,
+        "isOutdated": True,
+        "comments": {"nodes": [{"bodyText": "Please fix this", "url": "https://thread"}]},
+    }
+
+    def connection(nodes, cursor=None):
+        return {
+            "nodes": nodes,
+            "pageInfo": {"endCursor": cursor, "hasNextPage": cursor is not None},
+        }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        variables = json.loads(request.content)["variables"]
+        if "checks_1" not in variables:
+            page = {
+                "headRefOid": pr.head.sha,
+                "reviewThreads": connection([resolved] * 100, "threads-next"),
+                "statusCheckRollup": {
+                    "contexts": connection(
+                        [{"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"}] * 100,
+                        "checks-next",
+                    )
+                },
+            }
+        elif "threads_1" in variables:
+            assert variables["threads_1"] == "threads-next"
+            assert variables["checks_1"] == "checks-next"
+            page = {
+                "headRefOid": "b" * 40 if head_moved else pr.head.sha,
+                "reviewThreads": connection([unresolved]),
+                "statusCheckRollup": {
+                    "contexts": connection(
+                        [{"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}] * 100,
+                        "checks-last",
+                    )
+                },
+            }
+        else:
+            assert variables["checks_1"] == "checks-last"
+            page = {
+                "headRefOid": pr.head.sha,
+                "statusCheckRollup": {
+                    "contexts": connection(
+                        [
+                            {"name": "lint", "status": "COMPLETED", "conclusion": "FAILURE"},
+                            {"name": "deploy", "state": "PENDING", "url": "https://check"},
+                        ]
+                    )
+                },
+            }
+        return httpx2.Response(200, json={"data": {"repository": {"pr_1": page}}})
+
+    async def run_test():
+        async with _github_client(handler) as client:
+            return await client.get_pr_merge_details(prs=(pr,))
+
+    details = asyncio.run(run_test())[1]
+    if head_moved:
+        assert details is None
+    else:
+        assert details is not None
+        assert len(details.unresolved_threads) == 1
+        thread = details.unresolved_threads[0]
+        assert thread.is_outdated
+        assert (thread.body, thread.url) == ("Please fix this", "https://thread")
+        assert len(details.checks) == 202
+        assert all(check.state == "SUCCESS" for check in details.checks[:200])
+        assert [(check.name, check.state, check.url) for check in details.checks[-2:]] == [
+            ("lint", "FAILURE", None),
+            ("deploy", "PENDING", "https://check"),
+        ]
 
 
 def test_github_client_retries_429_responses_with_retry_after() -> None:

@@ -1,7 +1,8 @@
 """Compare the local and GitHub state of the selected `jj` stacks.
 
 Show submitted and unsubmitted changes with their current PR state. Long stacks are summarized;
-use `--verbose` to show every change.
+use `--verbose` to show every change, plus unresolved review threads and failed or pending
+checks with links.
 
 PR state comes from GitHub and stack order comes from local history. This command does not
 fetch. Run `jj git fetch` first if you need to update local `trunk()`. Pass several revsets or
@@ -34,6 +35,12 @@ import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._json_status import stack_change_json
+from jj_stack.commands.view_details import (
+    MergeDetails,
+    merge_details_hint,
+    observe_merge_details,
+    render_merge_details,
+)
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, UnsupportedStackError, error_message
 from jj_stack.formatting import (
     CommitRenderClient,
@@ -130,7 +137,21 @@ def _run_status(
                 if isinstance(prepared, PreparedLocalStack)
             ),
         )
-    exit_code = 0
+    results = {
+        index: build_status_result(prepared=prepared, pr_lookups=pr_lookups)
+        for index, (_, prepared, _) in enumerate(selections)
+        if isinstance(prepared, PreparedLocalStack)
+    }
+    details: MergeDetails = {}
+    if verbose:
+        with console.spinner(description="Inspecting review threads and checks"):
+            details = observe_merge_details(context, tuple(results.values()))
+    details_failed = any(isinstance(value, str) for value in details.values())
+    exit_code = EXIT_INCOMPLETE if details_failed else 0
+    if as_json:
+        for number, evidence in details.items():
+            if isinstance(evidence, str):
+                console.warning(t"Could not inspect merge details for PR #{number}: {evidence}")
     multi_selector = len(selectors) > 1
     json_stacks: list[dict[str, object]] = []
     for index, (selector, prepared_status, notes) in enumerate(selections):
@@ -149,7 +170,7 @@ def _run_status(
 
         for warning in _local_history_warnings(prepared_status):
             console.warning(warning)
-        result = build_status_result(prepared=prepared_status, pr_lookups=pr_lookups)
+        result = results[index]
         exit_code = max(exit_code, EXIT_INCOMPLETE if result.incomplete else 0)
         if as_json:
             _warn_about_unavailable_github(result)
@@ -158,6 +179,7 @@ def _run_status(
                     prepared_status=prepared_status,
                     result=result,
                     selector=selector,
+                    details=details,
                 )
             )
             continue
@@ -169,6 +191,10 @@ def _run_status(
             result=result,
             verbose=verbose,
         )
+        if verbose:
+            _emit_lines(render_merge_details(result, details))
+        elif (hint := merge_details_hint(result)) is not None:
+            console.note(hint)
     if as_json:
         console.machine_output(json.dumps({"stacks": json_stacks}, indent=2))
     return exit_code
@@ -328,6 +354,7 @@ def _json_status_result(
     prepared_status: PreparedLocalStack,
     result: StatusResult,
     selector: ViewSelector | None,
+    details: MergeDetails,
 ) -> dict[str, object]:
     stack_model = prepared_status.stack
     current_change_ids = {
@@ -339,6 +366,7 @@ def _json_status_result(
             stack_change_json(
                 change,
                 current=change.change_id in current_change_ids,
+                merge_details=details.get(change.pr.number) if change.pr is not None else None,
             )
             for change in result.changes
         ],

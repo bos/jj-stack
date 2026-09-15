@@ -9,6 +9,7 @@ import jj_stack.commands.view as view_module
 import jj_stack.console as console_module
 import jj_stack.ui as ui_module
 from jj_stack.commands._json_status import stack_change_json
+from jj_stack.commands.view_details import merge_details_hint
 from jj_stack.identifiers import ChangeId
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, PRState
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
@@ -99,6 +100,24 @@ def _render_lines(*lines: ui_module.Renderable) -> tuple[str, ...]:
         for line in lines:
             console_module.output(line)
     return tuple(stdout.getvalue().splitlines())
+
+
+def test_reporting_preserves_required_review_and_offers_details() -> None:
+    change = _status_change(
+        change_id="abcdefghijkl",
+        pr_identity=make_pr_identity(head_ref="jj-stack/feature", pr_number=5),
+        pr=_pr(number=5, state="open").model_copy(update={"review_decision": "review_required"}),
+    )
+    assert stack_change_json(change)["status"] == "review_required"
+    summary = ui_module.plain_text(
+        list_module._status_fragments(
+            github_error=None, remote_error=None, states=(change.state,)
+        )
+    )
+    assert "review required" in summary
+    hint = merge_details_hint(_status_result(changes=(change,)))
+    assert hint is not None
+    assert "jj-stack view --verbose abcdefgh" in ui_module.plain_text(hint)
 
 
 def test_reporting_advises_sync_for_merged_divergent_copies() -> None:

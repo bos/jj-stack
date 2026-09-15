@@ -677,7 +677,9 @@ Both report whether an open PR has a merge-queue entry; position and intermediat
 are not modeled.
 
 Both report GitHub's merge state for an open PR alongside its reviews and checks. GitHub computes
-that state lazily, so an unknown state is not reported or polled.
+that state lazily, so an unknown state is not reported or polled. `view --verbose` also reads
+unresolved review threads and check results for open, non-draft, non-queued PRs with no reported
+problem, discarding a PR's details if its head changes during the lookup.
 
 Neither command guesses. A change with no saved PR identity is reported as not submitted,
 even if a PR happens to use the branch name that change would generate. A saved PR is always
@@ -692,10 +694,10 @@ Empty, undescribed, conflicted, and merge changes produce warnings, but do not b
 a report incomplete. A merge warning states that only the first-parent path is shown.
 
 `view` and `list` share the rule for incomplete reports: an unmerged divergent change, ambiguous
-PR, failed PR lookup, broken saved link, or unobserved saved PR state makes the report incomplete.
-A per-change lookup failure affects only its row; a failure before rows can be built returns its
-own error code. When several local changes claim one branch, `list` warns and skips live
-inspection for that branch. These incomplete reports exit 10.
+PR, failed PR or detail lookup, broken saved link, or unobserved saved PR state makes the report
+incomplete. A per-change lookup failure affects only its row; a failure before rows can be built
+returns its own error code. When several local changes claim one branch, `list` warns and skips
+live inspection for that branch. These incomplete reports exit 10.
 
 `view` and `submit` render stack rows through the user's `jj log` formatting. `--json`
 follows [`docs/json-output.schema.json`](../json-output.schema.json) and exposes no cache state,

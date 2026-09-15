@@ -37,8 +37,9 @@ def test_graphql_pr_statuses_normalize_known_states_and_drop_unknown() -> None:
     errored = GithubPR.model_validate(_graphql_pr_payload(None, check_rollup_state="ERROR"))
     pending = GithubPR.model_validate(_graphql_pr_payload(None, check_rollup_state="PENDING"))
     expected = GithubPR.model_validate(_graphql_pr_payload(None, check_rollup_state="EXPECTED"))
+    required = GithubPR.model_validate(_graphql_pr_payload("REVIEW_REQUIRED"))
     unknown = GithubPR.model_validate(
-        _graphql_pr_payload("REVIEW_REQUIRED", check_rollup_state="FUTURE_STATE")
+        _graphql_pr_payload("FUTURE_STATE", check_rollup_state="FUTURE_STATE")
     )
 
     assert approved.review_decision == "approved"
@@ -49,6 +50,7 @@ def test_graphql_pr_statuses_normalize_known_states_and_drop_unknown() -> None:
     assert errored.check_rollup_status == "failed"
     assert pending.check_rollup_status == "pending"
     assert expected.check_rollup_status == "pending"
+    assert required.review_decision == "review_required"
     assert unknown.review_decision is None
     assert unknown.check_rollup_status is None
 

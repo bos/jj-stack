@@ -65,6 +65,7 @@
         "draft",
         "approved",
         "changes_requested",
+        "review_required",
         "merged",
         "closed",
         "missing",
@@ -149,6 +150,7 @@
       "properties": {
         "checks": {
           "type": "string",
+          "description": "Combined result of the checks GitHub has received; passing does not mean every required check has run.",
           "enum": [
             "passed",
             "failed",
@@ -159,6 +161,12 @@
           "type": "string",
           "description": "GitHub's reported mergeStateStatus; independent of reviews and checks."
         },
+        "merge_details": {
+          "$ref": "#/$defs/mergeDetails"
+        },
+        "merge_details_error": {
+          "type": "string"
+        },
         "number": {
           "type": "integer",
           "minimum": 1
@@ -166,6 +174,81 @@
         "url": {
           "type": "string",
           "format": "uri"
+        }
+      }
+    },
+    "mergeDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unresolved_threads",
+        "checks"
+      ],
+      "properties": {
+        "unresolved_threads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "is_outdated",
+              "path",
+              "line",
+              "body",
+              "url"
+            ],
+            "properties": {
+              "is_outdated": {
+                "type": "boolean"
+              },
+              "path": {
+                "type": "string"
+              },
+              "line": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "body": {
+                "type": "string"
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uri"
+              }
+            }
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "state",
+              "url"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uri"
+              }
+            }
+          }
         }
       }
     },

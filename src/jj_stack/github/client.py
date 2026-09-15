@@ -29,6 +29,7 @@ from jj_stack.models.github import (
     GithubStackMerge,
     GithubStackMergeSubmission,
 )
+from jj_stack.models.github_details import GithubCheck, GithubPRMergeDetails, GithubReviewThread
 
 logger = logging.getLogger(__name__)
 GITHUB_API_BASE_URL = "https://api.github.com"
@@ -155,6 +156,29 @@ class _GraphqlPageInfo(BaseModel):
 
     end_cursor: str | None = Field(default=None, alias="endCursor")
     has_next_page: bool = Field(default=False, alias="hasNextPage")
+
+    @property
+    def next_cursor(self) -> str | None:
+        if self.has_next_page and not self.end_cursor:
+            raise GithubClientError("GitHub reported another page without a pagination cursor.")
+        return self.end_cursor if self.has_next_page else None
+
+
+class _GraphqlConnection[NodeT](BaseModel):
+    nodes: tuple[NodeT | None, ...]
+    page_info: _GraphqlPageInfo = Field(alias="pageInfo")
+
+
+class _GraphqlCheckDetails(BaseModel):
+    contexts: _GraphqlConnection[GithubCheck]
+
+
+class _GraphqlPRMergeDetails(BaseModel):
+    head: CommitId = Field(alias="headRefOid")
+    threads: _GraphqlConnection[GithubReviewThread] | None = Field(
+        default=None, alias="reviewThreads"
+    )
+    checks: _GraphqlCheckDetails | None = Field(default=None, alias="statusCheckRollup")
 
 
 class _GraphqlGitObject(BaseModel):
@@ -617,6 +641,57 @@ class GithubClient:
                         revisions_by_pr[number] = _revisions_from_graphql(history)
                         del pending_revisions[number]
         return comments_by_marker, revisions_by_pr
+
+    async def get_pr_merge_details(
+        self, *, prs: Sequence[GithubPR]
+    ) -> dict[int, GithubPRMergeDetails | None]:
+        """Batch and paginate review threads and check results at the observed PR heads."""
+
+        results: dict[int, GithubPRMergeDetails | None] = {}
+        for chunk in batched(prs, _GRAPHQL_PR_BATCH_SIZE, strict=False):
+            heads = {pr.number: pr.head.sha for pr in chunk}
+            pending_threads: dict[int, str | None] = dict.fromkeys(heads)
+            pending_checks: dict[int, str | None] = dict.fromkeys(heads)
+            while pending_threads or pending_checks:
+                numbers = sorted(pending_threads.keys() | pending_checks.keys())
+                query, variables = _pr_merge_details_query(pending_threads, pending_checks)
+                payload = await self._graphql_query(
+                    query,
+                    response_name="merge details lookup",
+                    tolerate_missing_selections=True,
+                    variables={**self._repo_variables, **variables},
+                )
+                repo = _graphql_repo_payload(payload, response_name="merge details lookup")
+                for number in numbers:
+                    raw = repo.get(f"pr_{number}")
+                    page = (
+                        _validate_model(
+                            raw,
+                            model=_GraphqlPRMergeDetails,
+                            error_context=f"GitHub returned invalid merge details for #{number}",
+                        )
+                        if raw is not None
+                        else None
+                    )
+                    if page is None or page.head != heads[number]:
+                        results[number] = None
+                        pending_threads.pop(number, None)
+                        pending_checks.pop(number, None)
+                        continue
+                    prior = results.get(number) or GithubPRMergeDetails()
+                    threads = _consume_merge_details_page(number, page.threads, pending_threads)
+                    checks = _consume_merge_details_page(
+                        number,
+                        page.checks.contexts if page.checks else None,
+                        pending_checks,
+                        absent_ok=True,
+                    )
+                    results[number] = GithubPRMergeDetails(
+                        unresolved_threads=prior.unresolved_threads
+                        + tuple(thread for thread in threads if not thread.is_resolved),
+                        checks=prior.checks + checks,
+                    )
+        return results
 
     async def create_issue_comment(
         self,
@@ -1243,6 +1318,74 @@ def _prs_by_ref_query(
                 selections="\n\n".join(selections),
                 string_variables=tuple(variables),
             )
+        ),
+        variables,
+    )
+
+
+def _consume_merge_details_page[NodeT](
+    number: int,
+    page: _GraphqlConnection[NodeT] | None,
+    pending: dict[int, str | None],
+    *,
+    absent_ok: bool = False,
+) -> tuple[NodeT, ...]:
+    if number not in pending:
+        return ()
+    if page is None and not absent_ok:
+        raise GithubClientError(f"GitHub omitted review threads for PR #{number}.")
+    cursor = page.page_info.next_cursor if page is not None else None
+    if cursor is None:
+        del pending[number]
+    else:
+        pending[number] = cursor
+    return tuple(node for node in page.nodes if node is not None) if page else ()
+
+
+def _pr_merge_details_query(
+    threads_cursors: dict[int, str | None], checks_cursors: dict[int, str | None]
+) -> tuple[str, dict[str, str]]:
+    variables: dict[str, str] = {}
+    selections: list[str] = []
+    for number in sorted(threads_cursors.keys() | checks_cursors.keys()):
+        fields = ["headRefOid"]
+        for kind, cursors in (("threads", threads_cursors), ("checks", checks_cursors)):
+            if number not in cursors:
+                continue
+            after = ""
+            if (cursor := cursors[number]) is not None:
+                name = f"{kind}_{number}"
+                variables[name] = cursor
+                after = f", after: ${name}"
+            page_info = "pageInfo { endCursor hasNextPage }"
+            if kind == "threads":
+                fields.append(
+                    f"""reviewThreads(first: {PR_PAGE_SIZE}{after}) {{
+                      nodes {{
+                        isResolved isOutdated path line
+                        comments(first: 1) {{ nodes {{ bodyText url }} }}
+                      }}
+                      {page_info}
+                    }}"""
+                )
+            else:
+                fields.append(
+                    f"""statusCheckRollup {{
+                      contexts(first: {PR_PAGE_SIZE}{after}) {{
+                        nodes {{
+                          ... on CheckRun {{ name status conclusion url: detailsUrl }}
+                          ... on StatusContext {{ name: context state url: targetUrl }}
+                        }}
+                        {page_info}
+                      }}
+                    }}"""
+                )
+        selections.append(f"pr_{number}: pullRequest(number: {number}) {{ {' '.join(fields)} }}")
+    return (
+        _repo_graphql_query(
+            operation_name="PullRequestMergeDetails",
+            selections="\n".join(selections),
+            string_variables=tuple(variables),
         ),
         variables,
     )

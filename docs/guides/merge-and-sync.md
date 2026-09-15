@@ -28,10 +28,21 @@ jj-stack merge <head-change-id>
 that their PR branches and pull requests have not moved unexpectedly. GitHub decides whether
 checks, approvals, conflicts, and repo rules allow the merge.
 
-`jj-stack list` and `jj-stack view` show approvals, checks, and GitHub's merge-state warnings
-separately. A PR can be approved with passing checks and still show `merge blocked`, for example
-when review conversations remain unresolved. Open the PR on GitHub to see the reason. Even
-without a warning, approval and passing checks do not guarantee that GitHub will accept a merge.
+`jj-stack list` and `jj-stack view` show review decisions, checks, and GitHub's merge-state
+warnings separately. `review required` means GitHub still requires a review. A PR can be
+approved with passing checks and still show `merge blocked`, for example when review
+conversations remain unresolved.
+
+To inspect unresolved review threads and failed or pending checks, including links, run:
+
+```console
+jj-stack view --verbose <head-change-id>
+```
+
+Verbose output includes thread excerpts, even for outdated threads. If GitHub reports a blocker
+without exposing a specific reason, the output says so and links to the PR. Checks are the
+results GitHub has received; a required check that has not reported yet is absent. Even without
+a warning, approval and passing checks do not guarantee that GitHub will accept a merge.
 
 ## Choose a merge method
 

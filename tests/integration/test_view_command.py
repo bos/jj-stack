@@ -6,6 +6,7 @@ from pathlib import Path
 from jj_stack.errors import EXIT_AMBIGUOUS, EXIT_FAILURE, EXIT_INCOMPLETE, EXIT_NO_STACK
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.jj.client import JjClient
+from jj_stack.models.github_details import GithubCheck, GithubPRMergeDetails, GithubReviewThread
 from jj_stack.state.store import TrackingStore, resolve_state_path
 
 from ..support.fake_github import FakeGithubState, create_app
@@ -26,6 +27,89 @@ from .submit_command_helpers import (
     configure_submit_environment,
     run_main,
 )
+
+
+def test_verbose_view_keeps_summary_on_detail_failure_and_shows_evidence_on_retry(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.prs[1].merge_state_status = "BLOCKED"
+    fake_repo.prs[1].check_rollup_state = "PENDING"
+    fake_repo.create_pr_review(pr_number=1, reviewer_login="alice", state="APPROVED")
+    thread_url = "https://github.test/octo-org/stacked-prs/pull/1#discussion_r4010947684"
+    evidence = GithubPRMergeDetails(
+        unresolved_threads=(
+            GithubReviewThread.model_validate(
+                {
+                    "isResolved": False,
+                    "isOutdated": True,
+                    "path": "workflow.yml",
+                    "line": 7,
+                    "comments": {
+                        "nodes": [{"bodyText": "Use Buildkite instead", "url": thread_url}]
+                    },
+                }
+            ),
+        ),
+        checks=(
+            GithubCheck(name="build", state="FAILURE", url="https://check.test/build"),
+            GithubCheck(name="deploy", state="PENDING"),
+        ),
+    )
+    details_unavailable = True
+
+    async def get_details(self, *, prs):
+        if details_unavailable:
+            raise GithubClientError("GitHub request failed: 403", status_code=403)
+        return {pr.number: evidence for pr in prs}
+
+    monkeypatch.setattr(GithubClient, "get_pr_merge_details", get_details)
+
+    # Summary inspection does not depend on the additional detail request.
+    assert run_main(repo, config_path, "view") == 0
+    assert "approved, checks pending, merge blocked" in capsys.readouterr().out
+
+    assert run_main(repo, config_path, "view", "--verbose", "--json") == EXIT_INCOMPLETE
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert_json_output_matches_schema(payload, "view")
+    change = payload["stacks"][0]["changes"][0]
+    assert change["status"] == "approved"
+    assert "access denied" in change["pr"]["merge_details_error"]
+    assert "Could not inspect merge details for PR #1" in captured.err
+
+    details_unavailable = False
+    assert run_main(repo, config_path, "view", "--verbose") == 0
+    captured = capsys.readouterr()
+    assert_output_contains(
+        captured.out,
+        "workflow.yml:7 (outdated)",
+        "Use Buildkite instead",
+        thread_url,
+        "build: failure",
+        "https://check.test/build",
+        "deploy: pending",
+        "/pull/1/checks",
+        "other repo rules can still block merging",
+    )
+    assert run_main(repo, config_path, "view", "--verbose", "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert_json_output_matches_schema(payload, "view")
+    pr = payload["stacks"][0]["changes"][0]["pr"]
+    assert pr["merge_details"] == evidence.model_dump(mode="json")
+    assert "merge_details_error" not in pr
+
+    # Resolving threads and completing checks may leave an unrelated GitHub rule unmet.
+    evidence = GithubPRMergeDetails(checks=(GithubCheck(name="build", state="SUCCESS"),))
+    assert run_main(repo, config_path, "view", "--verbose") == 0
+    assert_output_contains(
+        capsys.readouterr().out,
+        "GitHub did not expose a specific blocking requirement",
+        "https://github.test/octo-org/stacked-prs/pull/1",
+    )
 
 
 def test_view_json_reports_public_stack_status(
