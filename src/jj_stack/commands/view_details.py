@@ -78,18 +78,21 @@ def render_merge_details(
         pr = change.pr
         if pr is None or (evidence := details.get(pr.number)) is None:
             continue
-        lines.extend(("", t"Merge details for {format_pr_label(pr.number, url=pr.html_url)}:"))
         if isinstance(evidence, str):
-            lines.append(t"  Details unavailable: {evidence}")
-            continue
-        rows = _evidence_rows(pr, evidence)
+            rows = [("Details unavailable", evidence)]
+        else:
+            rows = _evidence_rows(pr, evidence)
+            if not rows and pr.merge_state_status == "BLOCKED":
+                rows.append(
+                    (
+                        "GitHub",
+                        t"GitHub did not expose a specific blocking requirement. See "
+                        t"{ui.hyperlink(pr.html_url, pr.html_url)}",
+                    )
+                )
         if not rows:
-            message = (
-                "GitHub did not expose a specific blocking requirement"
-                if pr.merge_state_status == "BLOCKED"
-                else "No unresolved conversations or unsuccessful checks were returned"
-            )
-            rows.append(("GitHub", t"{message}. See {ui.hyperlink(pr.html_url, pr.html_url)}"))
+            continue
+        lines.extend(("", t"Merge details for {format_pr_label(pr.number, url=pr.html_url)}:"))
         lines.extend(t"  {kind}: {detail}" for kind, detail in rows)
     if lines:
         lines.extend(
