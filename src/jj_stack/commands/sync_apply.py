@@ -226,6 +226,12 @@ def _apply_local_convergence(
             and not dependencies.get(change.change_id)
         )
         if abandoned:
+            if any(
+                change.change.current_working_copy
+                for change in actions.on_trunk
+                if change.change is not None and change.change.commit_id in abandoned
+            ):
+                context.jj_client.new_empty_change(trunk_commit_id, cli_args=rewrite_args)
             context.jj_client.abandon_commits(abandoned, cli_args=rewrite_args)
         if rewritten:
             context.state_store.relink_prs(

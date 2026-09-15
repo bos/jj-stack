@@ -848,6 +848,11 @@ class JjClient:
 
         self._run_jj(("edit", commit_id), manage_working_copy=True, cli_args=cli_args)
 
+    def new_empty_change(self, parent: CommitId, *, cli_args: JjCliArgs = _NO_CLI_ARGS) -> None:
+        """Check out a new empty change on the given commit in the current workspace."""
+
+        self._run_jj(("new", parent), manage_working_copy=True, cli_args=cli_args)
+
     def rebase_changes(
         self,
         *,

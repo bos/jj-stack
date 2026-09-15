@@ -182,6 +182,8 @@ def test_sync_recovers_a_clean_single_pr_rebase_merge(
     pr_branch = identity.head_ref
     fake_repo.advance_branch("main", path="upstream.txt", contents="upstream\n")
     landed_commit_id = fake_repo.apply_rebase_merge(fake_repo.prs[identity.pr_number])
+    # The author is still working on the merged change; sync moves the working copy to trunk.
+    run_command(["jj", "edit", submitted.change_id], repo)
 
     exit_code = run_main(repo, config_path, "sync", submitted.change_id)
     captured = capsys.readouterr()
@@ -192,7 +194,9 @@ def test_sync_recovers_a_clean_single_pr_rebase_merge(
     ]
     assert tuple(item.commit_id for item in copies) == (landed_commit_id,)
     assert copies[0].immutable
-    assert JjClient(repo).resolve_commit("@").parents == (landed_commit_id,)
+    working_copy = JjClient(repo).resolve_commit("@")
+    assert working_copy.parents == (landed_commit_id,)
+    assert working_copy.empty
     assert (repo / "upstream.txt").read_text() == "upstream\n"
     assert submitted.change_id not in state_store.load().prs
     assert f"refs/heads/{pr_branch}" not in remote_refs(fake_repo.git_dir)

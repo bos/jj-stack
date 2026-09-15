@@ -395,13 +395,11 @@ def _checked_out_workspace_hint(
     *, workspaces: tuple[str, ...], context: CommandContext
 ) -> Message:
     known = {workspace.name: workspace for workspace in context.jj_client.list_workspaces()}
-    if not workspaces:
-        workspaces = tuple(workspace.name for workspace in known.values() if workspace.current)
     hint: list[Message] = ["Move each workspace off the merged change:\n"]
     disposable: list[tuple[str, str]] = []
     for name in workspaces:
         workspace = known.get(name)
-        if workspace is None or (workspace.root is None and not workspace.current):
+        if workspace is None or workspace.root is None:
             forget_command = _workspace_forget_command(name=name, platform=sys.platform)
             hint.append(
                 t"jj no longer reports a directory for {ui.code(name)}. If the workspace was "
@@ -416,8 +414,7 @@ def _checked_out_workspace_hint(
             t"For {ui.code(name)} at {ui.code(root)}{shell}:\n  "
             t"{ui.cmd(_workspace_move_command(root=root, platform=sys.platform))}\n"
         )
-        if not workspace.current:
-            disposable.append((name, root))
+        disposable.append((name, root))
     if disposable:
         hint.append(
             "Alternatively, forget and move to the trash any workspace that is no longer "

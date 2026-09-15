@@ -469,9 +469,10 @@ It rebases surviving changes onto trunk even when they contain conflicts. If a s
 change remains conflicted, the local rebase stays in place but its PR is not updated. The
 user resolves the conflict with `jj` and runs `submit` for the remaining stack.
 
-If a workspace directly has an obsolete merged change checked out, `sync` does not remove that
+If another workspace has an obsolete merged change checked out, `sync` does not remove that
 change. Its diagnostic identifies the workspace and gives commands to move it to trunk or forget
-it and move its directory to the trash. A workspace on a surviving child does not block its
+it and move its directory to the trash. The current workspace moves to a new empty change on
+trunk before its merged change is removed. A workspace on a surviving child does not block its
 ordinary rebase.
 
 If another local path still depends on a merged change after the rebase, `sync` leaves the

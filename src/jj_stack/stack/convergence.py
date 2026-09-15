@@ -514,12 +514,12 @@ def _require_no_checked_out_merged_changes(
 ) -> None:
     for item in changes:
         change = item.change
-        if change is None or not change.is_working_copy:
+        # Only another workspace blocks removal, because abandoning its working copy would leave
+        # it stale. The current workspace moves to trunk before the change is abandoned.
+        if change is None or not change.working_copy_workspaces:
             continue
         workspaces = change.working_copy_workspaces
-        if not workspaces:
-            location = "the current workspace"
-        elif len(workspaces) == 1:
+        if len(workspaces) == 1:
             location = t"workspace {ui.code(workspaces[0])}"
         else:
             location = t"workspaces {ui.join(ui.code, workspaces)}"

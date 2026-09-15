@@ -99,7 +99,8 @@ proceed because all three PRs belong to the same GitHub stack.
 
 After GitHub merges some or all of your pull requests, `sync` fetches the updated trunk and
 rebases your remaining changes onto it. It removes any obsolete local copies of the merged
-changes, updates the remaining PRs, and deletes PR branches that are no longer needed.
+changes, updates the remaining PRs, and deletes PR branches that are no longer needed. If your
+working copy is on a merged change, `sync` first moves it to a new empty change on trunk.
 
 Select the stack by its head change ID or by any linked pull request:
 
