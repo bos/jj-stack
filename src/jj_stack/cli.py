@@ -21,7 +21,7 @@ from argparse import (
     _SubParsersAction,
 )
 from collections.abc import Callable, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from inspect import signature
 from pathlib import Path
 from typing import Any, NoReturn, SupportsIndex
@@ -61,6 +61,7 @@ from jj_stack.errors import (
     resolve_exit_code,
 )
 from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.jj.settings import read_jj_settings
 
 logger = logging.getLogger(__name__)
 _COLOR_CHOICES: tuple[RequestedColorMode, ...] = ("always", "never", "debug", "auto")
@@ -682,6 +683,12 @@ def _help_handler(args: Namespace) -> int:
             soft_wrap=True,
         )
         return 0
+    # Help skips repo bootstrap, but still uses jj's theme when configuration is readable.
+    with suppress(CliError, OSError):
+        settings = read_jj_settings(cwd=args.repo or Path.cwd(), cli_args=args.cli_args)
+        console.adopt_jj_config(
+            color=settings.string("ui", "color"), colors=settings.table("colors")
+        )
     if args.command is None:
         emit_top_level_help(
             parser,

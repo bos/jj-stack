@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rich.text import Text
+
 from jj_stack.errors import CliError
 from jj_stack.jj.cli_args import JjCliArgs
 
@@ -57,7 +59,7 @@ def read_jj_settings(*, cwd: Path, cli_args: JjCliArgs) -> JjSettings:
         detail = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
         raise CliError(f"Could not read jj config: {detail}")
     try:
-        values = tomllib.loads(completed.stdout)
+        values = tomllib.loads(Text.from_ansi(completed.stdout).plain)
     except tomllib.TOMLDecodeError as error:
         raise CliError(f"Could not parse the jj config listing: {error}") from error
     return JjSettings(values)

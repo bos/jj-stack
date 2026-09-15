@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from jj_stack.cli import main
 from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.client import JjClient, JjCommandError, PRRefUpdate
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, TrackingState
@@ -18,6 +19,19 @@ from ..support.integration_helpers import (
     remote_refs,
     run_command,
 )
+
+
+def test_help_uses_jj_colors_outside_a_workspace(tmp_path: Path, monkeypatch, capsys) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('ui.color = "always"\ncolors."command hint" = "red"\n', encoding="utf-8")
+    monkeypatch.setenv("JJ_CONFIG", str(config))
+
+    exit_code = main(["--repository", str(tmp_path), "submit", "-h"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "\x1b[31mjj-stack submit\x1b[0m" in captured.out
+    assert not captured.err
 
 
 @pytest.mark.parametrize("working_copy", ("empty", "undescribed"))
