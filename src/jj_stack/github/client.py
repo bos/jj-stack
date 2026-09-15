@@ -1366,6 +1366,7 @@ def _pr_fields_fragment() -> str:
           }
           mergedAt
           reviewDecision
+          mergeStateStatus
           statusCheckRollup {
             state
           }

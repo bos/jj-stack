@@ -45,6 +45,7 @@ class FakeGithubPR:
     auto_merge_enabled: bool = False
     check_rollup_state: str | None = None
     is_queued: bool = False
+    merge_state_status: str | None = None
     labels: list[str] = field(default_factory=list)
     requested_reviewers: list[str] = field(default_factory=list)
     requested_team_reviewers: list[str] = field(default_factory=list)
@@ -103,6 +104,7 @@ class FakeGithubPR:
                 None if self.merge_commit_sha is None else {"oid": self.merge_commit_sha}
             ),
             "mergedAt": self.merged_at,
+            "mergeStateStatus": self.merge_state_status,
             "number": self.number,
             "state": self.graphql_state.upper(),
             "statusCheckRollup": (
@@ -221,9 +223,8 @@ class FakeGithubRepo:
     pr_force_pushes: dict[int, list[tuple[str, str]]] = field(default_factory=dict)
     prs: dict[int, FakeGithubPR] = field(default_factory=dict)
     pr_reviews: dict[int, list[FakeGithubPRReview]] = field(default_factory=dict)
-    # Test hook: PR numbers GitHub should report as not mergeable (pending
-    # required checks, conflicts, or branch protection).
-    unmergeable_pr_numbers: set[int] = field(default_factory=set)
+    # GitHub rejection messages for checks, conflicts, or branch protection.
+    merge_rejections: dict[int, str] = field(default_factory=dict)
 
     @property
     def full_name(self) -> str:
@@ -1156,15 +1157,23 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
         if live_head != expected_head_sha:
             raise HTTPException(status_code=400, detail="Target head changed.")
         existing = repo.stack_merge_operations.get(pr_number)
-        if existing is not None:
-            if (
-                existing.expected_head_sha != expected_head_sha
-                or existing.merge_action != merge_action
-                or existing.merge_method != merge_method
-            ):
-                return JSONResponse(_stack_merge_payload(existing), status_code=409)
-            status_code = 409 if existing.status == "pending" else 200
-            return JSONResponse(_stack_merge_payload(existing), status_code=status_code)
+        # GitHub keeps one operation in flight per pull request. A finished operation, failed
+        # or merged, does not block a new request with the same parameters.
+        if existing is not None and existing.status == "pending":
+            return JSONResponse(
+                _stack_merge_payload(
+                    existing, message="A merge request already exists for this pull request."
+                ),
+                status_code=409,
+            )
+        if pr.is_queued:
+            return JSONResponse(
+                {
+                    "status": "enqueued",
+                    "details": {"message": "Pull request is already in the merge queue."},
+                },
+                status_code=200,
+            )
         stack_number = repo.stack_number_for_pr(pr_number)
         active_pr_numbers = (
             GithubStack.model_validate(
@@ -1183,6 +1192,7 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
             expected_head_sha=expected_head_sha,
             merge_action=merge_action,
             merge_method=merge_method,
+            message="Merge request enqueued.",
             pr_number=pr_number,
             uuid=f"fake-stack-merge-{len(repo.stack_merge_requests) + 1}",
         )
@@ -1463,14 +1473,19 @@ def _stack_pr_payload(
     }
 
 
-def _stack_merge_payload(operation: FakeStackMergeOperation) -> dict[str, object]:
+def _stack_merge_payload(
+    operation: FakeStackMergeOperation, *, message: str | None = None
+) -> dict[str, object]:
+    # Failed and enqueued operations report only their message, as GitHub does.
+    if operation.status in {"failed", "enqueued"}:
+        return {"status": operation.status, "details": {"message": operation.message}}
     return {
         "status": operation.status,
         "details": {
             "expected_head_sha": operation.expected_head_sha,
             "merge_action": operation.merge_action,
             "merge_method": operation.merge_method,
-            "message": operation.message,
+            "message": operation.message if message is None else message,
             "sha": operation.final_sha,
             "uuid": operation.uuid,
         },
@@ -1494,11 +1509,14 @@ def _complete_stack_merge(
         remaining_pr_numbers = stack.active_pr_numbers[len(candidate_numbers) :]
     candidates = tuple(repo.prs[number] for number in candidate_numbers)
     if any(
-        pr.state != "open" or pr.is_draft or pr.number in repo.unmergeable_pr_numbers
+        pr.state != "open" or pr.is_draft or pr.number in repo.merge_rejections
         for pr in candidates
     ):
         operation.status = "failed"
-        operation.message = "The GitHub stack prefix is not mergeable."
+        operation.message = next(
+            (repo.merge_rejections[n] for n in candidate_numbers if n in repo.merge_rejections),
+            "The GitHub stack prefix is not mergeable.",
+        )
         return
     if operation.merge_action == "merge_queue":
         for pr in candidates:

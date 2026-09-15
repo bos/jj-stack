@@ -308,7 +308,7 @@ def test_stack_rewriting_merge_automatically_removes_pre_merge_copies(
         assert all(not changes for changes in copies.values())
 
 
-def test_stack_merge_terminal_failure_is_atomic(
+def test_stack_merge_rejection_is_atomic_and_names_the_next_step(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -316,24 +316,33 @@ def test_stack_merge_terminal_failure_is_atomic(
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.github_stacks = {7: (1, 2)}
-    fake_repo.unmergeable_pr_numbers.add(2)
+    fake_repo.prs[2].merge_state_status = "BLOCKED"
     state_store = TrackingStore.for_repo(repo)
     state_before = state_store.load()
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     heads_before = tuple(fake_repo.ref_target(pr.head_ref) for pr in fake_repo.prs.values())
+    head = selected_stack(repo).head.change_id[:8]
 
-    exit_code = run_main(repo, config_path, "merge")
-    captured = capsys.readouterr()
+    # A rejection that is not a conflict says to fix it on GitHub and retry the same merge.
+    fake_repo.merge_rejections[2] = "All comments must be resolved."
+    assert run_main(repo, config_path, "merge") == 1
+    rejected = " ".join(capsys.readouterr().out.split())
+    assert "Merge blocked:" in rejected
+    assert "All comments must be resolved." in rejected
+    assert "resolved.." not in rejected
+    assert "rebase" not in rejected
+    assert f"jj-stack merge {head}" in rejected
 
-    assert exit_code == 1
-    assert "Merge blocked:" in captured.out
-    # A refused group merge reaches the user the same way a refused single merge does: with the
-    # rebase-and-resubmit route, since rerunning merge cannot clear a conflict.
-    normalized = " ".join(captured.out.split())
-    assert "rebase onto" in normalized
-    assert "resolve the conflict" in normalized
-    assert "jj-stack submit" in normalized
-    assert fake_repo.stack_merge_requests
+    # A conflict cannot be cleared by retrying, so the hint routes the selected PR's change
+    # through submit instead.
+    bottom = selected_stack(repo).changes[0].change_id[:8]
+    fake_repo.merge_rejections = {1: "Pull request #1 has merge conflicts"}
+    assert run_main(repo, config_path, "merge", "--pull-request", "1") == 1
+    conflicted = " ".join(capsys.readouterr().out.split())
+    assert "has merge conflicts. " in conflicted
+    assert "resolve the conflicts" in conflicted
+    assert f"jj-stack submit {bottom}" in conflicted
+    assert len(fake_repo.stack_merge_requests) == 2
     assert tuple(pr.state for pr in fake_repo.prs.values()) == ("open", "open")
     assert tuple(fake_repo.ref_target(pr.head_ref) for pr in fake_repo.prs.values()) == (
         heads_before

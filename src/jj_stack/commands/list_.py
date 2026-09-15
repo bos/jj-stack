@@ -52,7 +52,12 @@ from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.pr_branches import duplicate_pr_branch_claims
 from jj_stack.stack.preparation import PreparedLocalStack
 from jj_stack.stack.repo import observe_repo_paths
-from jj_stack.stack.reporting import report_change, status_label, submittable_edits
+from jj_stack.stack.reporting import (
+    merge_status_label,
+    report_change,
+    status_label,
+    submittable_edits,
+)
 from jj_stack.stack.status import StackStatusChange, build_status_result, observe_status
 
 HELP = "List the stacks jj-stack is tracking in this repo"
@@ -434,6 +439,12 @@ def _status_fragments(
         if rollup_status in check_statuses:
             fragments.append(ui.semantic_text(f"checks {rollup_status}", *labels))
             break
+    for status in dict.fromkeys(
+        report.merge_status for report in reports if report.problem is None
+    ):
+        label = merge_status_label(status)
+        if label is not None:
+            fragments.append(label)
     return tuple(fragments)
 
 

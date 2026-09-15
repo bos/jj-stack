@@ -65,6 +65,11 @@ only when GitHub reports a check result.
 `checks` is `passed`, `failed`, or `pending`; `pending` includes checks that GitHub expects but
 has not started.
 
+`merge_state_status`, when present, is the merge state GitHub reports for the PR, such as
+`BLOCKED`, `DIRTY`, `BEHIND`, or `CLEAN`. It is independent of reviews and checks, and scripts
+should tolerate values not listed here. `UNKNOWN` means GitHub has not computed the state yet; it
+usually resolves on the next lookup.
+
 Known change statuses are:
 
 - `unsubmitted`: jj-stack has no saved pull request link for this change

@@ -45,6 +45,7 @@ def pr_json(
         return _json_object(
             {
                 "checks": pr.check_rollup_status,
+                "merge_state_status": pr.merge_state_status,
                 "number": pr.number,
                 "url": pr.html_url,
             }

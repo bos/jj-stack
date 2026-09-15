@@ -621,6 +621,7 @@ def test_github_client_batches_open_pr_lookup_by_head_ref_with_graphql() -> None
         assert "headRefName: $ref_1" in payload["query"]
         assert "headRepositoryOwner" in payload["query"]
         assert "reviewDecision" in payload["query"]
+        assert "mergeStateStatus" in payload["query"]
         assert "states: [OPEN]" in payload["query"]
         return httpx2.Response(
             200,

@@ -59,7 +59,7 @@ class MergeExecutionInputs:
     """Mutation dependencies independent of normal stack/status preparation."""
 
     repo: GithubRepoAddress
-    selected_revset: str
+    selected_head: str
     trunk_branch: str
     trunk_subject: str
 

@@ -28,6 +28,11 @@ jj-stack merge <head-change-id>
 that their PR branches and pull requests have not moved unexpectedly. GitHub decides whether
 checks, approvals, conflicts, and repo rules allow the merge.
 
+`jj-stack list` and `jj-stack view` show approvals, checks, and GitHub's merge-state warnings
+separately. A PR can be approved with passing checks and still show `merge blocked`, for example
+when review conversations remain unresolved. Open the PR on GitHub to see the reason. Even
+without a warning, approval and passing checks do not guarantee that GitHub will accept a merge.
+
 ## Choose a merge method
 
 For a direct merge, `merge` uses your repo's only allowed merge method if there is just one.

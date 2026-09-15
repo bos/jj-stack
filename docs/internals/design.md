@@ -416,8 +416,8 @@ routing for the trunk branch, it does not preflight approvals, checks, conflicts
 state across the repo. GitHub applies those rules to the requested GitHub stack or
 single-PR mutation, and `jj-stack` reports the result.
 
-A rejected merge must explain what the user can do next: rebase onto trunk, resolve, and submit
-again for a conflict; address the failing check or repo rule on GitHub otherwise.
+A rejected merge preserves GitHub's reason and says what to do next: rebase onto trunk, resolve,
+and submit again for a conflict; address the reported issue on GitHub and retry otherwise.
 
 ### Trunk evidence and sync
 
@@ -675,6 +675,9 @@ not segment the path by GitHub resource or infer an omitted submit boundary.
 
 Both report whether an open PR has a merge-queue entry; position and intermediate queue phases
 are not modeled.
+
+Both report GitHub's merge state for an open PR alongside its reviews and checks. GitHub computes
+that state lazily, so an unknown state is not reported or polled.
 
 Neither command guesses. A change with no saved PR identity is reported as not submitted,
 even if a PR happens to use the branch name that change would generate. A saved PR is always

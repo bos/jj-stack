@@ -142,7 +142,7 @@ async def execute_async_merge(
                 execution,
                 merge,
                 reason=t"the PR head changed on GitHub; run "
-                t"{ui.cmd(f'jj-stack submit {execution.selected_revset}')} and merge again",
+                t"{ui.cmd(f'jj-stack submit {execution.selected_head}')} and merge again",
             )
         pr_label = format_pr_label(
             merge.target.identity.pr_number,
@@ -176,15 +176,10 @@ async def execute_async_merge(
         merge.target.identity.pr_number,
     )
     if terminal.status == "failed":
-        reason = terminal.details.message or "GitHub did not provide a failure reason"
-        submit = ui.cmd(f"jj-stack submit {execution.selected_revset}")
         return _blocked_result(
             execution,
             merge,
-            reason=t"GitHub rejected the merge: {reason}. If the stack conflicts with "
-            t"{ui.bookmark(execution.trunk_branch)}, rebase onto {ui.revset('trunk()')}, resolve "
-            t"the conflicts, and run {submit} before merging again. For a failed check or "
-            t"unmet repo requirement, fix the issue reported by GitHub first",
+            reason=_rejection_reason(execution, terminal.details.message),
         )
     if terminal.status == "enqueued":
         return _enqueued_result(
@@ -206,6 +201,22 @@ async def execute_async_merge(
         merge_action=merge_action,
         merge_method=merge_method,
     )
+
+
+def _rejection_reason(execution: MergeExecutionInputs, message: str | None) -> Message:
+    reason = (message or "GitHub did not provide a failure reason").strip()
+    punctuation = "" if reason.endswith((".", "!", "?")) else "."
+    if "conflict" in reason.casefold():
+        hint = (
+            t"Rebase onto {ui.revset('trunk()')}, resolve the conflicts, and run "
+            t"{ui.cmd(f'jj-stack submit {execution.selected_head}')} before merging again."
+        )
+    else:
+        hint = (
+            t"Address the reported issue on GitHub, then run "
+            t"{ui.cmd(f'jj-stack merge {execution.selected_head}')} again."
+        )
+    return t"GitHub rejected the merge: {reason}{punctuation} {hint}"
 
 
 async def _terminal(

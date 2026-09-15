@@ -294,7 +294,7 @@ async def _stream_merge_async(
     stacks = stacks_task.result()
     execution = MergeExecutionInputs(
         repo=github_client.repo,
-        selected_revset=stack.selected_revset,
+        selected_head=short_change_id(prepared_merge.target_change_id or stack.head.change_id),
         trunk_branch=trunk_branch,
         trunk_subject=stack.trunk.subject,
     )

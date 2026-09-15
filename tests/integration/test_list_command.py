@@ -26,7 +26,7 @@ from .submit_command_helpers import (
 )
 
 
-def test_list_reports_public_stack_rows_and_links_live_pr(
+def test_status_shows_merge_blocked_despite_approval_and_passing_checks(
     tmp_path,
     monkeypatch,
     capsys,
@@ -34,7 +34,9 @@ def test_list_reports_public_stack_rows_and_links_live_pr(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change_id = selected_stack(repo).head.change_id
-    fake_repo.prs[1].check_rollup_state = "PENDING"
+    fake_repo.prs[1].check_rollup_state = "SUCCESS"
+    fake_repo.prs[1].merge_state_status = "BLOCKED"
+    fake_repo.create_pr_review(pr_number=1, reviewer_login="alice", state="APPROVED")
 
     exit_code = run_main(repo, config_path, "list", "--json")
     captured = capsys.readouterr()
@@ -45,7 +47,7 @@ def test_list_reports_public_stack_rows_and_links_live_pr(
 
     row = payload["rows"][0]
     assert row["type"] == "stack"
-    assert row["status"] == "open, checks pending"
+    assert row["status"] == "approved, checks passed, merge blocked"
     assert row["subject"] == "feature 1"
     assert len(row["changes"]) == 1
 
@@ -53,8 +55,12 @@ def test_list_reports_public_stack_rows_and_links_live_pr(
     assert change["change_id"] == change_id
     assert change["branch"].startswith("jj-stack/feature-1-")
     assert change["pr"]["number"] == 1
-    assert change["pr"]["checks"] == "pending"
-    assert change["status"] == "open"
+    assert change["pr"]["checks"] == "passed"
+    assert change["pr"]["merge_state_status"] == "BLOCKED"
+    assert change["status"] == "approved"
+
+    assert run_main(repo, config_path, "view") == 0
+    assert_output_contains(capsys.readouterr().out, "approved, checks passed, merge blocked")
 
     run_command(["jj", "describe", "-r", change_id, "-m", "feature \x1bc"], repo)
     assert run_main(repo, config_path, "list", "--color=always") == 0
@@ -62,6 +68,7 @@ def test_list_reports_public_stack_rows_and_links_live_pr(
     assert "\x1bc" not in terminal_output
     assert "feature c" in terminal_output
     assert "PR 1" in terminal_output
+    assert "merge blocked" in terminal_output
     assert "https://github.test/octo-org/stacked-prs/pull/1" in terminal_output
 
 

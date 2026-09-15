@@ -155,6 +155,10 @@
             "pending"
           ]
         },
+        "merge_state_status": {
+          "type": "string",
+          "description": "GitHub's reported mergeStateStatus; independent of reviews and checks."
+        },
         "number": {
           "type": "integer",
           "minimum": 1

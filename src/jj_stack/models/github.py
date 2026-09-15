@@ -141,6 +141,7 @@ class GithubPR(BaseModel):
     is_draft: bool = Field(default=False, alias="draft")
     is_queued: bool = False
     merge_commit_sha: CommitId | None = None
+    merge_state_status: str | None = None
     merged_at: str | None = None
     node_id: str
     number: int
@@ -176,6 +177,7 @@ class GithubPR(BaseModel):
             "html_url": value.get("url"),
             "is_queued": value.get("mergeQueueEntry") is not None,
             "merge_commit_sha": _graphql_merge_commit_oid(value.get("mergeCommit")),
+            "merge_state_status": value.get("mergeStateStatus"),
             "merged_at": value.get("mergedAt"),
             "node_id": value.get("id"),
             "number": value.get("number"),

@@ -52,7 +52,12 @@ from jj_stack.jj.client import (
 )
 from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.preparation import PreparedLocalStack, prepare_local_stack
-from jj_stack.stack.reporting import report_change, status_label, submittable_edits
+from jj_stack.stack.reporting import (
+    merge_status_label,
+    report_change,
+    status_label,
+    submittable_edits,
+)
 from jj_stack.stack.selected import is_change_id_prefix
 from jj_stack.stack.selection import resolve_linked_change_for_pr
 from jj_stack.stack.status import (
@@ -758,6 +763,9 @@ def _format_status_summary(
             summary = t"{pr_label} {status_label(report.lifecycle)}"
         if report.checks is not None:
             summary = t"{summary}, checks {report.checks}"
+        merge_label = merge_status_label(report.merge_status)
+        if merge_label is not None:
+            summary = t"{summary}, {merge_label}"
     elif change.tracked is not None:
         summary = format_pr_label(
             change.tracked.pr_identity.pr_number, prefix="saved ", repo=repo
