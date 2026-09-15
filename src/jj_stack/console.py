@@ -653,7 +653,7 @@ def _append_rich_text(
     if isinstance(content, ui.SemanticText):
         semantic = semantic_style(*content.labels)
         if content.link is not None and _ACTIVE_COLOR_MODE != "never":
-            semantic = _combine_styles(semantic, Style(link=content.link))
+            semantic = _combine_styles(semantic, Style(link=content.link, underline=True))
         rendered.append(
             content.text,
             style=_combine_styles(base_style, semantic),
