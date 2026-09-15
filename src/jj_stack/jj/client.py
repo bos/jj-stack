@@ -827,7 +827,21 @@ class JjClient:
         for ref, update in zip(refs, ordered_updates, strict=True):
             desired = update.desired_target or ""
             command.append(f"{desired}:{ref}")
-        self._run_git(command)
+        try:
+            self._run_git(command)
+        except JjCommandError as error:
+            if not error.stderr:
+                raise
+            # Git's own report names every rejected ref and carries GitHub's reason; the
+            # command line, with one lease per branch, only buries it.
+            push_url = _redact_http_url_userinfo(configured_remote.push_url)
+            raise JjCommandError(
+                t"Pushing PR branches to {ui.code(push_url)} failed:\n"
+                t"{_git_push_diagnostics(error.stderr)}",
+                hint="The push is all-or-nothing, so no PR branch changed. Fix the cause above "
+                "and rerun the same jj-stack command.",
+                stderr=error.stderr,
+            ) from error
 
     def edit_commit(self, commit_id: CommitId, *, cli_args: JjCliArgs = _NO_CLI_ARGS) -> None:
         """Edit the given commit in the current workspace."""
@@ -1150,6 +1164,13 @@ class JjClient:
                 t"{ui.cmd(displayed_command)} failed: {displayed_message}", stderr=message
             )
         return completed.stderr if return_stderr else completed.stdout
+
+
+def _git_push_diagnostics(stderr: str) -> str:
+    """Return git's push report without trailing padding or empty `remote:` lines."""
+
+    lines = (line.rstrip() for line in _redact_http_url_userinfo(stderr).splitlines())
+    return "\n".join(line for line in lines if line != "remote:")
 
 
 _HTTP_URL_AUTHORITY_PATTERN = re.compile(

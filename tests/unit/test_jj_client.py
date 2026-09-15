@@ -259,6 +259,10 @@ def test_remote_failure_redacts_http_userinfo_without_changing_subprocess_argv(
     assert "alice" not in rendered
     assert "top-secret" not in rendered
     assert "https://github.test/octo-org/repo.git" in rendered
+    # Git's reason reaches the user; the lease-laden command line does not.
+    assert "could not access" in rendered
+    assert "--force-with-lease" not in rendered
+    assert "no PR branch changed" in rendered
     assert remote_url in seen_commands[-1]
 
 
