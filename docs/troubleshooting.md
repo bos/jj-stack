@@ -78,6 +78,18 @@ If GitHub changed the branch while merging or rebasing your stack, run
 `jj-stack sync <head-change-id>` instead. It brings GitHub's completed merge or rebase into your
 local stack.
 
+If someone else pushed to your PR branch and GitHub then merged the PR, what merged came from
+their commit, not from the one jj-stack pushed. `jj-stack sync` cannot tell whether your change is
+part of it, so it stops rather than delete your local change. Check the files the PR changed on
+GitHub against `jj diff -r <change-id>`:
+
+- If your change is in them, run `jj abandon <change-id>` and then `jj-stack cleanup`, which
+  forgets the merged PR's link.
+- If it is not, run `jj-stack unstack --local <change-id>` to forget the saved links for that
+  local stack, then submit again. The change gets a new pull request.
+
+`jj-stack view` reports any changes above the merged one as moved; the steps above apply to them.
+
 `jj-stack relink` reconnects a PR to its original change. Even with `--replace-remote`, it
 cannot transfer the PR to a different change ID.
 

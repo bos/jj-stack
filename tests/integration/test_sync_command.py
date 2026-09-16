@@ -9,6 +9,7 @@ import pytest
 import jj_stack.commands.sync_apply as sync_apply
 from jj_stack.errors import EXIT_GITHUB, EXIT_INCOMPLETE, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.identifiers import short_change_id
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import TrackingStore
 
@@ -346,7 +347,7 @@ def test_sync_all_explains_how_to_forget_a_deleted_workspace_blocking_removal(
     assert independent.change_id not in remaining
 
 
-def test_sync_all_preserves_tracking_when_exact_pr_head_changed(
+def test_sync_keeps_tracking_and_names_the_recovery_when_a_merged_pr_head_changed(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -356,16 +357,26 @@ def test_sync_all_preserves_tracking_when_exact_pr_head_changed(
     (submitted,) = selected_stack(repo).changes
     state_store = TrackingStore.for_repo(repo)
     pr = fake_repo.prs[1]
-    fake_repo.apply_merge_commit((pr,))
+    # Someone pushed to the PR branch before GitHub squash-merged it.
     fake_repo.force_push_pr_head(pr)
+    fake_repo.apply_squash_merge(pr)
 
-    exit_code = run_main(repo, config_path, "sync", "--all")
+    assert run_main(repo, config_path, "sync", "--all") == 1
+    assert "last submitted commit" in capsys.readouterr().err
+    assert submitted.change_id in state_store.load().prs
+
+    exit_code = run_main(repo, config_path, "sync", submitted.change_id)
     captured = capsys.readouterr()
 
     assert exit_code == 1
     assert "PR #1" in captured.err
-    assert "last submitted commit" in captured.err
-    assert submitted.change_id in state_store.load().prs
+    assert f"jj abandon {short_change_id(submitted.change_id)}" in captured.err
+    assert "trunk()" not in captured.err
+
+    # The recovery the hint names forgets the link once the local change is gone.
+    run_command(["jj", "abandon", submitted.change_id], repo)
+    assert run_main(repo, config_path, "cleanup") == 0
+    assert submitted.change_id not in state_store.load().prs
 
 
 def test_sync_all_reports_batch_pr_failure_without_traceback(

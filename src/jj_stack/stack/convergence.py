@@ -106,8 +106,7 @@ def build_selected_convergence_plan(
             raise CliError(
                 t"Cannot remove {ui.change_id(change.change_id)}: "
                 t"{trunk_evidence_reason(change_state)}.",
-                hint=t"Check that {ui.revset('trunk()')} selects the branch the PR merged "
-                t"into, then rerun {ui.cmd(rerun)}.",
+                hint=_trunk_evidence_hint(change_state, rerun=rerun),
             )
         if not isinstance(change_state, Landed):
             remaining_changes.append(change)
@@ -415,8 +414,7 @@ def _historical_member(
         raise CliError(
             t"Cannot remove the saved link for merged {pr_label}: "
             t"{trunk_evidence_reason(member_state)}.",
-            hint=t"Check that {ui.revset('trunk()')} selects the branch the PR merged into, "
-            t"then rerun {ui.cmd(f'jj-stack sync {head}')}.",
+            hint=_trunk_evidence_hint(member_state, rerun=f"jj-stack sync {head}"),
         )
     return OnTrunkChange(
         change_id,
@@ -424,6 +422,26 @@ def _historical_member(
         member_state.evidence,
         None,
         selected or (mutable_copies[0] if mutable_copies else None),
+    )
+
+
+def _trunk_evidence_hint(state: WithPR, *, rerun: str) -> ui.Message:
+    """Say how to resolve a merged PR whose work jj-stack cannot place on trunk."""
+
+    if state.pr.head.sha == state.tracked.submitted_baseline.commit_id:
+        return (
+            t"Check that {ui.revset('trunk()')} selects the branch the PR merged into, then "
+            t"rerun {ui.cmd(rerun)}."
+        )
+    pr_label = format_pr_label(state.pr.number, url=state.pr.html_url)
+    short = short_change_id(state.change_id)
+    return (
+        t"{pr_label} merged from commit {ui.commit_id(state.pr.head.sha)}, not from the commit "
+        t"jj-stack pushed, so jj-stack cannot tell whether this change is part of what merged. "
+        t"Check the files {pr_label} changed on GitHub against {ui.cmd(f'jj diff -r {short}')}. "
+        t"If this change is in them, run {ui.cmd(f'jj abandon {short}')} and then "
+        t"{ui.cmd('jj-stack cleanup')}; if not, run "
+        t"{ui.cmd(f'jj-stack unstack --local {short}')} and submit again."
     )
 
 
