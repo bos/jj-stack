@@ -587,6 +587,7 @@ def render_status_advisory_lines(
     ):
         return ()
 
+    head = short_change_id(result.changes[0].change_id)
     rows: list[tuple[ui.TableCell, ui.TableCell]] = []
     if submitted_disagreements:
         rows.append(
@@ -605,22 +606,14 @@ def render_status_advisory_lines(
             rows.append(
                 (
                     "After syncing",
-                    (
-                        ui.cmd("jj-stack submit"),
-                        " ",
-                        ui.revset(result.selected_revset),
-                    ),
+                    ui.cmd(f"jj-stack submit {head}"),
                 )
             )
         else:
             rows.append(
                 (
                     "Next step",
-                    (
-                        ui.cmd("jj-stack submit"),
-                        " ",
-                        ui.revset(result.selected_revset),
-                    ),
+                    ui.cmd(f"jj-stack submit {head}"),
                 )
             )
         if len(submitted_disagreements) == 1:
@@ -646,21 +639,13 @@ def render_status_advisory_lines(
         rows.append(
             (
                 "Preview first",
-                (
-                    ui.cmd("jj-stack sync --dry-run"),
-                    " ",
-                    ui.revset(result.selected_revset),
-                ),
+                ui.cmd(f"jj-stack sync --dry-run {head}"),
             )
         )
         rows.append(
             (
                 "Apply",
-                (
-                    ui.cmd("jj-stack sync"),
-                    " ",
-                    ui.revset(result.selected_revset),
-                ),
+                ui.cmd(f"jj-stack sync {head}"),
             )
         )
         for change in cleanup_changes:
@@ -685,7 +670,7 @@ def render_status_advisory_lines(
                 (
                     "Reopen the PR on GitHub to continue using it, link an open replacement "
                     "with jj-stack relink, or clean up with ",
-                    ui.cmd(f"jj-stack cleanup {result.selected_revset}"),
+                    ui.cmd(f"jj-stack cleanup {head}"),
                     " before submitting again.",
                 ),
             )

@@ -147,10 +147,10 @@ def test_reporting_advises_sync_for_merged_divergent_copies() -> None:
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
 
     assert "Advisories:" in lines
-    assert "jj-stack sync @" in normalized_lines
-    assert "jj-stack sync --dry-run @" in normalized_lines
-    assert normalized_lines.index("jj-stack sync --dry-run @") < normalized_lines.index(
-        "jj-stack sync @"
+    assert "jj-stack sync abcdefgh" in normalized_lines
+    assert "jj-stack sync --dry-run abcdefgh" in normalized_lines
+    assert normalized_lines.index("jj-stack sync --dry-run abcdefgh") < normalized_lines.index(
+        "jj-stack sync abcdefgh"
     )
     assert "PR #5 is merged" in normalized_lines
 
@@ -172,13 +172,13 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
     )
     lines = _render_lines(
         *view_module.render_status_advisory_lines(
-            result=_status_result(changes=edited, selected_revset="ulxwxsqw"),
+            result=_status_result(changes=edited),
         )
     )
     normalized_lines = " ".join(" ".join(line.split()) for line in lines)
 
     assert "Advisories:" in lines
-    assert "jj-stack submit ulxwxsqw" in normalized_lines
+    assert "jj-stack submit abcdefgh" in normalized_lines
     assert "abcdefgh" in normalized_lines
     assert "bcdefghi" in normalized_lines
 
@@ -276,7 +276,7 @@ def test_view_closed_pr_advisory_guides_reopen_relink_or_cleanup() -> None:
     assert "Closed GitHub PR" in normalized_lines
     assert "Reopen the PR on GitHub to continue using it" in normalized_lines
     assert "jj-stack relink" in normalized_lines
-    assert "jj-stack cleanup @" in normalized_lines
+    assert "jj-stack cleanup loqvlqrq" in normalized_lines
     assert "changes below" not in normalized_lines
 
 
