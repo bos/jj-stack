@@ -68,7 +68,6 @@ async def _wait(snapshots: Iterator[tuple[GithubPR, ...] | BaseException]):
                     selected_head="target",
                     sync_head="stackhead",
                     trunk_branch="main",
-                    trunk_subject="trunk",
                 ),
             )
 

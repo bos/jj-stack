@@ -305,7 +305,6 @@ async def _stream_merge_async(
         selected_head=short_change_id(prepared_merge.target_change_id or stack.head.change_id),
         sync_head=prepared_merge.sync_head,
         trunk_branch=trunk_branch,
-        trunk_subject=stack.trunk.subject,
     )
     async_merge = build_async_merge_plan(plan, stacks, execution)
     if prepared_merge.dry_run:
@@ -381,9 +380,6 @@ def _resolve_merge_method(
 
 
 def _print_merge_result(result: MergeResult, *, sync_head: str) -> None:
-    console.output(
-        t'Trunk: {ui.bookmark(result.trunk_branch)}, observed at "{result.trunk_subject}"'
-    )
     if result.actions:
         console.output(_result_header(result))
         for action in result.actions:

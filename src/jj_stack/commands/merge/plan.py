@@ -41,8 +41,6 @@ class MergeResult:
 
     actions: tuple[MergeAction, ...]
     pending: Literal["pending", "enqueued"] | None
-    trunk_branch: str
-    trunk_subject: str
     final_trunk_commit_id: CommitId | None = None
 
     @property
@@ -62,7 +60,6 @@ class MergeExecutionInputs:
     selected_head: str
     sync_head: str
     trunk_branch: str
-    trunk_subject: str
 
     @property
     def merge_command(self) -> Message:
@@ -87,8 +84,6 @@ class MergeExecutionInputs:
             actions=actions,
             pending=pending,
             final_trunk_commit_id=final_trunk_commit_id,
-            trunk_branch=self.trunk_branch,
-            trunk_subject=self.trunk_subject,
         )
 
 
