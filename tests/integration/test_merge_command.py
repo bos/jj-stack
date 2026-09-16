@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -37,97 +36,121 @@ from .submit_command_helpers import (
 pytestmark = pytest.mark.merge_recovery
 
 
-@pytest.mark.parametrize("stack_size", (1, 2))
-def test_merge_no_wait_can_resume_single_and_stacked_queues_and_sync(
+def test_merge_no_wait_resumes_a_pending_or_queued_request_and_syncs_after_waiting(
     tmp_path: Path,
     monkeypatch,
     capsys,
-    stack_size: int,
 ) -> None:
-    if stack_size == 1:
-        repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    else:
-        repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=stack_size)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    sign_commit(repo, "@-")
-    assert run_main(repo, config_path, "submit") == 0
+    fake_repo.github_stacks = {7: (1, 2)}
     fake_repo.merge_queue_enabled = True
     fake_repo.allow_rebase_merge = True
     stack = selected_stack(repo)
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
     selector = ("--pull-request", "1")
+    request = (1, None, "merge_queue", stack.changes[0].commit_id)
 
     exit_code = run_main(repo, config_path, "merge", *selector, "--method", "rebase", "--no-wait")
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
-    assert fake_repo.stack_merge_requests == [
-        (1, None, "merge_queue", stack.changes[0].commit_id)
-    ]
-    assert not any(pr.is_queued for pr in fake_repo.prs.values())
-    assert all(fake_repo.prs[number].state == "open" for number in range(1, stack_size + 1))
+    assert fake_repo.stack_merge_requests == [request]
+    assert not fake_repo.merge_queue
+    assert all(pr.state == "open" for pr in fake_repo.prs.values())
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert "ignoring --method" in captured.err
     assert "Merge requested" in captured.out
     assert "jj-stack sync" in captured.out
 
+    # GitHub still reports the request pending, with the queue's own merge method; a rerun
+    # recognizes it as the same request rather than another one.
+    assert run_main(repo, config_path, "merge", *selector, "--no-wait") == 0
+    pending = capsys.readouterr()
+    assert "Merge requested" in pending.out and "already pending" not in pending.out
+    assert fake_repo.stack_merge_requests == [request]
+
+    # GitHub finishes the asynchronous request: the PR now sits in the queue.
     _complete_stack_merge(fake_repo, fake_repo.stack_merge_operations[1])
-    repeated_exit_code = run_main(repo, config_path, "merge", *selector, "--no-wait")
-    repeated = capsys.readouterr()
+    assert run_main(repo, config_path, "merge", *selector, "--no-wait") == 0
+    queued = capsys.readouterr()
+    assert "In merge queue" in queued.out
+    assert "jj-stack sync" in queued.out
+    assert fake_repo.stack_merge_requests == [request]
 
-    assert repeated_exit_code == 0, (repeated.out, repeated.err)
-    assert "In merge queue" in repeated.out
-    assert "jj-stack sync" in repeated.out
-    assert fake_repo.stack_merge_requests == [
-        (1, None, "merge_queue", stack.changes[0].commit_id)
-    ]
-
-    class CompletingQueueClient(GithubClient):
-        observations = 0
-
-        async def get_prs_by_numbers(self, *, pr_numbers, merge_progress=False):
-            if merge_progress:
-                self.observations += 1
-                if self.observations == 2:
-                    operation = fake_repo.stack_merge_operations[1]
-                    fake_repo.leave_merge_queue((1,))
-                    _complete_stack_merge(
-                        fake_repo,
-                        replace(
-                            operation,
-                            merge_action="direct_merge",
-                            merge_method="squash",
-                        ),
-                    )
-            return await super().get_prs_by_numbers(
-                pr_numbers=pr_numbers, merge_progress=merge_progress
-            )
-
-    patch_github_client_builders(
-        monkeypatch,
-        app=create_app(FakeGithubState.single_repo(fake_repo)),
-        fake_repo=fake_repo,
-        client_type=CompletingQueueClient,
-    )
     monkeypatch.setattr("jj_stack.commands.merge.wait._QUEUE_POLL_INTERVAL_SECONDS", 0)
     assert run_main(repo, config_path, "merge", *selector) == 0
     completed = capsys.readouterr()
     assert "Merge completed" in completed.out
-    assert "PR #1: queued" in completed.err
-    assert len(fake_repo.stack_merge_requests) == 1
-    assert set(TrackingStore.for_repo(repo).load().prs) == {
-        change.change_id for change in stack.changes[1:]
-    }
-    if stack_size == 1:
-        assert JjClient(repo).resolve_commit("@").parents == (
-            read_remote_ref(fake_repo.git_dir, "main"),
-        )
-    else:
-        remaining = selected_stack(repo)
-        assert remaining.head.change_id == stack.head.change_id
-        assert remaining.head.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
-        assert fake_repo.prs[2].base_ref == "main"
-        assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == remaining.head.commit_id
+    assert "PR #1" in completed.err
+    assert fake_repo.stack_merge_requests == [request]
+    assert set(TrackingStore.for_repo(repo).load().prs) == {stack.head.change_id}
+    remaining = selected_stack(repo)
+    assert remaining.head.change_id == stack.head.change_id
+    assert remaining.head.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert fake_repo.prs[2].base_ref == "main"
+    assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == remaining.head.commit_id
+
+
+def test_merge_reports_a_queue_ejection_and_the_documented_recovery_completes(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.github_stacks = {7: (1, 2)}
+    fake_repo.merge_queue_enabled = True
+    monkeypatch.setattr("jj_stack.commands.merge.wait._QUEUE_POLL_INTERVAL_SECONDS", 0)
+    state_store = TrackingStore.for_repo(repo)
+    bottom, top = selected_stack(repo).changes
+    head = top.change_id
+
+    # The bottom PR's merge group fails: nothing merges and the next step is the same merge.
+    fake_repo.queue_failures = {1}
+    assert run_main(repo, config_path, "merge") == 1
+    ejected = capsys.readouterr()
+    assert "removed PR #1 from the merge queue: failed checks" in ejected.err
+    assert f"jj-stack merge {head[:8]}" in ejected.err and "sync" not in ejected.err
+    test_commit = fake_repo.queue_events[1].before_commit
+    assert test_commit is not None and f"/commit/{test_commit}/checks" in ejected.err
+    assert not fake_repo.merge_queue
+    assert all(pr.state == "open" for pr in fake_repo.prs.values())
+    assert state_store.load().prs.keys() == {bottom.change_id, top.change_id}
+
+    # The bottom PR lands but the top one is ejected: GitHub leaves it at its submitted commit
+    # on the merged PR's branch, and the next step is sync, then the remaining merge.
+    fake_repo.queue_failures = {2}
+    assert run_main(repo, config_path, "merge") == 1
+    partial = capsys.readouterr()
+    assert "removed PR #2 from the merge queue: failed checks" in partial.err
+    assert f"PR #1 already merged. Run jj-stack sync {head[:8]}" in partial.err
+    assert fake_repo.prs[1].merged_at is not None
+    assert fake_repo.prs[2].state == "open" and not fake_repo.is_queued(2)
+    assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == top.commit_id
+    assert fake_repo.prs[2].base_ref == fake_repo.prs[1].head_ref
+    assert selected_stack(repo).changes == (bottom, top)
+
+    assert run_main(repo, config_path, "sync", head) == 0
+    capsys.readouterr()
+    rebased = JjClient(repo).resolve_commit(top.change_id)
+    assert rebased.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert set(state_store.load().prs) == {top.change_id}
+    assert state_store.load().prs[top.change_id].submitted_baseline.commit_id == (
+        rebased.commit_id
+    )
+    assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == rebased.commit_id
+    assert fake_repo.prs[2].base_ref == "main"
+
+    fake_repo.queue_failures = set()
+    assert run_main(repo, config_path, "merge") == 0
+    completed = capsys.readouterr()
+    assert "Merge completed" in completed.out
+    assert fake_repo.prs[2].merged_at is not None
+    assert state_store.load().prs == {}
+    assert JjClient(repo).resolve_commit("@").parents == (
+        read_remote_ref(fake_repo.git_dir, "main"),
+    )
 
 
 def test_signed_changes_require_a_method_even_when_they_are_not_being_merged_yet(

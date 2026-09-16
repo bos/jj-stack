@@ -82,7 +82,7 @@ def test_generated_drift_leaves_a_queued_stack_available_for_completion(
         machine.start(size=3, submitted=True, queue=True)
         machine.enqueue_path(0, 2)
         machine.server_change(kind, data)
-        machine.finish_queue(machine.pr("c2").number, "rebase")
+        assert machine.run_queue(None) == ("c1", "c2")
         machine.model_matches()
     finally:
         machine.teardown()

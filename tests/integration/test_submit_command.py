@@ -599,7 +599,7 @@ def test_submit_github_stack_recovers_lost_create_and_retries_blocked_append(
         async def append_to_stack(self, *, stack_number, pr_numbers):
             appended.append(tuple(pr_numbers))
             if len(appended) == 1:
-                fake_repo.prs[pr_numbers[0]].is_queued = True
+                fake_repo.enqueue((pr_numbers[0],))
             return await super().append_to_stack(
                 stack_number=stack_number,
                 pr_numbers=pr_numbers,
@@ -635,7 +635,7 @@ def test_submit_github_stack_recovers_lost_create_and_retries_blocked_append(
         commit_file(repo, f"feature {number}", f"feature-{number}.txt")
     assert run_main(repo, config_path, "submit") == EXIT_GITHUB
     assert fake_repo.github_stacks == {1: (1, 2)}
-    fake_repo.prs[3].is_queued = False
+    fake_repo.leave_merge_queue((3,), reason="failed_checks")
     assert run_main(repo, config_path, "submit") == 0
 
     assert (fake_repo.github_stacks, appended) == (
@@ -652,7 +652,7 @@ def test_submit_leaves_new_suffix_unsubmitted_while_an_ancestor_is_queued(
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     pr = fake_repo.prs[1]
-    pr.is_queued = True
+    fake_repo.enqueue((pr.number,))
     remote_before = remote_refs(fake_repo.git_dir)
     state_store = TrackingStore.for_repo(repo)
     state_before = state_store.load()

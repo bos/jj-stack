@@ -160,7 +160,7 @@ def test_view_and_list_show_queued_prs(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    fake_repo.prs[1].is_queued = True
+    fake_repo.enqueue((1,))
 
     assert run_main(repo, config_path, "view") == 0
     viewed = capsys.readouterr()

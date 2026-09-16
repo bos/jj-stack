@@ -16,6 +16,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, precondition, rule
 
 import jj_stack.cli as cli_module
+import jj_stack.commands.merge.wait as wait_module
 from jj_stack.errors import CliError, DriftError, UnsupportedStackError
 from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient
@@ -122,6 +123,7 @@ class StackMachine(RuleBasedStateMachine):
         )
         self.fake.allow_rebase_merge = True
         self.fake.merge_queue_enabled = queue
+        self.patch.setattr(wait_module, "_QUEUE_POLL_INTERVAL_SECONDS", 0)
         self.jj = JjClient(self.repo)
         self.jj.ensure_pr_branch_fetch_isolation(remote="origin")
         self.trunk = self.trunk_files()
@@ -187,7 +189,9 @@ class StackMachine(RuleBasedStateMachine):
         return tuple(label for label in self.published(path) if self.pr(label).merged_at)
 
     def queued(self, path: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(label for label in self.published(path) if self.pr(label).is_queued)
+        return tuple(
+            label for label in self.published(path) if self.fake.is_queued(self.pr(label).number)
+        )
 
     def dependents(self, label: str, excluding: tuple[str, ...] = ()) -> bool:
         excluded = {self.pr(item).number for item in self.published(excluding)}
@@ -281,7 +285,7 @@ class StackMachine(RuleBasedStateMachine):
             and all(
                 self.pr(label).state == "open"
                 and not self.pr(label).is_draft
-                and not self.pr(label).is_queued
+                and not self.fake.is_queued(self.pr(label).number)
                 and self.pr(label).base_ref
                 == ("main" if position == 0 else self.pr(published[position - 1]).head_ref)
                 for position, label in enumerate(published)
@@ -351,14 +355,12 @@ class StackMachine(RuleBasedStateMachine):
                 number: {
                     members,
                     tuple(
-                        n
-                        for n in members
-                        if self.fake.prs[n].is_queued or self.fake.prs[n].merged_at
+                        n for n in members if self.fake.is_queued(n) or self.fake.prs[n].merged_at
                     ),
                 }
                 if not self.queued(path)
                 and selected.intersection(members)
-                and any(self.fake.prs[n].is_queued for n in members)
+                and any(self.fake.is_queued(n) for n in members)
                 else {members}
                 for number, members in self.fake.github_stacks.items()
             }
@@ -416,7 +418,7 @@ class StackMachine(RuleBasedStateMachine):
                 and active - selected
                 and (
                     selected - set(members)
-                    or any(self.fake.prs[number].is_queued for number in active - selected)
+                    or any(self.fake.is_queued(number) for number in active - selected)
                 )
             ):
                 failures.add((1, None))
@@ -673,29 +675,87 @@ class StackMachine(RuleBasedStateMachine):
         self.ok("merge", "--pull-request", str(pr.number), "--no-wait")
         _complete_stack_merge(self.fake, self.fake.stack_merge_operations[pr.number])
         assert (self.store.load(), remote_refs(self.fake.git_dir)) == before
-        assert self.fake.stack_merge_requests[-1] == (
-            pr.number,
+        assert self.fake.stack_merge_requests[-1] == self.queue_request(labels)
+        assert self.queued(path) == labels
+
+    def queue_request(self, labels: tuple[str, ...]) -> tuple[int, None, str, str]:
+        return (
+            self.pr(labels[-1]).number,
             None,
             "merge_queue",
             self.submitted[labels[-1]].submitted_baseline.commit_id,
         )
-        assert self.queued(path) == labels
 
-    def finish_queue(self, number: int, method: MergeMethod | None) -> None:
-        stack = self.fake.stack_number_for_pr(number)
-        members = (number,) if stack is None else self.fake.github_stacks[stack]
-        queued = tuple(number for number in members if self.fake.prs[number].is_queued)
-        assert queued and queued[-1] == number
-        labels = tuple(
+    def stack_commits(self, path: tuple[str, ...]) -> tuple[str, ...]:
+        changes = selected_stack(self.repo, self.ids[path[-1]]).changes
+        return tuple(change.commit_id for change in changes)
+
+    def unmerged_numbers(self) -> list[int]:
+        return [number for number, pr in self.fake.prs.items() if pr.merged_at is None]
+
+    def landed_since(
+        self, unmerged: list[int], excluding: tuple[str, ...] = ()
+    ) -> tuple[str, ...]:
+        """Labels whose PRs merged since `unmerged` was taken, in PR order."""
+
+        return tuple(
             label
-            for number in queued
+            for number in unmerged
+            if self.fake.prs[number].merged_at is not None
             for label, record in self.submitted.items()
-            if record.pr_identity.pr_number == number
+            if record.pr_identity.pr_number == number and label not in excluding
         )
-        assert len(labels) == len(queued)
-        self.fake.leave_merge_queue(queued)
-        if method is not None:
-            self.merge_on_server(labels, method)
+
+    def run_queue(self, failing: int | None) -> tuple[str, ...]:
+        """Let the fake queue drain, failing one entry's checks, and land what merged."""
+
+        self.fake.queue_failures = set() if failing is None else {failing}
+        unmerged = self.unmerged_numbers()
+        self.fake.run_merge_queue()
+        landed = self.landed_since(unmerged)
+        self.land(landed)
+        return landed
+
+    def wait_for_queue(self, index: int, count: int, failing: int | None) -> None:
+        """Merge through the queue and wait; the fake advances it on each observation."""
+
+        path = self.paths[index]
+        labels = self.published(path)[:count]
+        failing_number = None if failing is None else self.pr(labels[failing]).number
+        self.fake.queue_failures = set() if failing_number is None else {failing_number}
+        unmerged = self.unmerged_numbers()
+        request = self.queue_request(labels)
+        if failing is None:
+            self.merge_path(index, count, None)
+        else:
+            # The merged prefix lands; GitHub leaves the removed PRs at their submitted heads
+            # and bases; nothing else on GitHub moves, and locally only the fetch of trunk does.
+            local = self.snapshot()
+            stack_before = self.stack_commits(path)
+            refs = remote_refs(self.fake.git_dir)
+            bases = {label: self.pr(label).base_ref for label in labels[failing:]}
+            code, output = self.cli("merge", "--pull-request", str(self.pr(labels[-1]).number))
+            assert code == 1, output
+            assert self.last_error is not None, output
+            assert "failed checks" in str(self.last_error), str(self.last_error)
+            after = self.snapshot()
+            assert (after[0], *after[3:7]) == (local[0], *local[3:7])
+            assert self.stack_commits(path) == stack_before
+            refs.pop("refs/heads/main")
+            assert {k: v for k, v in remote_refs(self.fake.git_dir).items() if k in refs} == refs
+            self.land(labels[:failing])
+            for label in labels[failing:]:
+                pr = self.pr(label)
+                assert pr.merged_at is None and pr.state == "open"
+                assert not self.fake.is_queued(pr.number)
+                assert pr.base_ref == bases[label]
+                assert (
+                    self.fake.ref_target(pr.head_ref)
+                    == self.submitted[label].submitted_baseline.commit_id
+                )
+            assert self.fake.stack_merge_requests[-1] == request
+        # The queue ahead of this stack drained during the wait, landing other stacks' PRs.
+        self.land(self.landed_since(unmerged, excluding=path[:count]))
 
     def rebase_on_server(self, index: int) -> None:
         path = self.paths[index]
@@ -718,6 +778,7 @@ class StackMachine(RuleBasedStateMachine):
         published = self.published(path[len(merged) :])
         adopt = bool(merged and published) and all(
             change.commit_id == self.submitted[label].submitted_baseline.commit_id
+            and self.fake.ref_target(self.pr(label).head_ref) != change.commit_id
             for label, change in zip(path, changes, strict=True)
             if label in published
         )
@@ -873,7 +934,7 @@ class StackMachine(RuleBasedStateMachine):
         assert self.outside(selected) == outside
         assert self.jj.query_commits_by_change_ids(untouched) == copies
 
-    def merge_path(self, index: int, count: int, method: MergeMethod) -> None:
+    def merge_path(self, index: int, count: int, method: MergeMethod | None) -> None:
         path = self.paths[index]
         boundary = self.submitted[path[count - 1]]
         scope = self.recovery_scope(path)
@@ -883,13 +944,16 @@ class StackMachine(RuleBasedStateMachine):
             for label in (*path[:count], *scope[len(path) :])
         )
         code, output = self.cli(
-            "merge", "--method", method, "--pull-request", str(boundary.pr_identity.pr_number)
+            "merge",
+            *(() if method is None else ("--method", method)),
+            "--pull-request",
+            str(boundary.pr_identity.pr_number),
         )
         assert code == int(blocked), output
         assert self.fake.stack_merge_requests[-1] == (
             boundary.pr_identity.pr_number,
             method,
-            "direct_merge",
+            "merge_queue" if method is None else "direct_merge",
             boundary.submitted_baseline.commit_id,
         )
         self.land(path[:count])
@@ -1147,7 +1211,11 @@ class StackMachine(RuleBasedStateMachine):
         index = data.draw(st.sampled_from(self.ready()), label="stack")
         count = data.draw(st.integers(1, len(self.published(self.paths[index]))), label="prefix")
         if self.fake.merge_queue_enabled:
-            self.enqueue_path(index, count)
+            if data.draw(st.booleans(), label="wait"):
+                failing = data.draw(st.none() | st.integers(0, count - 1), label="failing entry")
+                self.wait_for_queue(index, count, failing)
+            else:
+                self.enqueue_path(index, count)
         elif external:
             self.server_merge(index, count, method)
         else:
@@ -1172,15 +1240,11 @@ class StackMachine(RuleBasedStateMachine):
     def sync_all(self) -> None:
         self.sync_all_paths()
 
-    @precondition(lambda self: any(pr.is_queued for pr in self.fake.prs.values()))
-    @rule(data=st.data(), method=st.sampled_from((None, *get_args(MergeMethod))))
-    def server_queue(self, data: st.DataObject, method: MergeMethod | None) -> None:
-        numbers = [
-            number
-            for number, operation in self.fake.stack_merge_operations.items()
-            if operation.status == "enqueued"
-        ]
-        self.finish_queue(data.draw(st.sampled_from(numbers), label="queue entry"), method)
+    @precondition(lambda self: bool(self.fake.merge_queue))
+    @rule(data=st.data())
+    def server_queue(self, data: st.DataObject) -> None:
+        numbers = [entry.pr_number for entry in self.fake.merge_queue]
+        self.run_queue(data.draw(st.none() | st.sampled_from(numbers), label="failing entry"))
 
     def rebasable(self) -> list[int]:
         return [
@@ -1221,7 +1285,7 @@ class StackMachine(RuleBasedStateMachine):
         queued_members = {
             number
             for members in self.fake.github_stacks.values()
-            if any(self.fake.prs[number].is_queued for number in members)
+            if any(self.fake.is_queued(number) for number in members)
             for number in members
         }
         labels = [
@@ -1230,7 +1294,7 @@ class StackMachine(RuleBasedStateMachine):
             if not self.merged(p) and not self.rebased.intersection(p)
             for label in p
             if label in self.submitted
-            and not self.pr(label).is_queued
+            and not self.fake.is_queued(self.pr(label).number)
             and self.pr(label).number not in queued_members
             and self.pr(label).state == ("closed" if kind == "reopened_pr" else "open")
             and (

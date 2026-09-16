@@ -44,7 +44,6 @@ class FakeGithubPR:
     title: str
     auto_merge_enabled: bool = False
     check_rollup_state: str | None = None
-    is_queued: bool = False
     merge_state_status: str | None = None
     labels: list[str] = field(default_factory=list)
     requested_reviewers: list[str] = field(default_factory=list)
@@ -99,7 +98,7 @@ class FakeGithubPR:
             "headRepositoryOwner": {"login": self.head_label.partition(":")[0]},
             "id": self.node_id,
             "isDraft": self.is_draft,
-            "mergeQueueEntry": {"id": "queue-entry"} if self.is_queued else None,
+            "mergeQueueEntry": repo.queue_entry_payload(self.number),
             "mergeCommit": (
                 None if self.merge_commit_sha is None else {"oid": self.merge_commit_sha}
             ),
@@ -165,6 +164,40 @@ class FakeStackMergeOperation:
     status: str = "pending"
 
 
+@dataclass(slots=True)
+class FakeQueueEntry:
+    """One pull request in the fake merge queue.
+
+    The queue processes its head entry one phase per merge-progress observation: `queued`
+    gets a merge-group commit and starts checks, `checks` either removes the entry along with
+    its stack's entries behind it or lets it leave the queue, `leaving` records the removal as
+    merged, and `recorded` performs the merge. Measured on 2026-09-16: GitHub drops the entry
+    about a second before it records the removal as `merged`, and records the merge itself a
+    second after that, so `leaving` and `recorded` entries are invisible to GraphQL while the PR
+    is still open. Removing a whole stack behind a failing entry is an assumption, not a
+    measurement.
+    """
+
+    pr_number: int
+    phase: str = "queued"
+    group_commit: str | None = None
+
+    @property
+    def visible(self) -> bool:
+        return self.phase in {"queued", "checks"}
+
+
+@dataclass(slots=True, frozen=True)
+class FakeQueueEvent:
+    """Recorded merge-queue timeline event: added, or removed with GitHub's reason token."""
+
+    kind: str
+    reason: str | None = None
+    before_commit: str | None = None
+    # The PR head when the entry was removed; a later push means the PR moved on.
+    head_sha: str | None = None
+
+
 @dataclass(slots=True, frozen=True)
 class FakeGithubPREvent:
     """Observable PR mutation recorded by the fake API."""
@@ -208,6 +241,13 @@ class FakeGithubRepo:
     allow_rebase_merge: bool = False
     allow_squash_merge: bool = True
     merge_queue_enabled: bool = False
+    merge_queue_method: str = "squash"
+    merge_queue: list[FakeQueueEntry] = field(default_factory=list)
+    # The latest queue timeline event per PR, as the merge-progress query selects it.
+    queue_events: dict[int, FakeQueueEvent] = field(default_factory=dict)
+    # Pull requests whose merge-group check fails when the queue reaches them. The queue
+    # advances one phase per merge-progress GraphQL query, so a waiting `merge` drives it.
+    queue_failures: set[int] = field(default_factory=set)
     # Whether the token may push. A read-only clone of an upstream repo reports False.
     push_permission: bool = True
     stack_merge_operations: dict[int, FakeStackMergeOperation] = field(default_factory=dict)
@@ -230,10 +270,165 @@ class FakeGithubRepo:
     def full_name(self) -> str:
         return f"{self.owner}/{self.name}"
 
-    def leave_merge_queue(self, pr_numbers: tuple[int, ...]) -> None:
+    def queue_entry(self, pr_number: int) -> FakeQueueEntry | None:
+        """The visible queue entry for a PR; entries that are leaving no longer show."""
+
+        return next((e for e in self.merge_queue if e.pr_number == pr_number and e.visible), None)
+
+    def is_queued(self, pr_number: int) -> bool:
+        return self.queue_entry(pr_number) is not None
+
+    def enqueue(self, pr_numbers: tuple[int, ...]) -> None:
+        """Queue the PRs in order; GitHub ignores a PR that is already queued."""
+
         for number in pr_numbers:
-            self.prs[number].is_queued = False
+            if self.queue_entry(number) is None:
+                self.merge_queue.append(FakeQueueEntry(pr_number=number))
+                self.queue_events[number] = FakeQueueEvent(kind="added")
+
+    def leave_merge_queue(self, pr_numbers: tuple[int, ...], *, reason: str) -> None:
+        """Drop entries without merging and record GitHub's removal reason for each."""
+
+        for number in pr_numbers:
+            entry = next((e for e in self.merge_queue if e.pr_number == number), None)
+            if entry is not None:
+                self.merge_queue.remove(entry)
+                self.queue_events[number] = FakeQueueEvent(
+                    kind="removed",
+                    reason=reason,
+                    before_commit=entry.group_commit,
+                    head_sha=self.ref_target(self.prs[number].head_ref),
+                )
             self.stack_merge_operations.pop(number, None)
+
+    def advance_merge_queue(self) -> None:
+        """Move the head entry one phase, as GitHub would have between two observations."""
+
+        if not self.merge_queue:
+            return
+        entry = self.merge_queue[0]
+        pr = self.prs[entry.pr_number]
+        trunk = self.default_branch or "main"
+        if entry.phase == "queued":
+            heads = self.branch_heads()
+            entry.group_commit = self._replay_commit(
+                commit_id=heads[pr.head_ref],
+                extra_header="x-fake-merge-group true",
+                parent_commit_id=heads[trunk],
+            )
+            entry.phase = "checks"
+        elif entry.phase == "checks":
+            if entry.pr_number in self.queue_failures:
+                # A failing group removes the entry and its stack's entries queued behind it.
+                stack_number = self.stack_number_for_pr(entry.pr_number)
+                members = () if stack_number is None else self.github_stacks[stack_number]
+                self.leave_merge_queue(
+                    tuple(
+                        item.pr_number
+                        for item in self.merge_queue
+                        if item is entry or item.pr_number in members
+                    ),
+                    reason="failed_checks",
+                )
+            else:
+                entry.phase = "leaving"
+        elif entry.phase == "leaving":
+            self.queue_events[entry.pr_number] = FakeQueueEvent(
+                kind="removed", reason="merged", before_commit=entry.group_commit
+            )
+            entry.phase = "recorded"
+        else:
+            self.merge_queue.remove(entry)
+            self.update_pr_base(pr, base_ref=trunk)
+            self.apply_pr_merge(pr, merge_method=self.merge_queue_method)
+            self._rewrite_unqueued_stack_members_above(pr.number, base_ref=trunk)
+
+    def run_merge_queue(self) -> None:
+        """Process the whole queue, as GitHub would while nobody is watching."""
+
+        for _ in range(4 * len(self.merge_queue) + 1):
+            if not self.merge_queue:
+                return
+            self.advance_merge_queue()
+        raise AssertionError("fake merge queue did not drain")
+
+    def _rewrite_unqueued_stack_members_above(self, pr_number: int, *, base_ref: str) -> None:
+        """After a queue merge, GitHub rebases stack members that were never queued.
+
+        Measured 2026-09-16: a member still queued, or removed from the queue in the same run,
+        keeps its head and base. That the members above it also keep theirs, because their
+        bases did not move, is an assumption.
+        """
+
+        stack_number = self.stack_number_for_pr(pr_number)
+        if stack_number is None:
+            return
+        members = self.github_stacks[stack_number]
+        previous_base = base_ref
+        for number in members[members.index(pr_number) + 1 :]:
+            pr = self.prs[number]
+            if self.is_queued(number) or self.was_ejected(number) or pr.state != "open":
+                return
+            self.rewrite_pr_onto_base(pr, base_ref=previous_base)
+            previous_base = pr.head_ref
+
+    def was_ejected(self, pr_number: int) -> bool:
+        """Whether the PR was removed from the queue without merging and has not moved since."""
+
+        event = self.queue_events.get(pr_number)
+        return (
+            event is not None
+            and event.kind == "removed"
+            and event.reason != "merged"
+            and self.ref_target(self.prs[pr_number].head_ref) == event.head_sha
+        )
+
+    def queue_entry_payload(self, pr_number: int) -> dict[str, object] | None:
+        entry = self.queue_entry(pr_number)
+        if entry is None:
+            return None
+        visible = [item for item in self.merge_queue if item.visible]
+        position = visible.index(entry) + 1
+        checks = (
+            None
+            if entry.group_commit is None
+            else {
+                "contexts": {
+                    "totalCount": 1,
+                    "checkRunCountsByState": [],
+                    "statusContextCountsByState": [{"state": "PENDING", "count": 1}],
+                }
+            }
+        )
+        return {
+            "id": f"MQE_{pr_number}",
+            "position": position,
+            "state": "QUEUED" if entry.phase == "queued" else "AWAITING_CHECKS",
+            "estimatedTimeToMerge": 60 * position,
+            "mergeQueue": {"entries": {"totalCount": len(visible)}},
+            "headCommit": (
+                None
+                if entry.group_commit is None
+                else {"oid": entry.group_commit, "statusCheckRollup": checks}
+            ),
+        }
+
+    def queue_timeline_payload(self, pr_number: int) -> list[dict[str, object]]:
+        """The last queue event as the merge-progress query selects it."""
+
+        event = self.queue_events.get(pr_number)
+        if event is None:
+            return []
+        if event.kind != "removed":
+            return [{}]
+        return [
+            {
+                "reason": event.reason,
+                "beforeCommit": (
+                    None if event.before_commit is None else {"oid": event.before_commit}
+                ),
+            }
+        ]
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -363,7 +558,7 @@ class FakeGithubRepo:
         pr.state = state
         if state == "closed":
             # GitHub removes a closed pull request from the merge queue.
-            self.leave_merge_queue((pr.number,))
+            self.leave_merge_queue((pr.number,), reason="pr_closed")
         self.pr_events.append(
             FakeGithubPREvent(
                 kind="state",
@@ -955,9 +1150,9 @@ def _register_github_stack_routes(app: FastAPI, fake_state: FakeGithubState) -> 
         members = stacks[stack_number]
         prs = repo.prs
         retained = tuple(
-            number for number in members if prs[number].is_queued or prs[number].merged_at
+            number for number in members if repo.is_queued(number) or prs[number].merged_at
         )
-        if retained == members and any(prs[number].is_queued for number in members):
+        if retained == members and any(repo.is_queued(number) for number in members):
             raise HTTPException(status_code=422, detail="No pull requests can be removed.")
         if retained:
             stacks[stack_number] = retained
@@ -1166,7 +1361,7 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
                 ),
                 status_code=409,
             )
-        if pr.is_queued:
+        if repo.is_queued(pr_number):
             return JSONResponse(
                 {
                     "status": "enqueued",
@@ -1191,7 +1386,8 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
         operation = FakeStackMergeOperation(
             expected_head_sha=expected_head_sha,
             merge_action=merge_action,
-            merge_method=merge_method,
+            # A queue request reports the queue's own method, as GitHub does.
+            merge_method="default" if merge_action == "merge_queue" else merge_method,
             message="Merge request enqueued.",
             pr_number=pr_number,
             uuid=f"fake-stack-merge-{len(repo.stack_merge_requests) + 1}",
@@ -1519,8 +1715,7 @@ def _complete_stack_merge(
         )
         return
     if operation.merge_action == "merge_queue":
-        for pr in candidates:
-            pr.is_queued = True
+        repo.enqueue(tuple(pr.number for pr in candidates))
         operation.status = "enqueued"
         operation.message = "Pull requests were added to the merge queue."
         return
@@ -1573,7 +1768,7 @@ def _validate_stack_members(
                 status_code=422, detail=f"Pull request #{number} has auto-merge enabled"
             )
     if any(
-        (pr := resolved[number]).state != "open" or pr.is_queued for number in admitted_members
+        resolved[number].state != "open" or repo.is_queued(number) for number in admitted_members
     ):
         raise HTTPException(status_code=422, detail="Pull request is not admissible.")
     if any(
@@ -1725,6 +1920,9 @@ def _graphql_repo_payload(
         raise HTTPException(status_code=422, detail="Unsupported GraphQL query.")
 
     payload: dict[str, object] = {}
+    if "REMOVED_FROM_MERGE_QUEUE_EVENT" in query:
+        # Each merge-progress observation sees the queue one phase further along.
+        repo.advance_merge_queue()
     requested_prs = [
         pr
         for _alias, pr_number in pr_number_queries
@@ -1754,8 +1952,7 @@ def _graphql_repo_payload(
                 "pageInfo": {"hasNextPage": False},
             }
         if "REMOVED_FROM_MERGE_QUEUE_EVENT" in query:
-            # The fake does not record merge queue events.
-            graphql_payload["timelineItems"] = {"nodes": []}
+            graphql_payload["timelineItems"] = {"nodes": repo.queue_timeline_payload(pr_number)}
         elif "timelineItems(" in query:
             force_pushes = repo.pr_force_pushes.get(pr_number, ())
             graphql_payload["timelineItems"] = {

@@ -121,7 +121,7 @@ def test_unstack_locked_stack_stops_without_closing_or_forgetting(
 
     class LockedStackClient(GithubClient):
         async def unstack(self, *, stack_number):
-            fake_repo.prs[1].is_queued = True
+            fake_repo.enqueue((1,))
             return await super().unstack(stack_number=stack_number)
 
     patch_github_client_builders(
