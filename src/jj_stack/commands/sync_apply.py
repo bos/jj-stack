@@ -20,7 +20,7 @@ from jj_stack.jj.client import PRRefUpdate, quote_revset_symbol
 from jj_stack.models.github import GithubPR, GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import SubmittedBaseline, TrackedPR
-from jj_stack.stack.convergence import all_at_baseline
+from jj_stack.stack.convergence import adopts_github_rewrite
 from jj_stack.stack.convergence_models import (
     ConvergenceActions,
     GithubStackMergePlan,
@@ -166,9 +166,7 @@ def _apply_local_convergence(
 ) -> dict[ChangeId, tuple[LocalCommit, ...]]:
     actions = plan.actions
     rewritten = plan.rewritten_changes if isinstance(plan, GithubStackMergePlan) else ()
-    # GitHub rewrites each remaining PR from its submitted baseline. Use GitHub's commits only
-    # when every local change is still at that baseline; otherwise rebase and resubmit them all.
-    adopt = all_at_baseline(rewritten)
+    adopt = adopts_github_rewrite(rewritten)
     adopted_ids = {item.change_id for item in rewritten} if adopt else set()
     rebased = (
         (
@@ -182,11 +180,7 @@ def _apply_local_convergence(
         return _observe_removal_dependencies(context=context, actions=actions)
     if isinstance(plan, GithubStackMergePlan) and adopt and rewritten:
         top = rewritten[-1]
-        replaced = tuple(
-            item.local_change.commit_id
-            for item in rewritten
-            if item.local_change.commit_id != item.pr.head.sha
-        )
+        replaced = tuple(item.local_change.commit_id for item in rewritten)
         destination = top.pr.head.sha
         attachment = context.jj_client.import_remote_pr_branch_ref(
             remote=remote_name,
@@ -326,7 +320,7 @@ def _verified_local_rebase(
     desired = local
     operation_id: str | None = None
     rewrite_args = plan.actions.rewrite_args
-    if all_at_baseline(adopted):
+    if adopts_github_rewrite(adopted):
         operation_id = context.jj_client.prepare_rebase_changes(
             change_ids=tuple(
                 change.change_id for change in (*local, *plan.actions.working_copy_children)

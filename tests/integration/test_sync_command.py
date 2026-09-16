@@ -456,6 +456,38 @@ def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
     assert remote_survivor != survivor.commit_id
 
 
+def test_sync_rebases_an_untouched_survivor_after_a_queue_ejection(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    state_store = TrackingStore.for_repo(repo)
+    on_trunk, survivor = selected_stack(repo).changes
+    # The queue merged the bottom PR and then ejected the top one. GitHub leaves an ejected PR
+    # at its submitted commit and on its old base instead of rewriting it.
+    fake_repo.github_stacks = {7: (1, 2)}
+    fake_repo.apply_squash_merge(fake_repo.prs[1])
+    assert fake_repo.prs[2].head_sha == survivor.commit_id
+    assert fake_repo.prs[2].base_ref != "main"
+
+    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    state = state_store.load()
+    assert on_trunk.change_id not in state.prs
+    rebased_survivor = JjClient(repo).resolve_commit(survivor.change_id)
+    assert rebased_survivor.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert JjClient(repo).resolve_commit("@").parents == (rebased_survivor.commit_id,)
+    assert state.prs[survivor.change_id].submitted_baseline.commit_id == (
+        rebased_survivor.commit_id
+    )
+    assert fake_repo.prs[2].head_sha == rebased_survivor.commit_id
+    assert fake_repo.prs[2].base_ref == "main"
+
+
 def test_sync_rejects_unselected_mutable_copy_after_github_rewrite(
     tmp_path: Path,
     monkeypatch,

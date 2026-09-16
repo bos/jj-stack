@@ -500,13 +500,13 @@ merges. A matching full change ID on trunk identifies the successor rather than
 an arbitrary visible side copy. When trunk has no matching change ID, `sync` removes the
 old local change without relabeling that commit.
 
-When GitHub merges part of a stack and rewrites the remaining PRs, GitHub's rewrite of
-each remaining change starts from its submitted baseline. If every remaining local change is still
-at its baseline, `sync` uses the commits GitHub reports rather than replaying equivalent
-diffs; if any remaining change has local edits, `sync` adopts none, rebases the remaining changes
-onto trunk, records GitHub's reported heads as their baselines, and republishes them. It
-accepts those heads and bases only while a merged PR in the same GitHub stack matches its saved
-record and its merge result is on trunk.
+When GitHub merges part of a stack, each remaining PR is either rewritten from its submitted
+baseline or left at its submitted commit. `sync` uses the commits GitHub reports, rather than
+replaying equivalent diffs, only if every remaining local change is still at its baseline and
+GitHub rewrote every remaining PR. Otherwise it adopts none, rebases the remaining changes onto
+trunk, records GitHub's reported heads as their baselines, and republishes them. It accepts those
+heads and bases only while a merged PR in the same GitHub stack matches its saved record and its
+merge result is on trunk.
 
 #### Native GitHub stack rebase
 

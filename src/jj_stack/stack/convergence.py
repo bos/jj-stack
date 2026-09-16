@@ -168,7 +168,7 @@ def build_selected_convergence_plan(
         working_copy_children=working_copy_children,
         rewrite_args=observation.rewrite_args,
     )
-    adopting = isinstance(effect, _GithubStackMerge) and all_at_baseline(adopted)
+    adopting = isinstance(effect, _GithubStackMerge) and adopts_github_rewrite(adopted)
     _require_no_divergent_remaining_changes(
         actions, adopted=adopted if adopting else (), head=head
     )
@@ -270,9 +270,17 @@ def _require_no_divergent_remaining_changes(
             raise divergent_change_error(change.change_id, head=head)
 
 
-def all_at_baseline(items: tuple[RewrittenPRChange, ...]) -> bool:
+def adopts_github_rewrite(items: tuple[RewrittenPRChange, ...]) -> bool:
+    """Whether sync takes GitHub's rewritten commits instead of rebasing the local changes.
+
+    That needs every remaining local change still at its baseline and GitHub to have rewritten
+    every remaining PR. GitHub leaves the remaining PRs untouched when it ejects them from the
+    merge queue after a lower PR lands, and those need an ordinary rebase and resubmit.
+    """
+
     return all(
         item.local_change.commit_id == item.candidate.submitted_baseline.commit_id
+        and item.pr.head.sha != item.candidate.submitted_baseline.commit_id
         for item in items
     )
 
