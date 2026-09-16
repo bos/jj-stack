@@ -175,7 +175,7 @@ through a merge queue.
 | `submit` | Create PRs and refresh the selected stack; only this command publishes new changes. |
 | `sync` | Update a local stack after a merge or native GitHub stack rebase. |
 | `sync --all` | Sync stacks after merges and finish eligible PRs without local copies. |
-| `merge` | Request a GitHub merge; run sync after a direct merge completes. |
+| `merge` | Request a GitHub merge; wait for completion and run sync unless `--no-wait` is used. |
 | `unstack` | Remove a GitHub stack; `--local` instead forgets local tracking. |
 | `cleanup` | Remove eligible artifacts and links; optionally close explicitly selected PRs. |
 | `checkout` | Adopt existing PRs and edit the selected change in the current workspace. |
@@ -186,7 +186,7 @@ through a merge queue.
 
 `jj` owns general history editing. There is no standalone `jj-stack rebase` command.
 
-`sync` and `merge` fetch before planning, including during `--dry-run`. A direct merge fetches
+`sync` and `merge` fetch before planning, including during `--dry-run`. A merge that waits fetches
 again after GitHub completes it. `checkout --pull-request` fetches when the selected PR's head
 commit is not already local. Other commands do not fetch. Commands evaluate `trunk()` after any
 fetch they perform; without a fetch, they use the locally available trunk.
@@ -368,11 +368,22 @@ queue object or a `MERGE_QUEUE` branch rule. If that lookup fails, `merge` stops
 error before requesting anything. It sends the explicit action `merge_queue` when a queue is
 found and `direct_merge` otherwise.
 
-A `merged` result means a direct merge completed; `merge` then fetches and syncs the whole
-selected stack before returning, including changes above the last merged PR and commits GitHub
-rewrote. An `enqueued` result means GitHub accepted the selected PRs into the queue. The command
-succeeds, but the user must wait for the queued merge to finish before running `sync`. A rejection
-leaves local changes unchanged.
+`merge` waits for completion by default, then fetches and syncs the whole selected stack before
+returning, including changes above the last merged PR and commits GitHub rewrote. An `enqueued`
+result means GitHub accepted the PRs into the queue; waiting continues by observing every selected
+PR until all report merged. Observations must still match the planned PR identities and submitted
+heads. Queue progress is shown but never determines merge eligibility. GitHub removes a queue
+entry before it records the merge, so an open, unqueued PR with no recorded non-merge reason
+still counts as merging until that state persists; a recorded reason other than a merge is a
+removal. A removal stops the wait without local changes, reports the recorded reason and the
+temporary merge commit, and names the next step: `sync` when a lower PR already merged, otherwise
+the same `merge` again.
+
+`--no-wait` returns after GitHub accepts the request; the user runs `sync` once GitHub merges.
+Interrupting a wait does not cancel the request. Rerunning `merge` for the same action and
+expected head resumes waiting; a different action or expected head stops. A queue request's merge
+method is not part of that identity because the queue chooses it. Queue waiting has no deadline;
+polling a direct merge request does. A rejection leaves local changes unchanged.
 
 Automatic reconciliation identifies the containing stack by the full change ID of the head
 resolved before the merge request. It does not reinterpret the original revset
@@ -675,7 +686,7 @@ changes that explicit submit boundaries placed in several native GitHub stacks. 
 not segment the path by GitHub resource or infer an omitted submit boundary.
 
 Both report whether an open PR has a merge-queue entry; position and intermediate queue phases
-are not modeled.
+are not shown.
 
 Both report GitHub's merge state for an open PR alongside its reviews and checks. GitHub computes
 that state lazily, so an unknown state is not reported or polled. `view --verbose` also reads

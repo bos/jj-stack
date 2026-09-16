@@ -3,9 +3,10 @@
 from collections.abc import Mapping
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import AliasPath, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from jj_stack.identifiers import CommitId
+from jj_stack.models.github_details import GithubMergeQueueEntry
 
 CheckRollupStatus = Literal["failed", "passed", "pending"]
 PRState = Literal["open", "closed", "merged"]
@@ -139,7 +140,14 @@ class GithubPR(BaseModel):
     head_branch_exists: bool = True
     html_url: str
     is_draft: bool = Field(default=False, alias="draft")
-    is_queued: bool = False
+    merge_queue_entry: GithubMergeQueueEntry | None = None
+    queue_removal_reason: str | None = Field(
+        default=None, validation_alias=AliasPath("timelineItems", "nodes", 0, "reason")
+    )
+    queue_test_commit: CommitId | None = Field(
+        default=None,
+        validation_alias=AliasPath("timelineItems", "nodes", 0, "beforeCommit", "oid"),
+    )
     merge_commit_sha: CommitId | None = None
     merge_state_status: str | None = None
     merged_at: str | None = None
@@ -148,6 +156,10 @@ class GithubPR(BaseModel):
     review_decision: str | None = None
     state: PRState
     title: str
+
+    @property
+    def is_queued(self) -> bool:
+        return self.merge_queue_entry is not None
 
     @model_validator(mode="after")
     def _normalize_merged_state(self) -> Self:
@@ -175,7 +187,8 @@ class GithubPR(BaseModel):
             },
             "head_branch_exists": value.get("headRef", True) is not None,
             "html_url": value.get("url"),
-            "is_queued": value.get("mergeQueueEntry") is not None,
+            "merge_queue_entry": value.get("mergeQueueEntry"),
+            "timelineItems": value.get("timelineItems"),
             "merge_commit_sha": _graphql_merge_commit_oid(value.get("mergeCommit")),
             "merge_state_status": value.get("mergeStateStatus"),
             "merged_at": value.get("mergedAt"),

@@ -108,19 +108,15 @@ When you're ready to land the stack, `jj-stack merge` asks GitHub to merge it fr
 Use `--pull-request <pr>` to stop at an earlier PR. GitHub decides whether its checks and
 review rules allow the requested group to merge.
 
-Once the PRs have merged, `jj-stack sync` rebases your remaining changes onto the updated
-trunk and updates their PRs to match. It also removes merged PR branches that are no longer
-needed.
+`jj-stack merge` waits for GitHub, including its merge queue, then rebases your remaining
+changes onto the updated trunk, updates their PRs to match, and removes PR branches that are no
+longer needed. Run `jj-stack sync <head-change-id>` yourself only after `--no-wait`, an
+interrupted wait, a merge made through GitHub, or GitHub's **Rebase stack** action, once GitHub
+has finished.
 
-If GitHub merges immediately, without a merge queue, this is called a **direct merge**.
-`jj-stack merge` runs the sync automatically in this case. For a queued merge or a merge made
-through GitHub's UI, wait for GitHub to finish, then run `jj-stack sync <head-change-id>`
-yourself. You also need to run it after GitHub's **Rebase stack** action finishes.
-
-Use `sync` to bring these completed GitHub merges and stack rebases back into your local work.
 To rebase onto newer trunk changes at any other time, use `jj rebase`, then publish the result
-with `jj-stack submit`. See
-[merge and sync](guides/merge-and-sync.md) for partial merges and queues.
+with `jj-stack submit`. See [merge and sync](guides/merge-and-sync.md) for partial merges and
+queues.
 
 ## When jj-stack is unsure, it stops
 

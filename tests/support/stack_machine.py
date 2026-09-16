@@ -670,7 +670,8 @@ class StackMachine(RuleBasedStateMachine):
         labels = self.published(path)[:count]
         pr = self.pr(labels[-1])
         before = self.store.load(), remote_refs(self.fake.git_dir)
-        self.ok("merge", "--pull-request", str(pr.number))
+        self.ok("merge", "--pull-request", str(pr.number), "--no-wait")
+        _complete_stack_merge(self.fake, self.fake.stack_merge_operations[pr.number])
         assert (self.store.load(), remote_refs(self.fake.git_dir)) == before
         assert self.fake.stack_merge_requests[-1] == (
             pr.number,

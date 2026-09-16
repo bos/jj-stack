@@ -88,9 +88,9 @@ performs immediately, it uses your explicit method or prefers rebase, then squas
 commit among the allowed methods. When several methods are allowed, signed stacks require an
 explicit choice because merging can discard signatures.
 
-It also updates your remaining local changes and PRs and cleans up unused branches. If a merge
-finishes through GitHub or a merge queue, `jj-stack sync` handles that follow-up work. See
-[Merge and sync](guides/merge-and-sync.md) for the workflow.
+It waits through merge queues, updates your remaining local changes and PRs, and cleans up unused
+branches. If you stop waiting or merge through GitHub, `jj-stack sync` handles that follow-up
+work. See [Merge and sync](guides/merge-and-sync.md) for the workflow.
 
 ## `jj-stack` and `jj-gh`
 

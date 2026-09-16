@@ -4,20 +4,19 @@ Starting at the bottom of the stack, `jj-stack` selects consecutive open, non-dr
 requests. Each must still match the commit that was last submitted; GitHub decides whether
 reviews, checks, conflicts, and repo rules allow the merge.
 
-For a direct merge, one that GitHub performs immediately rather than through a merge queue, the
-command waits for GitHub to finish. It then fetches trunk, removes the merged changes from the
-local stack, rebases any remaining changes onto the updated trunk, and updates their existing
-pull requests.
+The command waits for GitHub to finish, including through a merge queue. It then fetches trunk,
+removes the merged changes from the local stack, rebases any remaining changes onto the updated
+trunk, and updates their existing pull requests.
 
-When the trunk branch uses a merge queue, the command adds the pull requests to the queue and
-exits once GitHub accepts them. It does not wait for them to merge or update the local stack.
-After GitHub finishes, run `jj-stack sync <head-change-id>`.
+Use `--no-wait` to return once GitHub accepts the request, or press Ctrl-C to stop waiting;
+neither cancels the request. After GitHub finishes, run `jj-stack sync <head-change-id>`.
 
-For a direct merge, `--method` chooses among the merge methods the repo allows. Without it, the
-command uses `jj-stack.merge_method` from your jj config, or the repo's only allowed method, and
-otherwise prefers rebase, then squash, then a merge commit. If several methods are allowed and the
-stack contains signed commits, choose one explicitly: merging can discard signatures. A merge
-queue chooses its own method and ignores `--method`.
+For a direct merge, one that GitHub performs without a merge queue, `--method` chooses among the
+merge methods the repo allows. Without it, the command uses `jj-stack.merge_method` from your jj
+config, or the repo's only allowed method, and otherwise prefers rebase, then squash, then a
+merge commit. If several methods are allowed and the stack contains signed commits, choose one
+explicitly: merging can discard signatures. A merge queue chooses its own method and ignores
+`--method`.
 
 Common examples:
 
@@ -82,6 +81,12 @@ class PreparedMerge:
     target: GithubTarget
     target_change_id: ChangeId | None
 
+    @property
+    def sync_head(self) -> str:
+        """Short change ID of the stack head that sync uses after the merge."""
+
+        return short_change_id(self.stack.head.change_id)
+
 
 def merge(
     *,
@@ -89,6 +94,7 @@ def merge(
     debug: bool,
     dry_run: bool,
     merge_method: str | None,
+    no_wait: bool = False,
     pr: str | None,
     repo: Path | None,
     revset: str | None,
@@ -108,6 +114,7 @@ def merge(
                 context=context,
                 dry_run=dry_run,
                 merge_method=merge_method,
+                no_wait=no_wait,
                 pr=pr,
                 revset=revset,
             )
@@ -119,6 +126,7 @@ async def _run_merge(
     context: CommandContext,
     dry_run: bool,
     merge_method: str | None,
+    no_wait: bool,
     pr: str | None,
     revset: str | None,
 ) -> int:
@@ -136,11 +144,13 @@ async def _run_merge(
             target_change_id=target_change_id,
         )
     async with context.open_github_client(repo=prepared_merge.target.repo) as github_client:
-        result, github_repo_state = await _stream_merge_async(prepared_merge, github_client)
-        _print_merge_result(result)
+        result, github_repo_state = await _stream_merge_async(
+            prepared_merge, github_client, no_wait=no_wait
+        )
+        _print_merge_result(result, sync_head=prepared_merge.sync_head)
         if result.blocked:
             return 1
-        if result.enqueued or not result.applied:
+        if result.pending or not result.applied:
             return 0
         sync_change_id = prepared_merge.stack.head.change_id
         console.output("Updating the local stack after the completed merge:")
@@ -155,29 +165,27 @@ async def _run_merge(
             )
         except BaseException as error:
             _warn_incomplete_post_merge_sync(
-                sync_change_id, has_recovery_hint=error_hint(error) is not None
+                prepared_merge.sync_head, has_recovery_hint=error_hint(error) is not None
             )
             if isinstance(error, GithubClientError):
                 raise CliError(
                     "Could not update the local stack after the completed merge.",
                     hint=t"Resolve the GitHub error, then run "
-                    t"{ui.cmd(f'jj-stack sync {short_change_id(sync_change_id)}')}.",
+                    t"{ui.cmd(f'jj-stack sync {prepared_merge.sync_head}')}.",
                 ) from error
             raise
         if exit_code:
-            _warn_incomplete_post_merge_sync(sync_change_id, has_recovery_hint=True)
+            _warn_incomplete_post_merge_sync(prepared_merge.sync_head, has_recovery_hint=True)
         return exit_code
 
 
-def _warn_incomplete_post_merge_sync(
-    sync_change_id: str, *, has_recovery_hint: bool = False
-) -> None:
+def _warn_incomplete_post_merge_sync(sync_head: str, *, has_recovery_hint: bool = False) -> None:
     console.warning(
         (
             t"GitHub completed the merge, but the follow-up work did not finish. Do not run "
             t"{ui.cmd('jj-stack merge')} again.",
             (
-                t" Continue with {ui.cmd(f'jj-stack sync {short_change_id(sync_change_id)}')}."
+                t" Continue with {ui.cmd(f'jj-stack sync {sync_head}')}."
                 if not has_recovery_hint
                 else ""
             ),
@@ -229,7 +237,7 @@ def _prepare_merge(
 
 
 async def _stream_merge_async(
-    prepared_merge: PreparedMerge, github_client: GithubClient
+    prepared_merge: PreparedMerge, github_client: GithubClient, *, no_wait: bool
 ) -> tuple[MergeResult, GithubRepo]:
     stack = prepared_merge.stack
     github_repo = prepared_merge.target.repo
@@ -295,6 +303,7 @@ async def _stream_merge_async(
     execution = MergeExecutionInputs(
         repo=github_client.repo,
         selected_head=short_change_id(prepared_merge.target_change_id or stack.head.change_id),
+        sync_head=prepared_merge.sync_head,
         trunk_branch=trunk_branch,
         trunk_subject=stack.trunk.subject,
     )
@@ -317,6 +326,7 @@ async def _stream_merge_async(
         merge_action=merge_action,
         merge_method=resolved_merge_method,
         merge=async_merge,
+        no_wait=no_wait,
     ), github_repo_state
 
 
@@ -370,7 +380,7 @@ def _resolve_merge_method(
     return allowed_methods[0]
 
 
-def _print_merge_result(result: MergeResult) -> None:
+def _print_merge_result(result: MergeResult, *, sync_head: str) -> None:
     console.output(
         t'Trunk: {ui.bookmark(result.trunk_branch)}, observed at "{result.trunk_subject}"'
     )
@@ -386,15 +396,17 @@ def _print_merge_result(result: MergeResult) -> None:
         console.output(
             t"GitHub reported final trunk commit {ui.commit_id(result.final_trunk_commit_id)}."
         )
-    if result.enqueued:
+    if result.pending:
         console.output(
-            "Wait for GitHub to finish merging, then run jj-stack sync for this stack."
+            t"After GitHub finishes merging, run {ui.cmd(f'jj-stack sync {sync_head}')}."
         )
 
 
 def _result_header(result: MergeResult) -> str:
-    if result.enqueued:
+    if result.pending == "enqueued":
         return "In merge queue:"
+    if result.pending:
+        return "Merge requested:"
     if result.applied:
         return "Merge completed:"
     if result.blocked:

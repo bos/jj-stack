@@ -11,8 +11,8 @@ stack. Once the PRs have merged, `jj-stack sync` updates your local stack and an
 pull requests.
 
 GitHub can perform the merge immediately or put it through a merge queue. An immediate merge
-is called a **direct merge**, and `jj-stack merge` runs the sync automatically in this case.
-For a queued merge, you run `sync` yourself after GitHub finishes.
+is called a **direct merge**. In both cases, `jj-stack merge` waits for completion and runs
+the sync automatically.
 
 ## Before merging
 
@@ -80,7 +80,7 @@ For example, in A → B → C, suppose the PRs are #1, #2, and #3. To merge only
 jj-stack merge --pull-request 1 --method squash
 ```
 
-After a direct merge, PR #1 is merged, PR #2 targets `main`, and PR #3 still targets PR #2's
+After the command finishes, PR #1 is merged, PR #2 targets `main`, and PR #3 still targets PR #2's
 branch. Both remaining PRs keep their numbers and discussions:
 
 ```mermaid
@@ -124,19 +124,25 @@ changes may still depend on the original local changes. `sync` rebases that work
 squashed result and removes the old copies. Other merge methods also need `sync` to update
 the remaining PRs and remove unused branches.
 
-### Direct merges
-
-For a direct merge, `merge` waits for GitHub to finish and runs `sync` before it returns.
-Your local stack and remaining PRs are then ready for you to keep working.
-
 ### Merge queues
 
-When a merge queue is in use, `merge` returns once GitHub accepts the PRs into the queue.
-They may still be waiting to merge at that point. Wait until GitHub reports that the merge
-has finished, then run `sync` for that stack.
+GitHub tests each queued PR on a temporary merge commit that combines it with the PRs ahead of
+it, so those checks appear on that commit rather than on the PR's own Checks tab. While waiting,
+`merge` shows each PR's queue position and the state of those checks.
+
+If GitHub removes a PR from the queue, `merge` stops, reports GitHub's reason, links to the
+checks on that commit, and names the next step. See [queue removal recovery][queue-removal].
+
+[queue-removal]: ../troubleshooting.md#a-stack-was-removed-from-the-merge-queue
 
 While any selected pull request is queued, `jj-stack submit` refuses to update the stack and
-`jj-stack sync` leaves it unchanged.
+`jj-stack sync` leaves it unchanged; rerun `jj-stack merge` to resume waiting.
+
+### Leaving before GitHub finishes
+
+Use `--no-wait` to return as soon as GitHub accepts the request, or press Ctrl-C to stop
+waiting. Neither cancels the request. Rerun the same `jj-stack merge` to keep watching it, or run
+`jj-stack sync <head-change-id>` once GitHub finishes.
 
 ### Merges outside jj-stack
 

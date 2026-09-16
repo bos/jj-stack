@@ -12,6 +12,7 @@ from jj_stack.commands._json_status import stack_change_json
 from jj_stack.commands.view_details import merge_details_hint
 from jj_stack.identifiers import ChangeId
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, PRState
+from jj_stack.models.github_details import GithubMergeQueueEntry
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR
 from jj_stack.stack.change_state import (
     UNOBSERVED,
@@ -185,7 +186,9 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
     queued = _status_change(
         change_id="cdefghijklmn",
         pr_identity=make_pr_identity(head_ref="jj-stack/feature", pr_number=3),
-        pr=_pr(number=3, state="open").model_copy(update={"is_queued": True}),
+        pr=_pr(number=3, state="open").model_copy(
+            update={"merge_queue_entry": GithubMergeQueueEntry(id="entry")}
+        ),
     )
     waiting_lines = _render_lines(
         *view_module.render_status_advisory_lines(

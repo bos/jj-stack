@@ -128,12 +128,12 @@ use the recovery reference to reconcile afterward. Existing explicit authorizati
    consecutive open, non-draft PRs from the bottom and requires their exact submitted commits.
    To merge only through a particular PR, use `merge --pull-request <pr>`; automatic sync still
    covers the surviving changes above it in the containing stack.
-   GitHub decides approvals, checks, conflicts, and repo policy. A completed direct merge
-   updates the local stack automatically; it never pushes trunk. After a queued merge, run
-   `sync <head-change-id>` once GitHub finishes.
+   GitHub decides approvals, checks, conflicts, and repo policy. `merge` waits for GitHub,
+   including a merge queue, then updates the local stack; it never pushes trunk. Run
+   `sync <head-change-id>` only after `merge --no-wait`, an interrupted wait, or a merge made
+   through GitHub.
 6. If `trunk()` merely advanced and GitHub left the PR branches alone, use plain `jj rebase`.
-   Use `sync` after PRs merge, including squash and rebase merges, or after GitHub's
-   **Rebase stack** action rewrites the PR branches.
+   Use `sync` after GitHub's **Rebase stack** action rewrites the PR branches.
 
 ## Closing and cleanup
 

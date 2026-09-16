@@ -72,9 +72,10 @@ your edit.
 3. Revise, add, remove, or reorder the changes locally as reviews come in.
 4. Run `jj-stack submit` again to refresh GitHub.
 5. Run `jj-stack merge` when the PRs at the bottom are ready. Pass `--pull-request <pr>` to
-   stop at an earlier PR, and `--method` to choose a merge method your repo allows.
-6. After a queued merge or a merge made through GitHub finishes, run
-   `jj-stack sync <head-change-id>`.
+   stop at an earlier PR, and `--method` to choose a merge method your repo allows. The command
+   waits for GitHub, including its merge queue, then updates your local stack and remaining PRs.
+6. If you used `--no-wait`, interrupted the wait, or merged through GitHub, run
+   `jj-stack sync <head-change-id>` after GitHub finishes.
 
 `view`, `submit`, `merge`, and `sync` accept a change ID when you need to select a stack other
 than the one ending at the working copy.

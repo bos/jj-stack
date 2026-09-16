@@ -418,6 +418,7 @@ class GithubClient:
         self,
         *,
         pr_numbers: Sequence[int],
+        merge_progress: bool = False,
     ) -> dict[int, GithubPR | None]:
         numbers = sorted(set(pr_numbers))
         if not numbers:
@@ -425,7 +426,7 @@ class GithubClient:
 
         results: dict[int, GithubPR | None] = {}
         for chunk in batched(numbers, _GRAPHQL_PR_BATCH_SIZE, strict=False):
-            query = _prs_by_number_query(chunk)
+            query = _prs_by_number_query(chunk, merge_progress=merge_progress)
             payload = await self._graphql_query(
                 query,
                 response_name="pull request batch lookup",
@@ -1175,12 +1176,13 @@ def _graphql_mutation_pr_payload(
     )
 
 
-def _prs_by_number_query(numbers: Sequence[int]) -> str:
+def _prs_by_number_query(numbers: Sequence[int], *, merge_progress: bool = False) -> str:
     selections = "\n\n".join(
         _graphql_document(
             f"""
             pr_{number}: pullRequest(number: {number}) {{
               ...PullRequestFields
+              {_merge_progress_fields() if merge_progress else ""}
             }}
             """
         ).strip()
@@ -1192,6 +1194,29 @@ def _prs_by_number_query(numbers: Sequence[int]) -> str:
             selections=selections,
         )
     )
+
+
+def _merge_progress_fields() -> str:
+    return """
+      mergeQueueEntry {
+        position state estimatedTimeToMerge
+        mergeQueue { entries { totalCount } }
+        headCommit {
+          statusCheckRollup {
+            contexts {
+              totalCount
+              checkRunCountsByState { state count }
+              statusContextCountsByState { state count }
+            }
+          }
+        }
+      }
+      timelineItems(
+        last: 1, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]
+      ) {
+        nodes { ... on RemovedFromMergeQueueEvent { reason beforeCommit { oid } } }
+      }
+    """
 
 
 def _branch_targets_query(branches: Sequence[str]) -> tuple[str, dict[str, str]]:

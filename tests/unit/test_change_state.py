@@ -6,6 +6,7 @@ import pytest
 
 import jj_stack.ui as ui
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, PRState
+from jj_stack.models.github_details import GithubMergeQueueEntry
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import SubmittedBaseline, TrackedPR
 from jj_stack.stack.change_state import (
@@ -53,7 +54,7 @@ def _pr(
         base=GithubBranchRef(ref="main"),
         head=GithubPRHead(ref=head_ref, sha=head_sha),
         html_url=f"https://github.test/octo/repo/pull/{number}",
-        is_queued=queued,
+        merge_queue_entry=GithubMergeQueueEntry(id="entry") if queued else None,
         node_id=f"PR_{number}",
         number=number,
         state=state,

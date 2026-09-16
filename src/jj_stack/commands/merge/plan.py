@@ -40,7 +40,7 @@ class MergeResult:
     """Rendered merge result for one selected local stack."""
 
     actions: tuple[MergeAction, ...]
-    enqueued: bool
+    pending: Literal["pending", "enqueued"] | None
     trunk_branch: str
     trunk_subject: str
     final_trunk_commit_id: CommitId | None = None
@@ -60,19 +60,32 @@ class MergeExecutionInputs:
 
     repo: GithubRepoAddress
     selected_head: str
+    sync_head: str
     trunk_branch: str
     trunk_subject: str
+
+    @property
+    def merge_command(self) -> Message:
+        return ui.cmd(f"jj-stack merge {self.selected_head}")
+
+    @property
+    def sync_command(self) -> Message:
+        return ui.cmd(f"jj-stack sync {self.sync_head}")
+
+    @property
+    def sync_after_github(self) -> Message:
+        return t"Run {self.sync_command} after GitHub finishes."
 
     def result(
         self,
         *,
         actions: tuple[MergeAction, ...],
-        enqueued: bool = False,
+        pending: Literal["pending", "enqueued"] | None = None,
         final_trunk_commit_id: CommitId | None = None,
     ) -> MergeResult:
         return MergeResult(
             actions=actions,
-            enqueued=enqueued,
+            pending=pending,
             final_trunk_commit_id=final_trunk_commit_id,
             trunk_branch=self.trunk_branch,
             trunk_subject=self.trunk_subject,

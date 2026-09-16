@@ -1753,7 +1753,10 @@ def _graphql_repo_payload(
                 ],
                 "pageInfo": {"hasNextPage": False},
             }
-        if "timelineItems(" in query:
+        if "REMOVED_FROM_MERGE_QUEUE_EVENT" in query:
+            # The fake does not record merge queue events.
+            graphql_payload["timelineItems"] = {"nodes": []}
+        elif "timelineItems(" in query:
             force_pushes = repo.pr_force_pushes.get(pr_number, ())
             graphql_payload["timelineItems"] = {
                 "filteredCount": len(force_pushes),

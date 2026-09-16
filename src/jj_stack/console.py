@@ -252,6 +252,18 @@ class _NullSpinner:
         del description
 
 
+class _TextSpinner:
+    """Keep changed long-running status visible when stderr is redirected."""
+
+    def __init__(self) -> None:
+        self.previous = ""
+
+    def update(self, description: str) -> None:
+        if description != self.previous:
+            _STDERR_CONSOLE.print(description, markup=False)
+            self.previous = description
+
+
 @dataclass(slots=True)
 class _RichProgressHandle:
     """Advance one Rich progress task."""
@@ -581,11 +593,13 @@ def note(*objects: ConsoleObject, **kwargs) -> None:
 
 
 @contextmanager
-def spinner(*, description: str) -> Generator[SpinnerLike]:
-    """Render a TTY-only transient spinner on stderr."""
+def spinner(*, description: str, report_changes: bool = False) -> Generator[SpinnerLike]:
+    """Render a transient spinner, optionally logging changed status when stderr is redirected."""
 
     if not _stream_supports_live_progress(_STDERR_STREAM):
-        yield _NullSpinner()
+        handle = _TextSpinner() if report_changes else _NullSpinner()
+        handle.update(description)
+        yield handle
         return
 
     progress_console = _progress_console(stream=_STDERR_STREAM, color_mode=_ACTIVE_COLOR_MODE)

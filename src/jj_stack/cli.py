@@ -72,9 +72,8 @@ Create and update stacked GitHub pull requests from your `jj` changes.
 Edit and rearrange changes with `jj`, then run `jj-stack submit` to update their PRs.
 Running `jj-stack` with no command shows the current stack and its PR status.
 
-Use `jj-stack merge` when the PRs at the bottom are ready. The command also updates your local
-stack when GitHub merges immediately. After a queued merge finishes, or if you merge on GitHub,
-run `jj-stack sync`.
+Use `jj-stack merge` when the PRs at the bottom are ready; it waits for GitHub and then updates
+your local stack. Run `jj-stack sync` only after a merge it did not wait for.
 """
 _REORDERABLE_GLOBAL_FLAGS = frozenset({"--debug", "--time-output"})
 _REORDERABLE_GLOBAL_OPTIONS_WITH_VALUES = frozenset({"--repository", "--color"})
@@ -461,15 +460,18 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Preview the merge without asking GitHub to merge anything",
     )
+    merge_parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Return after GitHub accepts the merge request; run jj-stack sync after it merges",
+    )
     add_help_argument(
         merge_parser,
         *_PR_OPTION_STRINGS,
         dest="pr",
         metavar="PR",
-        help=(
-            "Merge this PR and all PRs below it; when GitHub merges immediately, also sync the "
-            "rest of the stack"
-        ),
+        help="Merge this PR and all PRs below it; the PRs above it stay open and are updated "
+        "after the merge",
     )
     add_help_argument(
         merge_parser,

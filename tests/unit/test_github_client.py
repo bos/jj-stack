@@ -410,6 +410,12 @@ def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
             assert "pr_11: pullRequest(number: 11)" in payload["query"]
             assert "autoMergeRequest" not in payload["query"]
             assert "mergeQueueEntry" in payload["query"]
+            assert "estimatedTimeToMerge" in payload["query"]
+            assert "headCommit" in payload["query"]
+            assert "checkRunCountsByState" in payload["query"]
+            assert (
+                "ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT" in payload["query"]
+            )
             assert "statusCheckRollup" in payload["query"]
         return httpx2.Response(
             200,
@@ -423,7 +429,34 @@ def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
                             "headRefOid": "head-commit",
                             "headRefName": "jj-stack/seven",
                             "headRepositoryOwner": {"login": "octo-org"},
-                            "mergeQueueEntry": {"id": "queue-entry"},
+                            "mergeQueueEntry": {
+                                "id": "queue-entry",
+                                "position": 3,
+                                "estimatedTimeToMerge": 120,
+                                "state": "AWAITING_CHECKS",
+                                "mergeQueue": {"entries": {"totalCount": 8}},
+                                "headCommit": {
+                                    "statusCheckRollup": {
+                                        "contexts": {
+                                            "totalCount": 150,
+                                            "checkRunCountsByState": [
+                                                {"state": "SUCCESS", "count": 100},
+                                                {"state": "QUEUED", "count": 40},
+                                                {"state": "FAILURE", "count": 3},
+                                            ],
+                                            "statusContextCountsByState": [
+                                                {"state": "PENDING", "count": 2},
+                                                {"state": "SUCCESS", "count": 5},
+                                            ],
+                                        }
+                                    }
+                                },
+                            },
+                            "timelineItems": {
+                                "nodes": [
+                                    {"reason": "failed_checks", "beforeCommit": {"oid": "tested"}}
+                                ]
+                            },
                             "mergedAt": None,
                             "id": "PR_7",
                             "number": 7,
@@ -466,11 +499,17 @@ def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
         async with _github_client(handler) as client:
             prs = await client.get_prs_by_numbers(
                 pr_numbers=(7, 9, 11, *range(100, 124)),
+                merge_progress=True,
             )
         pr_7 = prs[7]
         pr_9 = prs[9]
         if pr_7 is None or pr_9 is None:
             raise AssertionError("GraphQL lookup should return both pull requests.")
+        queue = pr_7.merge_queue_entry
+        assert queue is not None and queue.checks is not None
+        assert (queue.position, queue.total, queue.estimated_seconds) == (3, 8, 120)
+        assert (queue.checks.total, queue.checks.remaining, queue.checks.failed) == (150, 42, 3)
+        assert (pr_7.queue_removal_reason, pr_7.queue_test_commit) == ("failed_checks", "tested")
         return (
             pr_7.head.ref,
             pr_9.state,

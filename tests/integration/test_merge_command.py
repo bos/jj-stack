@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -37,7 +38,7 @@ pytestmark = pytest.mark.merge_recovery
 
 
 @pytest.mark.parametrize("stack_size", (1, 2))
-def test_merge_queue_accepts_single_and_stacked_prs_without_a_merge_method(
+def test_merge_no_wait_can_resume_single_and_stacked_queues_and_sync(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -54,35 +55,79 @@ def test_merge_queue_accepts_single_and_stacked_prs_without_a_merge_method(
     fake_repo.allow_rebase_merge = True
     stack = selected_stack(repo)
     trunk_before = read_remote_ref(fake_repo.git_dir, "main")
+    selector = ("--pull-request", "1")
 
-    exit_code = run_main(repo, config_path, "merge", "--method", "rebase")
+    exit_code = run_main(repo, config_path, "merge", *selector, "--method", "rebase", "--no-wait")
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
     assert fake_repo.stack_merge_requests == [
-        (stack_size, None, "merge_queue", stack.head.commit_id)
+        (1, None, "merge_queue", stack.changes[0].commit_id)
     ]
-    assert all(fake_repo.prs[number].is_queued for number in range(1, stack_size + 1))
+    assert not any(pr.is_queued for pr in fake_repo.prs.values())
     assert all(fake_repo.prs[number].state == "open" for number in range(1, stack_size + 1))
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
     assert "ignoring --method" in captured.err
-    assert "In merge queue" in captured.out
+    assert "Merge requested" in captured.out
     assert "jj-stack sync" in captured.out
 
-    repeated_exit_code = run_main(repo, config_path, "merge")
+    _complete_stack_merge(fake_repo, fake_repo.stack_merge_operations[1])
+    repeated_exit_code = run_main(repo, config_path, "merge", *selector, "--no-wait")
     repeated = capsys.readouterr()
 
     assert repeated_exit_code == 0, (repeated.out, repeated.err)
     assert "In merge queue" in repeated.out
     assert "jj-stack sync" in repeated.out
     assert fake_repo.stack_merge_requests == [
-        (stack_size, None, "merge_queue", stack.head.commit_id)
+        (1, None, "merge_queue", stack.changes[0].commit_id)
     ]
 
-    fake_repo.leave_merge_queue(tuple(range(1, stack_size + 1)))
-    assert run_main(repo, config_path, "merge") == 0
-    assert len(fake_repo.stack_merge_requests) == 2
-    assert all(fake_repo.prs[number].is_queued for number in range(1, stack_size + 1))
+    class CompletingQueueClient(GithubClient):
+        observations = 0
+
+        async def get_prs_by_numbers(self, *, pr_numbers, merge_progress=False):
+            if merge_progress:
+                self.observations += 1
+                if self.observations == 2:
+                    operation = fake_repo.stack_merge_operations[1]
+                    fake_repo.leave_merge_queue((1,))
+                    _complete_stack_merge(
+                        fake_repo,
+                        replace(
+                            operation,
+                            merge_action="direct_merge",
+                            merge_method="squash",
+                        ),
+                    )
+            return await super().get_prs_by_numbers(
+                pr_numbers=pr_numbers, merge_progress=merge_progress
+            )
+
+    patch_github_client_builders(
+        monkeypatch,
+        app=create_app(FakeGithubState.single_repo(fake_repo)),
+        fake_repo=fake_repo,
+        client_type=CompletingQueueClient,
+    )
+    monkeypatch.setattr("jj_stack.commands.merge.wait._QUEUE_POLL_INTERVAL_SECONDS", 0)
+    assert run_main(repo, config_path, "merge", *selector) == 0
+    completed = capsys.readouterr()
+    assert "Merge completed" in completed.out
+    assert "PR #1: queued" in completed.err
+    assert len(fake_repo.stack_merge_requests) == 1
+    assert set(TrackingStore.for_repo(repo).load().prs) == {
+        change.change_id for change in stack.changes[1:]
+    }
+    if stack_size == 1:
+        assert JjClient(repo).resolve_commit("@").parents == (
+            read_remote_ref(fake_repo.git_dir, "main"),
+        )
+    else:
+        remaining = selected_stack(repo)
+        assert remaining.head.change_id == stack.head.change_id
+        assert remaining.head.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+        assert fake_repo.prs[2].base_ref == "main"
+        assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == remaining.head.commit_id
 
 
 def test_signed_changes_require_a_method_even_when_they_are_not_being_merged_yet(
@@ -352,7 +397,7 @@ def test_stack_merge_rejection_is_atomic_and_names_the_next_step(
     assert state_store.load() == state_before
 
 
-def test_stack_merge_recovers_with_sync_after_a_lost_response(
+def test_stack_merge_resumes_a_matching_request_after_a_lost_response(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -395,19 +440,11 @@ def test_stack_merge_recovers_with_sync_after_a_lost_response(
         app=app,
         fake_repo=fake_repo,
     )
-    assert run_main(repo, config_path, "merge") == 1
-    pending = capsys.readouterr()
-    assert "matching merge request is already pending" in pending.out
-    assert tuple(pr.state for pr in fake_repo.prs.values()) == ("open", "open")
-
-    _complete_stack_merge(fake_repo, fake_repo.stack_merge_operations[2])
-    assert tuple(pr.state for pr in fake_repo.prs.values()) == ("closed", "closed")
-    assert run_main(repo, config_path, "merge") == 1
+    assert run_main(repo, config_path, "merge") == 0
     completed = capsys.readouterr()
-    assert "jj-stack sync" in " ".join(completed.out.split())
+    assert "Merge completed" in completed.out
     assert len(fake_repo.stack_merge_requests) == 1
     assert tuple(pr.state for pr in fake_repo.prs.values()) == ("closed", "closed")
-    assert run_main(repo, config_path, "sync") == 0
     assert state_store.load().prs == {}
     assert JjClient(repo).resolve_commit("@").parents == (
         read_remote_ref(fake_repo.git_dir, "main"),

@@ -4,10 +4,9 @@
 remaining changes, updates their existing pull requests, and cleans up unused PR branches,
 stack overview comments, and saved links. It never creates pull requests.
 
-Run it after a merge queue finishes, after someone merges the PRs through another client, or
-after GitHub's Rebase stack action rewrites the PR branches. When GitHub merges immediately,
-`jj-stack merge` performs this update itself. While a selected PR is still queued, sync leaves
-the stack unchanged.
+Run it after GitHub's Rebase stack action, or after a merge that `jj-stack merge` did not wait
+for finishes on GitHub; when `merge` waits, it performs this update itself. While a selected PR
+is still queued, sync leaves the stack unchanged.
 
 After a Rebase stack action, sync checks that the PR order and contents match, rebases your
 original changes, and updates the PR branches with commits that retain their jj change IDs.

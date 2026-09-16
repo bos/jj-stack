@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, replace
 
 import jj_stack.ui as ui
@@ -10,15 +9,12 @@ from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label, format_pr_number
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.identifiers import CommitId
 from jj_stack.models.github import GithubStack, GithubStackMerge
 from jj_stack.stack.github_stack_safety import selected_github_stack
 from jj_stack.ui import Message
 
 from .plan import MergeAction, MergeChange, MergeExecutionInputs, MergePlan, MergeResult
-
-_MERGE_POLL_TIMEOUT_SECONDS = 600.0
-_MAX_MERGE_POLL_INTERVAL_SECONDS = 30.0
+from .wait import wait_for_merge
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +33,7 @@ class AsyncMergePlan:
     def action(
         self,
         *,
-        enqueued: bool = False,
+        outcome: str = "planned",
         merge_action: str,
         method: str | None,
         repo: GithubRepoAddress,
@@ -48,10 +44,15 @@ class AsyncMergePlan:
             self.planned,
         )
         prs: Message = ("PR " if len(self.planned) == 1 else "PRs ", numbers)
-        if merge_action == "merge_queue" and enqueued:
+        if outcome == "merged":
+            body = t"merged {prs} into {ui.bookmark(trunk_branch)} through "
+        elif outcome == "enqueued":
             body = t"queued {prs} for {ui.bookmark(trunk_branch)} through "
         elif merge_action == "merge_queue":
-            body = t"add {prs} to the merge queue for {ui.bookmark(trunk_branch)} through "
+            verb = "asked GitHub to add" if outcome == "pending" else "add"
+            body = t"{verb} {prs} to the merge queue for {ui.bookmark(trunk_branch)} through "
+        elif outcome == "pending":
+            body = t"requested merge of {prs} into {ui.bookmark(trunk_branch)} through "
         else:
             body = (
                 t"merge {prs} into {ui.bookmark(trunk_branch)} via {ui.cmd(method or '')} up to "
@@ -111,6 +112,7 @@ async def execute_async_merge(
     merge_action: str,
     merge_method: str | None,
     merge: AsyncMergePlan,
+    no_wait: bool,
 ) -> MergeResult:
     if not merge.planned:
         return execution.result(actions=merge.actions())
@@ -152,52 +154,39 @@ async def execute_async_merge(
             t"Could not request GitHub merge through {pr_label}.",
             hint="Resolve the GitHub error above, then rerun jj-stack merge.",
         ) from error
-    if submission.already_pending:
-        details = submission.result.details
-        matching = (
-            details.expected_head_sha == merge.target.commit_id
-            and details.merge_action == merge_action
-            and details.merge_method == merge_method
-        )
+    # A queue chooses its own method, so the pending request's method is not part of its identity.
+    details = submission.result.details
+    if submission.already_pending and not (
+        details.expected_head_sha == merge.target.commit_id
+        and details.merge_action == merge_action
+        and (merge_action == "merge_queue" or details.merge_method == merge_method)
+    ):
         return _blocked_result(
             execution,
             merge,
-            reason=(
-                "a matching merge request is already pending; wait for GitHub to finish, "
-                "then run jj-stack sync if it merged"
-                if matching
-                else "another merge request is already pending; check its status on GitHub "
-                "and run jj-stack sync if it merges"
-            ),
+            reason="another merge request is already pending; check its status on GitHub "
+            "and run jj-stack sync if it merges",
         )
-    terminal = await _terminal(
-        github,
-        submission.result,
-        merge.target.identity.pr_number,
-    )
+    terminal = submission.result
+    if not no_wait and terminal.status in {"pending", "enqueued"}:
+        terminal = await wait_for_merge(github, terminal, merge.planned, execution)
     if terminal.status == "failed":
         return _blocked_result(
             execution,
             merge,
             reason=_rejection_reason(execution, terminal.details.message),
         )
-    if terminal.status == "enqueued":
-        return _enqueued_result(
-            execution,
-            merge,
-            merge_action=merge_action,
-        )
-    if terminal.status != "merged" or terminal.details.sha is None:
+    if terminal.status == "merged" and terminal.details.sha is None:
         raise CliError(
             "GitHub reported the stack merge as complete but did not say which trunk commit it "
             "produced.",
             hint=t"Check the PRs on GitHub, then run {ui.cmd('jj-stack sync')} for this stack "
             t"to apply any completed merges.",
         )
-    return _applied_result(
+    return _accepted_result(
         execution,
         merge,
-        final_sha=terminal.details.sha,
+        result=terminal,
         merge_action=merge_action,
         merge_method=merge_method,
     )
@@ -212,48 +201,8 @@ def _rejection_reason(execution: MergeExecutionInputs, message: str | None) -> M
             t"{ui.cmd(f'jj-stack submit {execution.selected_head}')} before merging again."
         )
     else:
-        hint = (
-            t"Address the reported issue on GitHub, then run "
-            t"{ui.cmd(f'jj-stack merge {execution.selected_head}')} again."
-        )
+        hint = t"Fix the reported issue on GitHub, then run {execution.merge_command} again."
     return t"GitHub rejected the merge: {reason}{punctuation} {hint}"
-
-
-async def _terminal(
-    github: GithubClient,
-    result: GithubStackMerge,
-    pr_number: int,
-) -> GithubStackMerge:
-    operation_uuid = result.details.uuid
-    if result.status == "pending" and operation_uuid is None:
-        raise CliError(
-            "GitHub accepted the merge request, but jj-stack cannot check its progress.",
-            hint=t"Check the pull request on GitHub. After it merges, run "
-            t"{ui.cmd('jj-stack sync')} for this stack.",
-        )
-    poll_interval = 2.0
-    try:
-        async with asyncio.timeout(_MERGE_POLL_TIMEOUT_SECONDS):
-            while result.status == "pending":
-                result = await github.poll_stack_merge(
-                    operation_uuid=operation_uuid or "",
-                    pr_number=pr_number,
-                )
-                if result.status == "pending":
-                    await asyncio.sleep(poll_interval)
-                    poll_interval = min(
-                        poll_interval * 1.5,
-                        _MAX_MERGE_POLL_INTERVAL_SECONDS,
-                    )
-    except TimeoutError as error:
-        raise CliError(
-            "GitHub's merge request is still pending after 10 minutes.",
-            hint=t"The request may still complete on GitHub. Do not rerun "
-            t"{ui.cmd('jj-stack merge')} while it is "
-            t"pending; check the pull request on GitHub, then run "
-            t"{ui.cmd('jj-stack sync')} if it merges.",
-        ) from error
-    return result
 
 
 def _blocked_result(
@@ -281,16 +230,17 @@ def _blocked_result(
     )
 
 
-def _applied_result(
+def _accepted_result(
     execution: MergeExecutionInputs,
     merge: AsyncMergePlan,
     *,
-    final_sha: CommitId,
+    result: GithubStackMerge,
     merge_action: str,
     merge_method: str | None,
 ) -> MergeResult:
     action = replace(
         merge.action(
+            outcome=result.status,
             merge_action=merge_action,
             method=merge_method,
             repo=execution.repo,
@@ -298,23 +248,8 @@ def _applied_result(
         ),
         status="applied",
     )
-    return execution.result(actions=merge.actions(action), final_trunk_commit_id=final_sha)
-
-
-def _enqueued_result(
-    execution: MergeExecutionInputs,
-    merge: AsyncMergePlan,
-    *,
-    merge_action: str,
-) -> MergeResult:
-    action = replace(
-        merge.action(
-            enqueued=True,
-            merge_action=merge_action,
-            method=None,
-            repo=execution.repo,
-            trunk_branch=execution.trunk_branch,
-        ),
-        status="applied",
+    return execution.result(
+        actions=merge.actions(action),
+        final_trunk_commit_id=result.details.sha,
+        pending=result.status if result.status in {"pending", "enqueued"} else None,
     )
-    return execution.result(actions=merge.actions(action), enqueued=True)

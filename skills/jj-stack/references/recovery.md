@@ -23,7 +23,8 @@ observations. Use `jj op log` and `jj undo` for local recovery, never destructiv
 
 ## Apply GitHub changes locally
 
-- After a queued or external merge finishes, run `sync --dry-run <head-change-id>`, then
+- After a merge that `merge` did not wait for finishes on GitHub, run
+  `sync --dry-run <head-change-id>`, then
   `sync <head-change-id>`. It fetches, checks which changes reached trunk, removes their local
   copies, rebases the remaining selected changes, and updates only their existing PRs.
 - After GitHub's **Rebase stack** action finishes, use the same `sync` sequence. It

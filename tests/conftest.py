@@ -40,9 +40,9 @@ def _no_console_writes_while_spinner_active(
     original_spinner = console.spinner
 
     @contextmanager
-    def checked_spinner(*, description: str):
+    def checked_spinner(*, description: str, report_changes: bool = False):
         nonlocal active_spinners
-        with original_spinner(description=description) as handle:
+        with original_spinner(description=description, report_changes=report_changes) as handle:
             active_spinners += 1
             try:
                 yield handle

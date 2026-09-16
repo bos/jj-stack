@@ -114,18 +114,19 @@ error with `jj-stack unstack --stack <number>`, then submit again. This keeps th
 
 ## A stack was removed from the merge queue
 
-If a pull request is removed or ejected from the merge queue, [GitHub also removes the PRs above
-it][stack-merges]. Check the reason on GitHub and fix the failing check, missing approval,
-conflict, or repo rule. If GitHub merged any lower PRs, run `jj-stack sync <head-change-id>`.
-Then rerun the same `jj-stack merge` command.
+If a pull request is removed from the merge queue, [GitHub also removes the PRs above
+it][stack-merges]. `jj-stack merge` reports GitHub's reason and links to the checks on the
+queue's temporary merge commit; they do not appear on the PR's own Checks tab. Fix the failing
+check, missing approval, conflict, or repo rule. If GitHub merged any lower PRs, run
+`jj-stack sync <head-change-id>`. Then rerun the same `jj-stack merge` command.
 
 [stack-merges]: https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-stacked-pull-requests
 
 ## You merged pull requests on GitHub
 
-After a merge through GitHub or another client, or after a merge queue finishes, run
-`jj-stack sync` to update your local stack, refresh the remaining PRs, and remove unused PR
-branches:
+After a merge through GitHub or another client, or after a `jj-stack merge` you left with
+`--no-wait` or Ctrl-C, let GitHub finish, then run `jj-stack sync` to update your local stack,
+refresh the remaining PRs, and remove unused PR branches:
 
 ```console
 jj-stack sync <head-change-id>
@@ -141,7 +142,8 @@ jj-stack sync --all
 ```
 
 A blocked stack does not prevent jj-stack from syncing independent stacks. If a selected PR is
-still in a merge queue, sync leaves that stack unchanged; wait for GitHub to finish.
+still in a merge queue, sync leaves that stack unchanged; rerun `jj-stack merge` to resume
+waiting.
 
 ## You rebased your stack on GitHub
 

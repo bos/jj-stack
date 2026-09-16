@@ -156,9 +156,8 @@ The `--pull-request` option names the last PR you want to merge, starting from t
 the stack. Here, choosing PR #1 merges only A. Choosing PR #2 would ask GitHub to merge A and
 B together.
 
-If GitHub performs the merge immediately, without a merge queue, this is called a **direct
-merge**. The command then fetches the result and rebases B and C onto the updated trunk. It
-also updates their existing PRs to match:
+The command waits for GitHub to merge, including through a merge queue, then fetches the result
+and rebases B and C onto the updated trunk. It also updates their existing PRs to match:
 
 ```mermaid
 flowchart BT
@@ -169,15 +168,13 @@ PR #1 is merged. PR #2 now targets `main`, and PR #3 still targets PR #2's branc
 `jj-stack view <C-change-id>` to check that only B and C remain in the local stack.
 
 If your repo uses a merge queue, the queue chooses the merge method and `--method` is ignored.
-The command returns when GitHub accepts the request into the queue. Wait until GitHub reports
-the merge complete, then run:
+To return before GitHub finishes, use `--no-wait` or press Ctrl-C; neither cancels the request.
+If you returned early, or merged through GitHub or its **Rebase stack** action, run this once
+GitHub finishes:
 
 ```console
 jj-stack sync <C-change-id>
 ```
-
-You also need to run `sync` after merging through GitHub's UI or using its **Rebase stack**
-action. Wait for GitHub to finish before running the command.
 
 To continue from the top, create a fresh scratch change above C:
 

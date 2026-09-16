@@ -58,10 +58,11 @@ each PR.
 
 ## Merge queues
 
-GitHub adds a stack's pull requests to the queue in dependency order. Removing or ejecting a PR
-also removes every PR above it. Resolve the cause, then add the stack to the queue again. Wait
-until the merge completes before running `jj-stack sync`. See GitHub's
-[merge queue guidance][github-queue].
+GitHub adds a stack's pull requests to the queue in dependency order. If GitHub removes a PR, it
+also removes every PR above it; `jj-stack merge` stops, reports the reason, and names the next
+step. Fix the cause and rerun the same `jj-stack merge` command. See
+[queue removal recovery](../troubleshooting.md#a-stack-was-removed-from-the-merge-queue) and
+GitHub's [merge queue guidance][github-queue].
 
 [github-review]: https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/reviewing-stacked-pull-requests
 [github-merge]: https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-stacked-pull-requests
