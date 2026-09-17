@@ -22,7 +22,7 @@ Common examples:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import jj_stack.console as console
@@ -127,63 +127,11 @@ def submit(
         cli_args=cli_args,
         debug=debug,
     )
-    options = _submit_options_from_cli(
-        base=base,
-        descriptions=descriptions,
-        describe_with=describe_with,
-        draft=draft,
-        draft_all=draft_all,
-        dry_run=dry_run,
-        edit=edit,
-        labels=labels,
-        open_=open_,
-        re_request=re_request,
-        reviewers=reviewers,
-        revset=revset,
-        team_reviewers=team_reviewers,
-    )
-    with operation_lock(
-        context.state_store,
-        command="submit",
-        mutating=not dry_run,
-    ):
-        asyncio.run(
-            run_submit_async(
-                context=context,
-                # The selected line is only rendered when submit picked the
-                # default head for the user.
-                on_prepared=print_selected_line if revset is None else None,
-                options=options,
-            )
-        )
-    return 0
-
-
-def _submit_options_from_cli(
-    *,
-    base: str | None,
-    descriptions: Sequence[str] | None,
-    describe_with: str | None,
-    draft: bool,
-    draft_all: bool,
-    dry_run: bool,
-    edit: bool | Path,
-    labels: Sequence[str] | None,
-    open_: bool,
-    re_request: bool,
-    reviewers: Sequence[str] | None,
-    revset: str | None,
-    team_reviewers: Sequence[str] | None,
-) -> SubmitOptions:
-    return SubmitOptions(
+    options = SubmitOptions(
         base_revset=base,
         descriptions=tuple(descriptions or ()),
         describe_with=describe_with,
-        draft_mode=_submit_draft_mode(
-            draft=draft,
-            draft_all=draft_all,
-            open_=open_,
-        ),
+        draft_mode=_submit_draft_mode(draft=draft, draft_all=draft_all, open_=open_),
         dry_run=dry_run,
         edit=edit,
         labels=parse_comma_separated_flag_values(labels),
@@ -192,6 +140,13 @@ def _submit_options_from_cli(
         revset=revset,
         team_reviewers=parse_comma_separated_flag_values(team_reviewers),
     )
+    with operation_lock(
+        context.state_store,
+        command="submit",
+        mutating=not dry_run,
+    ):
+        asyncio.run(run_submit_async(context=context, options=options))
+    return 0
 
 
 def _submit_draft_mode(
@@ -343,7 +298,6 @@ def _submit_remote_branch_queries(
 async def run_submit_async(
     *,
     context: CommandContext,
-    on_prepared: Callable[[str, str], None] | None,
     options: SubmitOptions,
 ) -> None:
     dry_run = options.dry_run
@@ -355,17 +309,15 @@ async def run_submit_async(
             options=options,
             state=state,
         )
-    if on_prepared is not None:
-        on_prepared(
-            prepared_inputs.stack.head.change_id,
-            prepared_inputs.stack.head.subject,
-        )
     client = prepared_inputs.client
     remote = prepared_inputs.remote
     stack = prepared_inputs.stack
     state = prepared_inputs.state
     explicit_base = prepared_inputs.explicit_base
     base_branch = explicit_base.branch if explicit_base is not None else None
+    # The selected line is only rendered when submit picked the default head for the user.
+    if options.revset is None:
+        print_selected_line(stack.head.change_id, stack.head.subject)
 
     if not stack.changes:
         print_submit_rows(inputs=prepared_inputs, rows=(), heading="Submitted changes:")

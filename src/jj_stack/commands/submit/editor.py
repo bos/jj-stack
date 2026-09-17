@@ -196,7 +196,7 @@ def edit_prs_in_editor(
     drafts: dict[ChangeId, bool],
     jj_client: JjClient,
     changes: tuple[LocalCommit, ...],
-    document_path: Path | None = None,
+    document_path: Path | None,
 ) -> tuple[dict[ChangeId, GeneratedDescription], dict[ChangeId, bool], Path]:
     editor_command = _resolve_editor_command(jj_client)
     if document_path is None:

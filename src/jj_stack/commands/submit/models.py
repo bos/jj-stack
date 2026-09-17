@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, NamedTuple, Protocol
+from typing import Literal, NamedTuple
 
 from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.client import JjClient
@@ -149,13 +149,3 @@ class PublicationInputs:
     stack: LocalStack
     state: TrackingState
     submitted_commits: dict[ChangeId, LocalCommit]
-
-
-class PrivateCommitFinder(Protocol):
-    """Subset of the jj client interface needed for git.private-commits checks."""
-
-    def find_private_commits(
-        self,
-        changes: tuple[LocalCommit, ...],
-    ) -> tuple[LocalCommit, ...]:
-        """Return the changes blocked by the repo's private-commit policy."""

@@ -17,12 +17,7 @@ from jj_stack.stack.selected import require_submittable_changes, select_stack_pa
 
 from .descriptions import read_pr_template, resolve_generated_descriptions
 from .github_stack import GithubStackPRSnapshot, github_stack_pr_snapshot
-from .models import (
-    ExplicitBase,
-    PrivateCommitFinder,
-    PublicationInputs,
-    SubmitOptions,
-)
+from .models import ExplicitBase, PublicationInputs, SubmitOptions
 
 
 def prepare_submit_inputs(
@@ -225,7 +220,7 @@ def _select_submit_stack(
 
 
 def preflight_private_commits(
-    client: PrivateCommitFinder,
+    client: JjClient,
     changes: tuple[LocalCommit, ...],
 ) -> None:
     private = client.find_private_commits(changes)

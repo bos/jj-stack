@@ -56,11 +56,7 @@ def predict_prs_auto_closed_by_push(
         head_after_push = push_targets.get(pr.head.ref)
         if head_after_push is None:
             continue
-        base_after_push = _resolve_post_push_commit(
-            ref=pr.base.ref,
-            push_targets=push_targets,
-            remote_targets=remote_targets,
-        )
+        base_after_push = push_targets.get(pr.base.ref, remote_targets.get(pr.base.ref))
         if base_after_push is None:
             continue
         candidates.append((head_after_push, base_after_push, pr))
@@ -71,19 +67,6 @@ def predict_prs_auto_closed_by_push(
         tuple((head, base) for head, base, _ in candidates),
     )
     return tuple(pr for head, _, pr in candidates if head in auto_close_heads)
-
-
-def _resolve_post_push_commit(
-    *,
-    push_targets: dict[str, CommitId],
-    ref: str,
-    remote_targets: dict[str, CommitId],
-) -> CommitId | None:
-    """Resolve the commit ID a ref will point at after the planned push lands."""
-
-    if ref in push_targets:
-        return push_targets[ref]
-    return remote_targets.get(ref)
 
 
 async def _retarget_pr_base_before_branch_push(

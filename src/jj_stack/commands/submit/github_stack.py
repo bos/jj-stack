@@ -20,13 +20,6 @@ class GithubStackPlan:
     action: Literal["none", "create", "append", "replace"]
     affected_stacks: tuple[GithubStack, ...] = ()
 
-    def __post_init__(self) -> None:
-        has_stack = bool(self.affected_stacks)
-        if has_stack != (self.action in ("append", "replace")):
-            raise ValueError(f"Invalid GitHub stack plan: {self.action} with stack={has_stack}")
-        if self.action == "append" and len(self.affected_stacks) != 1:
-            raise ValueError("A GitHub stack append requires exactly one existing stack.")
-
     def creates_stack(self, pr_count: int) -> bool:
         return self.action in ("create", "replace") and pr_count >= 2
 

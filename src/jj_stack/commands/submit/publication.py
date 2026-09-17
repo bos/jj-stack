@@ -18,8 +18,7 @@ from jj_stack.jj.client import PRRefUpdate
 from jj_stack.models.github import GithubStack
 from jj_stack.stack.github_stack_safety import dissolve_github_stack
 
-from . import auto_close
-from .auto_close import retarget_pr_bases_before_branch_push
+from .auto_close import predict_prs_auto_closed_by_push, retarget_pr_bases_before_branch_push
 from .github_stack import (
     apply_github_stack_plan,
     omitted_active_stack_prs,
@@ -117,7 +116,7 @@ async def publish_prepared(
         branches=observed_base_refs,
     )
     retarget_prs = (
-        auto_close.predict_prs_auto_closed_by_push(
+        predict_prs_auto_closed_by_push(
             jj_client=client,
             plans=pr_plans,
             remote_targets={**trunk_targets, **remote_targets, **observed_base_targets},
