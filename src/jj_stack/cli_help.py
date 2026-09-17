@@ -519,7 +519,7 @@ def _command_usage_message(parser: ArgumentParser) -> ui.Message | str:
     return tuple(parts)
 
 
-def _markdown_command_usage_message(parser: ArgumentParser) -> ui.Message | str:
+def _markdown_command_usage_message(parser: ArgumentParser) -> ui.Message:
     actions = tuple(action for action in parser._actions if not _is_common_option_action(action))
     groups = tuple(
         group
@@ -540,9 +540,7 @@ def _markdown_command_usage_message(parser: ArgumentParser) -> ui.Message | str:
                 long_option,
                 body,
             )
-    if body.startswith(parser.prog):
-        return (ui.cmd(parser.prog), body.removeprefix(parser.prog))
-    return body
+    return (ui.cmd(parser.prog), body.removeprefix(parser.prog))
 
 
 def _help_paragraphs(text: str) -> tuple[str, ...]:
