@@ -64,11 +64,17 @@ _BOOKMARK_TEMPLATE = dedent(
 _PR_BRANCH_TEMP_BOOKMARK = "jj-stack-tmp/checkout"
 _PR_BRANCH_TEMP_REF = f"refs/heads/{_PR_BRANCH_TEMP_BOOKMARK}"
 _CONFIG_ORIGIN_TEMPLATE = r'json(self) ++ "\n"'
+_SHORT_CHANGE_ID_TEMPLATE = dedent(
+    r"""
+    json(change_id) ++ "\t" ++
+    change_id.shortest(8).prefix() ++
+    change_id.shortest(8).rest() ++ "\n"
+    """
+).strip()
 _WORKSPACE_TEMPLATE = dedent(
     r"""
     "{\"name\":" ++ json(name) ++
-    ",\"root\":" ++ if(root, json(root.absolute()), "null") ++
-    ",\"current\":" ++ json(target.current_working_copy()) ++ "}\n"
+    ",\"root\":" ++ if(root, json(root.absolute()), "null") ++ "}\n"
     """
 ).strip()
 
@@ -129,7 +135,6 @@ class JjWorkspace(BaseModel):
 
     name: str
     root: Path | None
-    current: bool
 
 
 ExpectedGitChangeId = ChangeId | None | tuple[ChangeId | None, ...]
@@ -451,7 +456,6 @@ class JjClient:
             return {}
 
         rendered: dict[ChangeId, str] = {}
-        template = _short_change_id_render_template()
         for chunk in batched(ordered_change_ids, QUERY_BATCH_SIZE, strict=False):
             revset = change_ids_revset(chunk)
             stdout = self._run_jj(
@@ -464,7 +468,7 @@ class JjClient:
                     "-r",
                     revset,
                     "-T",
-                    template,
+                    _SHORT_CHANGE_ID_TEMPLATE,
                 )
             )
             for line in stdout.splitlines():
@@ -1290,17 +1294,6 @@ def _membership_scan_template(membership_revsets: Sequence[str]) -> str:
     ).strip()
 
 
-def _short_change_id_render_template() -> str:
-    shortest = "change_id.shortest(8)"
-    return dedent(
-        rf"""
-        json(change_id) ++ "\t" ++
-        {shortest}.prefix() ++
-        {shortest}.rest() ++ "\n"
-        """
-    ).strip()
-
-
 def quote_revset_symbol(symbol: str) -> str:
     """Quote one symbol as a jj revset string literal, escaping when needed."""
 
@@ -1321,8 +1314,7 @@ def _present_symbols_revset(symbols: Sequence[str]) -> str:
     """Union symbols as `present(...)` terms so unavailable ones do not fail the query."""
 
     return _union_revset_symbols(
-        tuple(f"present({quote_revset_symbol(symbol)})" for symbol in symbols),
-        quote=False,
+        tuple(f"present({quote_revset_symbol(symbol)})" for symbol in symbols)
     )
 
 
@@ -1335,8 +1327,7 @@ def change_ids_revset(change_ids: Sequence[ChangeId]) -> str:
     """
 
     return _union_revset_symbols(
-        tuple(f"change_id({quote_revset_symbol(change_id)})" for change_id in change_ids),
-        quote=False,
+        tuple(f"change_id({quote_revset_symbol(change_id)})" for change_id in change_ids)
     )
 
 
@@ -1348,10 +1339,9 @@ def _expected_git_change_id_matches(
     return actual in accepted
 
 
-def _union_revset_symbols(symbols: Sequence[str], *, quote: bool = True) -> str:
-    parts = [quote_revset_symbol(symbol) if quote else symbol for symbol in symbols]
-    if not parts:
+def _union_revset_symbols(symbols: Sequence[str]) -> str:
+    if not symbols:
         raise ValueError("Expected at least one revset symbol.")
-    if len(parts) == 1:
-        return parts[0]
-    return f"({' | '.join(parts)})"
+    if len(symbols) == 1:
+        return symbols[0]
+    return f"({' | '.join(symbols)})"
