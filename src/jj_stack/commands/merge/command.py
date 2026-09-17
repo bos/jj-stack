@@ -94,7 +94,7 @@ def merge(
     debug: bool,
     dry_run: bool,
     merge_method: str | None,
-    no_wait: bool = False,
+    no_wait: bool,
     pr: str | None,
     repo: Path | None,
     revset: str | None,
@@ -179,7 +179,7 @@ async def _run_merge(
         return exit_code
 
 
-def _warn_incomplete_post_merge_sync(sync_head: str, *, has_recovery_hint: bool = False) -> None:
+def _warn_incomplete_post_merge_sync(sync_head: str, *, has_recovery_hint: bool) -> None:
     console.warning(
         (
             t"GitHub completed the merge, but the follow-up work did not finish. Do not run "
@@ -316,7 +316,7 @@ async def _stream_merge_async(
             if async_merge.planned
             else None
         )
-        return execution.result(actions=async_merge.actions(action)), github_repo_state
+        return MergeResult(actions=async_merge.actions(action)), github_repo_state
     return await execute_async_merge(
         execution=execution,
         github=github_client,
@@ -378,14 +378,13 @@ def _resolve_merge_method(
 
 
 def _print_merge_result(result: MergeResult, *, sync_head: str) -> None:
-    if result.actions:
-        console.output(_result_header(result))
-        for action in result.actions:
-            console.action_row(
-                kind="stop" if action.kind == "boundary" else action.kind,
-                status=action.status,
-                body=action.body,
-            )
+    console.output(_result_header(result))
+    for action in result.actions:
+        console.action_row(
+            kind="stop" if action.kind == "boundary" else action.kind,
+            status=action.status,
+            body=action.body,
+        )
     if result.final_trunk_commit_id is not None:
         console.output(
             t"GitHub reported final trunk commit {ui.commit_id(result.final_trunk_commit_id)}."

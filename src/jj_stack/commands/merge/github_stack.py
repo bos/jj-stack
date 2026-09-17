@@ -81,12 +81,7 @@ def build_async_merge_plan(
                 "GitHub did not report a stack for these pull requests.",
                 hint=t"Run {ui.cmd('jj-stack submit')} before merging.",
             )
-        return AsyncMergePlan(
-            resource=None,
-            boundary_action=merge_plan.boundary_action,
-            planned=merge_plan.planned_changes,
-        )
-    if merge_plan.planned_changes:
+    elif merge_plan.planned_changes:
         planned_numbers = tuple(
             change.identity.pr_number for change in merge_plan.planned_changes
         )
@@ -97,12 +92,7 @@ def build_async_merge_plan(
                 hint=t"Run {ui.cmd('jj-stack submit')} so GitHub's stack matches the local "
                 t"stack, then retry.",
             )
-        return AsyncMergePlan(
-            resource,
-            merge_plan.boundary_action,
-            merge_plan.planned_changes,
-        )
-    return AsyncMergePlan(resource, merge_plan.boundary_action, ())
+    return AsyncMergePlan(resource, merge_plan.boundary_action, merge_plan.planned_changes)
 
 
 async def execute_async_merge(
@@ -115,7 +105,8 @@ async def execute_async_merge(
     no_wait: bool,
 ) -> MergeResult:
     if not merge.planned:
-        return execution.result(actions=merge.actions())
+        return MergeResult(actions=merge.actions())
+    pr_label = format_pr_label(merge.target.identity.pr_number, repo=github.repo)
     if merge.resource is None and merge.target.base_ref != execution.trunk_branch:
         try:
             await github.update_pr(
@@ -123,10 +114,6 @@ async def execute_async_merge(
                 base=execution.trunk_branch,
             )
         except GithubClientError as error:
-            pr_label = format_pr_label(
-                merge.target.identity.pr_number,
-                repo=github.repo,
-            )
             raise CliError(
                 t"Could not retarget {pr_label} to {ui.bookmark(execution.trunk_branch)}",
                 hint="Resolve the GitHub error above, then rerun jj-stack merge.",
@@ -146,10 +133,6 @@ async def execute_async_merge(
                 reason=t"the PR head changed on GitHub; run "
                 t"{ui.cmd(f'jj-stack submit {execution.selected_head}')} and merge again",
             )
-        pr_label = format_pr_label(
-            merge.target.identity.pr_number,
-            repo=github.repo,
-        )
         raise CliError(
             t"Could not request GitHub merge through {pr_label}.",
             hint="Resolve the GitHub error above, then rerun jj-stack merge.",
@@ -219,7 +202,7 @@ def _blocked_result(
             repo=execution.repo,
         )
     )
-    return execution.result(
+    return MergeResult(
         actions=(
             MergeAction(
                 kind="boundary",
@@ -248,7 +231,7 @@ def _accepted_result(
         ),
         status="applied",
     )
-    return execution.result(
+    return MergeResult(
         actions=merge.actions(action),
         final_trunk_commit_id=result.details.sha,
         pending=result.status if result.status in {"pending", "enqueued"} else None,

@@ -40,7 +40,7 @@ class MergeResult:
     """Rendered merge result for one selected local stack."""
 
     actions: tuple[MergeAction, ...]
-    pending: Literal["pending", "enqueued"] | None
+    pending: Literal["pending", "enqueued"] | None = None
     final_trunk_commit_id: CommitId | None = None
 
     @property
@@ -72,19 +72,6 @@ class MergeExecutionInputs:
     @property
     def sync_after_github(self) -> Message:
         return t"Run {self.sync_command} after GitHub finishes."
-
-    def result(
-        self,
-        *,
-        actions: tuple[MergeAction, ...],
-        pending: Literal["pending", "enqueued"] | None = None,
-        final_trunk_commit_id: CommitId | None = None,
-    ) -> MergeResult:
-        return MergeResult(
-            actions=actions,
-            pending=pending,
-            final_trunk_commit_id=final_trunk_commit_id,
-        )
 
 
 @dataclass(frozen=True, slots=True)
