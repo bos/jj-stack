@@ -6,10 +6,8 @@ from pathlib import Path
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import TrackingStore, resolve_state_path
 
-from ..support.fake_github import FakeGithubRepo
 from ..support.integration_helpers import (
     commit_file,
-    configure_fake_github_environment,
     expose_pr_branch_namespace,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
@@ -17,7 +15,11 @@ from ..support.integration_helpers import (
     run_command,
     selected_stack,
 )
-from .submit_command_helpers import read_remote_ref, run_main as _main
+from .submit_command_helpers import (
+    configure_submit_environment,
+    read_remote_ref,
+    run_main as _main,
+)
 
 
 def test_checkout_pick_fetches_github_stack_then_adopts_and_edits_selected_change(
@@ -26,7 +28,7 @@ def test_checkout_pick_fetches_github_stack_then_adopts_and_edits_selected_chang
     capsys,
 ) -> None:
     publisher, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(publisher, "feature 1", "feature-1.txt")
     commit_file(publisher, "feature 2", "feature-2.txt")
     assert _main(publisher, config_path, "submit") == 0
@@ -70,7 +72,7 @@ def test_checkout_pick_completes_a_partly_local_github_stack(
     capsys,
 ) -> None:
     publisher, fake_repo = init_fake_github_repo(tmp_path)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(publisher, "feature 1", "feature-1.txt")
     commit_file(publisher, "feature 2", "feature-2.txt")
     assert _main(publisher, config_path, "submit") == 0
@@ -103,7 +105,7 @@ def test_checkout_pick_refetches_an_abandoned_tracked_stack(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     stack = selected_stack(repo)
     run_command(["jj", "abandon", *(change.change_id for change in stack.changes)], repo)
     capsys.readouterr()
@@ -122,7 +124,7 @@ def test_checkout_accepts_a_matching_visible_pr_bookmark(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = TrackingStore.for_repo(repo)
     state = state_store.load()
     change_id, identity = next(iter(state.prs.items()))
@@ -143,7 +145,7 @@ def test_checkout_edits_a_lower_pr_with_the_whole_namespace_fetched(
     monkeypatch,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     bottom_change_id = selected_stack(repo).changes[0].change_id
     resolve_state_path(repo).unlink()
     expose_pr_branch_namespace(repo)
@@ -160,7 +162,7 @@ def test_checkout_explains_an_immutable_pr_commit_instead_of_dumping_jj_output(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     bottom_commit_id = selected_stack(repo).changes[0].commit_id
     run_command(
         [
@@ -191,7 +193,7 @@ def test_checkout_makes_a_hidden_pr_head_visible_beside_the_local_rewrite(
     monkeypatch,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change = selected_stack(repo).head
     run_command(["jj", "describe", "-r", change.change_id, "-m", "feature rewritten"], repo)
 
@@ -208,7 +210,7 @@ def test_checkout_imports_a_rewritten_pr_head_beside_the_local_copy(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change = selected_stack(repo).head
     pr = fake_repo.prs[1]
     remote_head = fake_repo.force_push_pr_head(pr)
@@ -239,7 +241,7 @@ def test_checkout_imports_a_commit_added_to_the_pr_branch_above_the_change(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     change = selected_stack(repo).head
     pr = fake_repo.prs[1]
     added = fake_repo.advance_branch(
@@ -277,7 +279,7 @@ def test_checkout_stops_when_a_lower_pr_branch_moved_off_its_change(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.advance_branch(
         fake_repo.prs[1].head_ref,
         path="review.txt",
@@ -299,7 +301,7 @@ def test_checkout_pr_rejects_cross_repo_head(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     initial_state = TrackingStore.for_repo(repo).load()
     fake_repo.prs[2].head_label = f"someone-else:{fake_repo.prs[2].head_ref}"
 
@@ -315,7 +317,7 @@ def test_checkout_pr_uses_exact_number_when_top_head_is_shared(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     initial_state = TrackingStore.for_repo(repo).load()
     top = fake_repo.prs[2]
     fake_repo.create_pr(
@@ -337,7 +339,7 @@ def test_checkout_rejects_missing_parent_remote_branch_without_partial_tracking(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state = TrackingStore.for_repo(repo).load()
     stack = selected_stack(repo)
     bottom_branch = state.prs[stack.changes[0].change_id].pr_identity.head_ref
@@ -367,7 +369,7 @@ def test_checkout_reports_up_to_date_and_clears_leftovers_for_an_attached_stack(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     # A checkout killed between its import and its cleanup leaves this bookmark behind.
     run_command(["jj", "bookmark", "create", "jj-stack-tmp/checkout", "-r", "@-"], repo)
 
@@ -384,7 +386,7 @@ def test_checkout_pick_edits_selected_tracked_stack(
     capsys,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = _configure_checkout_environment(monkeypatch, tmp_path, fake_repo)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     feature_1_change_id = selected_stack(repo).head.change_id
     run_command(["jj", "new", "main"], repo)
     commit_file(repo, "feature 2", "feature-2.txt")
@@ -425,15 +427,3 @@ def test_checkout_pick_edits_selected_tracked_stack(
     assert "Saved pull request links are already up to date for this stack." in captured.out
     assert "Working copy now edits" in captured.out
     assert JjClient(repo).resolve_commit("@").change_id == feature_1_change_id
-
-
-def _configure_checkout_environment(
-    monkeypatch,
-    tmp_path: Path,
-    fake_repo: FakeGithubRepo,
-) -> Path:
-    return configure_fake_github_environment(
-        fake_repo=fake_repo,
-        monkeypatch=monkeypatch,
-        tmp_path=tmp_path,
-    )

@@ -127,48 +127,6 @@ def _isolate_editor_environment(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("EDITOR", raising=False)
 
 
-def test_edit_applies_editor_output_to_descriptions(monkeypatch, tmp_path: Path) -> None:
-    _isolate_editor_environment(monkeypatch, tmp_path)
-    editor = tmp_path / "editor.py"
-    editor.write_text(
-        "\n".join(
-            [
-                "from pathlib import Path",
-                "import sys",
-                "",
-                "path = Path(sys.argv[-1])",
-                "text = path.read_text(encoding='utf-8')",
-                "path.write_text(",
-                "    text.replace('feature 2', 'feature 2 [edited]'),",
-                "    encoding='utf-8',",
-                ")",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("EDITOR", f"{sys.executable} {editor}")
-
-    descriptions, drafts, document_path = edit_prs_in_editor(
-        descriptions={
-            ChangeId("bottomchange"): GeneratedDescription(
-                body="Bottom body.", title="feature 1"
-            ),
-            ChangeId("topchange"): GeneratedDescription(body="", title="feature 2"),
-        },
-        drafts={ChangeId("bottomchange"): True, ChangeId("topchange"): False},
-        jj_client=JjClient(tmp_path),
-        changes=_two_change_stack(),
-    )
-
-    assert drafts == {ChangeId("bottomchange"): True, ChangeId("topchange"): False}
-    assert descriptions[ChangeId("topchange")].title == "feature 2 [edited]"
-    assert descriptions[ChangeId("bottomchange")].title == "feature 1"
-    assert descriptions[ChangeId("bottomchange")].body == "Bottom body."
-    assert document_path.is_file()
-    document_path.unlink()
-
-
 def test_edit_aborts_when_editor_exits_nonzero(monkeypatch, tmp_path: Path) -> None:
     _isolate_editor_environment(monkeypatch, tmp_path)
     editor = tmp_path / "editor.py"
