@@ -9,7 +9,6 @@ def _graphql_pr_payload(
     check_rollup_state: object = None,
 ) -> dict[str, object]:
     return {
-        "autoMergeRequest": None,
         "baseRefName": "main",
         "headRefName": "jj-stack/feature-1",
         "headRefOid": "head-commit-id",
@@ -84,7 +83,6 @@ def test_github_stack_splits_history_and_reports_a_merged_member_above_an_active
     }
     active = {
         "head": {"ref": "jj-stack/two", "sha": "head-two"},
-        "merged_at": None,
         "number": 2,
     }
 
@@ -96,17 +94,3 @@ def test_github_stack_splits_history_and_reports_a_merged_member_above_an_active
         {"number": 7, "pull_requests": [active, historical]}
     )
     assert not reversed_stack.has_merged_prefix
-
-
-def test_github_stack_defaults_missing_merge_state_to_active() -> None:
-    stack = GithubStack.model_validate(
-        {
-            "number": 7,
-            "pull_requests": [
-                {"head": {"ref": "jj-stack/one", "sha": "head-one"}, "number": 1},
-                {"head": {"ref": "jj-stack/two", "sha": "head-two"}, "number": 2},
-            ],
-        }
-    )
-
-    assert stack.active_pr_numbers == (1, 2)

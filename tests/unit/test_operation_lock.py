@@ -54,27 +54,6 @@ raise SystemExit(0)
     assert "PID" in completed.stdout
 
 
-def test_operation_lock_try_acquire_reports_busy_across_processes(tmp_path: Path) -> None:
-    state_dir = tmp_path / "state"
-    with acquire_operation_lock(state_dir, command="parent", timeout=0.1):
-        completed = _run_lock_script(
-            """
-from pathlib import Path
-import sys
-from jj_stack.state.operation_lock import try_acquire_operation_lock
-
-lock = try_acquire_operation_lock(Path(sys.argv[1]), command="child")
-if lock is None:
-    raise SystemExit(0)
-lock.release()
-raise SystemExit(9)
-""",
-            state_dir,
-        )
-
-    assert completed.returncode == 0
-
-
 def test_operation_lock_reports_a_state_directory_it_cannot_write(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()

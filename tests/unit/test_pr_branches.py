@@ -6,7 +6,6 @@ import pytest
 
 from jj_stack.errors import CliError
 from jj_stack.identifiers import ChangeId
-from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import SubmittedBaseline, TrackedPR
 from jj_stack.pr_branch_namespace import (
     PRBranchNamespace,
@@ -19,12 +18,14 @@ from jj_stack.stack.pr_branches import (
     ensure_unique_pr_branches,
     resolve_pr_branches,
 )
+from tests.support.change_helpers import make_change
 from tests.support.tracking import make_pr_identity
 
 
 def test_generate_pr_branch_normalizes_subject() -> None:
-    change = _change(
+    change = make_change(
         change_id=ChangeId("zvlywqkxtmnpqrstu"),
+        commit_id="commit",
         description="Fix cache invalidation!!!\n\nBody text.\n",
     )
 
@@ -34,7 +35,9 @@ def test_generate_pr_branch_normalizes_subject() -> None:
 
 
 def test_generate_pr_branch_falls_back_when_subject_has_no_ascii_slug() -> None:
-    change = _change(change_id=ChangeId("abcdefghijklmno"), description="修正 🚀\n")
+    change = make_change(
+        change_id=ChangeId("abcdefghijklmno"), commit_id="commit", description="修正 🚀\n"
+    )
 
     branch = current_pr_branch_namespace().generate_branch(change)
 
@@ -42,8 +45,9 @@ def test_generate_pr_branch_falls_back_when_subject_has_no_ascii_slug() -> None:
 
 
 def test_generate_pr_branch_truncates_a_subject_github_cannot_store() -> None:
-    change = _change(
+    change = make_change(
         change_id=ChangeId("zvlywqkxtmnpqrstu"),
+        commit_id="commit",
         description=" ".join(["refactor the transport layer"] * 12) + "\n",
     )
 
@@ -105,7 +109,7 @@ def test_pr_branch_resolution_rejects_new_branch_claimed_by_another_stack() -> N
         )
     }
     resolutions = resolve_pr_branches(
-        changes=(_change(change_id=new_change_id, description="shared"),),
+        changes=(make_change(change_id=new_change_id, commit_id="commit", description="shared"),),
         tracked_prs=tracked_prs,
     )
 
@@ -114,18 +118,3 @@ def test_pr_branch_resolution_rejects_new_branch_claimed_by_another_stack() -> N
             resolutions,
             tracked_prs,
         )
-
-
-def _change(*, change_id: str, description: str) -> LocalCommit:
-    return LocalCommit(
-        change_id=change_id,
-        commit_id=f"{change_id}-commit",
-        current_working_copy=False,
-        description=description,
-        divergent=False,
-        empty=False,
-        hidden=False,
-        immutable=False,
-        parents=("parent",),
-        signed=False,
-    )
