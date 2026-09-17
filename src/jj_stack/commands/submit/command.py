@@ -22,7 +22,10 @@ Common examples:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack
+from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 
 import jj_stack.console as console
@@ -31,15 +34,14 @@ from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.config import parse_comma_separated_flag_values
 from jj_stack.errors import CliError
+from jj_stack.github.client import GithubClient
 from jj_stack.github.error_messages import observe_github_repo, read_or_stop
-from jj_stack.github.resolution import (
-    require_github_repo,
-)
+from jj_stack.github.resolution import require_github_repo, select_submit_remote
 from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import JjClient
 from jj_stack.models.git import GitRemote
-from jj_stack.models.github import GithubPR
+from jj_stack.models.github import GithubPR, GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace, pr_branch_matches_change
@@ -57,10 +59,13 @@ from jj_stack.state.operation_lock import operation_lock
 
 from .changes import prepare_submit_changes, require_published_base
 from .descriptions import preserve_external_pr_text
-from .editor import edit_prs_in_editor, resume_edit_hint
+from .editor import edit_pr_document, parse_edited_pr_document, resume_edit_hint
 from .inputs import prepare_submit_inputs
 from .models import (
+    GeneratedDescription,
+    PreparedSubmitChange,
     PRMetadataAction,
+    PublicationInputs,
     SubmitDraftMode,
     SubmitOptions,
 )
@@ -140,12 +145,15 @@ def submit(
         revset=revset,
         team_reviewers=parse_comma_separated_flag_values(team_reviewers),
     )
-    with operation_lock(
-        context.state_store,
-        command="submit",
-        mutating=not dry_run,
-    ):
-        asyncio.run(run_submit_async(context=context, options=options))
+    asyncio.run(
+        run_submit_async(
+            context=context,
+            # The selected line is only rendered when submit picked the
+            # default head for the user.
+            on_prepared=print_selected_line if revset is None else None,
+            options=options,
+        )
+    )
     return 0
 
 
@@ -295,14 +303,155 @@ def _submit_remote_branch_queries(
     return exact_branches, recovery_suffixes
 
 
+@dataclass(frozen=True, slots=True)
+class _SubmitObservation:
+    """Local stack, tracking, and GitHub state observed before planning pull request updates."""
+
+    bottom_base_branch: str
+    drafts: dict[ChangeId, bool]
+    generated_descriptions: dict[ChangeId, GeneratedDescription]
+    observed_stacks: tuple[GithubStack, ...]
+    prepared_changes: tuple[PreparedSubmitChange, ...]
+    prepared_inputs: PublicationInputs
+    remote_targets: dict[str, CommitId]
+    trunk_branch: str
+    trunk_targets: dict[str, CommitId]
+
+    @property
+    def changes(self) -> tuple[LocalCommit, ...]:
+        return self.prepared_inputs.stack.changes
+
+
 async def run_submit_async(
     *,
     context: CommandContext,
+    on_prepared: Callable[[str, str], None] | None,
     options: SubmitOptions,
 ) -> None:
-    dry_run = options.dry_run
-    state_store = context.state_store
-    state = state_store.load()
+    remote = select_submit_remote(context.jj_client.list_git_remotes())
+    generated_edit_path: Path | None = None
+    settle_pr_text: Callable[[_SubmitObservation], _SubmitObservation] | None = None
+    async with context.open_github_client(repo=require_github_repo(remote)) as github_client:
+        if options.edit or options.describe_with is not None:
+            # An editor session or a describe helper can take as long as it likes, so neither
+            # runs under the operation lock. The locked pass observes again and accepts their
+            # text only if it still names the selected changes.
+            observed = await _observe_submit(
+                context=context,
+                github_client=github_client,
+                on_prepared=on_prepared,
+                options=options,
+            )
+            if observed is None:
+                return
+            on_prepared = None
+            if options.edit:
+                document_path = edit_pr_document(
+                    descriptions=observed.generated_descriptions,
+                    drafts=observed.drafts,
+                    jj_client=context.jj_client,
+                    changes=observed.changes,
+                    document_path=options.edit if isinstance(options.edit, Path) else None,
+                )
+                if not isinstance(options.edit, Path):
+                    generated_edit_path = document_path
+                    console.note(
+                        t"Editor file: {ui.code(str(document_path))} (kept if submission fails).",
+                        soft_wrap=True,
+                    )
+                settle_pr_text = partial(_apply_edited_document, document_path)
+            else:
+                settle_pr_text = partial(_apply_helper_text, observed.prepared_inputs)
+                options = replace(options, describe_with=None)
+        retry_hint: ui.Message = (
+            resume_edit_hint(generated_edit_path)
+            if generated_edit_path is not None
+            else t"Retry the same {ui.cmd('jj-stack submit')} command, "
+            t"keeping its existing options."
+        )
+        with ExitStack() as locked:
+            try:
+                locked.enter_context(
+                    operation_lock(
+                        context.state_store, command="submit", mutating=not options.dry_run
+                    )
+                )
+                observed = await _observe_submit(
+                    context=context,
+                    github_client=github_client,
+                    on_prepared=on_prepared,
+                    options=options,
+                )
+            except CliError as error:
+                if generated_edit_path is not None:
+                    # The edited document outlives this failure; say how to reuse it.
+                    error.hint = (
+                        retry_hint if error.hint is None else (error.hint, " ", retry_hint)
+                    )
+                raise
+            if observed is None:
+                if settle_pr_text is None:
+                    return
+                raise CliError(
+                    "The selected stack no longer has changes to submit.", hint=retry_hint
+                )
+            if settle_pr_text is not None:
+                observed = settle_pr_text(observed)
+            await _publish_observed(
+                context=context,
+                github_client=github_client,
+                observed=observed,
+                options=options,
+                retry_hint=retry_hint,
+            )
+    if generated_edit_path is not None:
+        try:
+            generated_edit_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _apply_edited_document(
+    document_path: Path, observed: _SubmitObservation
+) -> _SubmitObservation:
+    """Take titles, bodies, and draft choices from the edited document."""
+
+    descriptions, drafts = parse_edited_pr_document(document_path, changes=observed.changes)
+    return replace(observed, drafts=drafts, generated_descriptions=descriptions)
+
+
+def _apply_helper_text(
+    generated: PublicationInputs, observed: _SubmitObservation
+) -> _SubmitObservation:
+    """Take the describe helper's text, which must describe the selected changes."""
+
+    described = set(generated.generated_pr_descriptions)
+    if described != {change.change_id for change in observed.changes}:
+        raise CliError(
+            "The selected stack changed while the describe helper ran.",
+            hint=t"Retry the same {ui.cmd('jj-stack submit')} command.",
+        )
+    return replace(
+        observed,
+        generated_descriptions=generated.generated_pr_descriptions,
+        prepared_inputs=replace(
+            observed.prepared_inputs,
+            generated_pr_descriptions=generated.generated_pr_descriptions,
+            generated_stack_description=generated.generated_stack_description,
+        ),
+    )
+
+
+async def _observe_submit(
+    *,
+    context: CommandContext,
+    github_client: GithubClient,
+    on_prepared: Callable[[str, str], None] | None,
+    options: SubmitOptions,
+) -> _SubmitObservation | None:
+    """Observe the selected stack and its GitHub state; None when nothing is selected."""
+
+    state = context.state_store.load()
     with console.spinner(description="Preparing submit"):
         prepared_inputs = prepare_submit_inputs(
             context=context,
@@ -315,15 +464,13 @@ async def run_submit_async(
     state = prepared_inputs.state
     explicit_base = prepared_inputs.explicit_base
     base_branch = explicit_base.branch if explicit_base is not None else None
-    # The selected line is only rendered when submit picked the default head for the user.
-    if options.revset is None:
-        print_selected_line(stack.head.change_id, stack.head.subject)
+    if on_prepared is not None:
+        on_prepared(stack.head.change_id, stack.head.subject)
 
     if not stack.changes:
         print_submit_rows(inputs=prepared_inputs, rows=(), heading="Submitted changes:")
-        return
+        return None
 
-    github_repo = require_github_repo(remote)
     branch_resolutions = resolve_pr_branches(
         changes=stack.changes,
         tracked_prs=state.prs,
@@ -361,178 +508,174 @@ async def run_submit_async(
             for branch, change_id in branches.items()
         }
 
-    generated_edit_path: Path | None = None
-    async with context.open_github_client(repo=github_repo) as github_client:
-        generated_descriptions = prepared_inputs.generated_pr_descriptions
-        with console.spinner(description="Inspecting remotes"):
-            exact_targets_task = asyncio.create_task(
-                read_or_stop(
-                    github_client.get_branch_targets(branches=exact_remote_branches),
-                    message=_BRANCH_LOOKUP_MESSAGE,
-                )
+    generated_descriptions = prepared_inputs.generated_pr_descriptions
+    with console.spinner(description="Inspecting remotes"):
+        exact_targets_task = asyncio.create_task(
+            read_or_stop(
+                github_client.get_branch_targets(branches=exact_remote_branches),
+                message=_BRANCH_LOOKUP_MESSAGE,
             )
-            recovery_targets_task = asyncio.create_task(
-                read_or_stop(
-                    github_client.find_branch_targets_by_suffix(
-                        branch_prefix=current_pr_branch_namespace().branch_prefix,
-                        suffixes=recovery_suffixes,
-                    ),
-                    message=_BRANCH_LOOKUP_MESSAGE,
-                )
-            )
-            repo_task = asyncio.create_task(observe_github_repo(github_client))
-            lookups_task = asyncio.create_task(
-                read_or_stop(
-                    discover_pr_lookups(
-                        github_client=github_client,
-                        observations=observations_by_branch(branch_resolutions),
-                    ),
-                    message=_PR_LOOKUP_MESSAGE,
-                )
-            )
-            stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))
-            await wait_for_read_tasks(
-                exact_targets_task, recovery_targets_task, repo_task, lookups_task, stacks_task
-            )
-            remote_targets = {**exact_targets_task.result(), **recovery_targets_task.result()}
-            branch_resolutions = _recover_interrupted_first_submissions(
-                client=client,
-                remote=remote,
-                remote_targets=remote_targets,
-                resolutions=branch_resolutions,
-                tracked_prs=state.prs,
-            )
-            ensure_new_pr_branches_unclaimed(
-                branch_resolutions,
-                state.prs,
-            )
-            collisions = tuple(
-                resolution.branch
-                for resolution in branch_resolutions
-                if resolution.change_id not in state.prs
-                and not resolution.recovered
-                and resolution.branch in visible_bookmarks
-            )
-            if collisions:
-                raise CliError(
-                    t"Local bookmark {ui.join(ui.bookmark, collisions)} already uses the name "
-                    t"jj-stack would give a new PR branch.",
-                    hint=t"Rename or forget that bookmark, then retry; jj-stack reserves the PR "
-                    t"branch prefix for its own branches.",
-                )
-            pr_branches = _submit_pr_branches(
-                base_branch=base_branch,
-                resolutions=branch_resolutions,
-            )
-            lookups = lookups_task.result()
-            if pr_branches != initial_pr_branches:
-                lookups = await read_or_stop(
-                    discover_pr_lookups(
-                        github_client=github_client,
-                        observations=observations_by_branch(branch_resolutions),
-                    ),
-                    message=_PR_LOOKUP_MESSAGE,
-                )
-            github_repo_state = repo_task.result()
-            observed_stacks = stacks_task.result()
-            trunk_branch, trunk_targets = observe_trunk_branch(
-                jj_client=client,
-                github_repo_state=github_repo_state,
-                remote=remote,
-                trunk_commit_id=stack.trunk.commit_id,
-            )
-        prepared_changes = prepare_submit_changes(
-            branch_resolutions=branch_resolutions,
-            lookups=lookups,
-            remote_targets=remote_targets,
-            stack=stack,
         )
-        bottom_base_branch = trunk_branch
-        if explicit_base is not None:
-            child_bottom = short_change_id(stack.changes[0].change_id)
-            child_head = short_change_id(stack.head.change_id)
-            child_rebase = f"jj rebase -s '{child_bottom}' -o 'trunk()'"
-            require_published_base(
-                base=explicit_base.change,
-                lookup=lookups[explicit_base.branch],
-                merged_hint=(
-                    t"Sync the parent PR first, rebase only the child stack with "
-                    t"{ui.cmd(child_rebase)}, and then run "
-                    t"{ui.cmd(f'jj-stack submit {child_head}')} without "
-                    t"{ui.cmd('--base')}."
+        recovery_targets_task = asyncio.create_task(
+            read_or_stop(
+                github_client.find_branch_targets_by_suffix(
+                    branch_prefix=current_pr_branch_namespace().branch_prefix,
+                    suffixes=recovery_suffixes,
                 ),
-                remote=remote,
-                remote_target=remote_targets.get(explicit_base.branch),
-                retry=(
-                    f"jj-stack submit --base {short_change_id(explicit_base.change.change_id)} "
-                    f"{child_head}"
+                message=_BRANCH_LOOKUP_MESSAGE,
+            )
+        )
+        repo_task = asyncio.create_task(observe_github_repo(github_client))
+        lookups_task = asyncio.create_task(
+            read_or_stop(
+                discover_pr_lookups(
+                    github_client=github_client,
+                    observations=observations_by_branch(branch_resolutions),
                 ),
-                tracked_base=explicit_base.tracked,
+                message=_PR_LOOKUP_MESSAGE,
             )
-            bottom_base_branch = explicit_base.branch
-        drafts: dict[ChangeId, bool] = {
-            prepared.change.change_id: _desired_draft_state(
-                draft_mode=options.draft_mode,
-                pr=prepared.pr,
-            )
-            for prepared in prepared_changes
-        }
-        generated_descriptions = preserve_external_pr_text(
-            descriptions=generated_descriptions,
-            prs={prepared.change.change_id: prepared.pr for prepared in prepared_changes},
-            submitted_commits=prepared_inputs.submitted_commits,
-            template=prepared_inputs.pr_template,
         )
-        if options.edit:
-            generated_descriptions, drafts, edit_path = edit_prs_in_editor(
-                descriptions=generated_descriptions,
-                drafts=drafts,
-                jj_client=client,
-                changes=stack.changes,
-                document_path=options.edit if isinstance(options.edit, Path) else None,
-            )
-            if not isinstance(options.edit, Path):
-                generated_edit_path = edit_path
-                console.note(
-                    t"Editor file: {ui.code(str(edit_path))} (kept if submission fails).",
-                    soft_wrap=True,
-                )
-        re_request_reviewers = (
-            await load_re_request_reviewers(
-                github_client=github_client,
-                prs=tuple(pr for prepared in prepared_changes if (pr := prepared.pr) is not None),
-            )
-            if options.re_request
-            else {}
+        stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))
+        await wait_for_read_tasks(
+            exact_targets_task, recovery_targets_task, repo_task, lookups_task, stacks_task
         )
-        pr_plans = plan_pr_updates(
-            bottom_base_branch=bottom_base_branch,
-            drafts=drafts,
-            generated_descriptions=generated_descriptions,
-            metadata=_pr_metadata(context=context, options=options),
-            explicit_metadata=bool(options.labels or options.reviewers or options.team_reviewers),
-            prepared_changes=prepared_changes,
-            prior_reviewers=re_request_reviewers,
-        )
-        await publish_prepared(
-            context=context,
-            github_client=github_client,
-            prepared_inputs=prepared_inputs,
-            pr_plans=pr_plans,
+        remote_targets = {**exact_targets_task.result(), **recovery_targets_task.result()}
+        branch_resolutions = _recover_interrupted_first_submissions(
+            client=client,
+            remote=remote,
             remote_targets=remote_targets,
-            retry_hint=(
-                resume_edit_hint(generated_edit_path)
-                if generated_edit_path is not None
-                else t"Retry the same {ui.cmd('jj-stack submit')} command, "
-                t"keeping its existing options."
+            resolutions=branch_resolutions,
+            tracked_prs=state.prs,
+        )
+        ensure_new_pr_branches_unclaimed(
+            branch_resolutions,
+            state.prs,
+        )
+        collisions = tuple(
+            resolution.branch
+            for resolution in branch_resolutions
+            if resolution.change_id not in state.prs
+            and not resolution.recovered
+            and resolution.branch in visible_bookmarks
+        )
+        if collisions:
+            raise CliError(
+                t"Local bookmark {ui.join(ui.bookmark, collisions)} already uses the name "
+                t"jj-stack would give a new PR branch.",
+                hint=t"Rename or forget that bookmark, then retry; jj-stack reserves the PR "
+                t"branch prefix for its own branches.",
+            )
+        pr_branches = _submit_pr_branches(
+            base_branch=base_branch,
+            resolutions=branch_resolutions,
+        )
+        lookups = lookups_task.result()
+        if pr_branches != initial_pr_branches:
+            lookups = await read_or_stop(
+                discover_pr_lookups(
+                    github_client=github_client,
+                    observations=observations_by_branch(branch_resolutions),
+                ),
+                message=_PR_LOOKUP_MESSAGE,
+            )
+        github_repo_state = repo_task.result()
+        observed_stacks = stacks_task.result()
+        trunk_branch, trunk_targets = observe_trunk_branch(
+            jj_client=client,
+            github_repo_state=github_repo_state,
+            remote=remote,
+            trunk_commit_id=stack.trunk.commit_id,
+        )
+    prepared_changes = prepare_submit_changes(
+        branch_resolutions=branch_resolutions,
+        lookups=lookups,
+        remote_targets=remote_targets,
+        stack=stack,
+    )
+    bottom_base_branch = trunk_branch
+    if explicit_base is not None:
+        child_bottom = short_change_id(stack.changes[0].change_id)
+        child_head = short_change_id(stack.head.change_id)
+        child_rebase = f"jj rebase -s '{child_bottom}' -o 'trunk()'"
+        require_published_base(
+            base=explicit_base.change,
+            lookup=lookups[explicit_base.branch],
+            merged_hint=(
+                t"Sync the parent PR first, rebase only the child stack with "
+                t"{ui.cmd(child_rebase)}, and then run "
+                t"{ui.cmd(f'jj-stack submit {child_head}')} without "
+                t"{ui.cmd('--base')}."
             ),
-            observed_stacks=observed_stacks,
-            trunk_branch=trunk_branch,
-            trunk_targets=trunk_targets,
-            dry_run=dry_run,
+            remote=remote,
+            remote_target=remote_targets.get(explicit_base.branch),
+            retry=(
+                f"jj-stack submit --base {short_change_id(explicit_base.change.change_id)} "
+                f"{child_head}"
+            ),
+            tracked_base=explicit_base.tracked,
         )
-    if generated_edit_path is not None:
-        try:
-            generated_edit_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        bottom_base_branch = explicit_base.branch
+    drafts: dict[ChangeId, bool] = {
+        prepared.change.change_id: _desired_draft_state(
+            draft_mode=options.draft_mode,
+            pr=prepared.pr,
+        )
+        for prepared in prepared_changes
+    }
+    generated_descriptions = preserve_external_pr_text(
+        descriptions=generated_descriptions,
+        prs={prepared.change.change_id: prepared.pr for prepared in prepared_changes},
+        submitted_commits=prepared_inputs.submitted_commits,
+        template=prepared_inputs.pr_template,
+    )
+    return _SubmitObservation(
+        bottom_base_branch=bottom_base_branch,
+        drafts=drafts,
+        generated_descriptions=generated_descriptions,
+        observed_stacks=observed_stacks,
+        prepared_changes=prepared_changes,
+        prepared_inputs=prepared_inputs,
+        remote_targets=remote_targets,
+        trunk_branch=trunk_branch,
+        trunk_targets=trunk_targets,
+    )
+
+
+async def _publish_observed(
+    *,
+    context: CommandContext,
+    github_client: GithubClient,
+    observed: _SubmitObservation,
+    options: SubmitOptions,
+    retry_hint: ui.Message,
+) -> None:
+    prepared_changes = observed.prepared_changes
+    re_request_reviewers = (
+        await load_re_request_reviewers(
+            github_client=github_client,
+            prs=tuple(pr for prepared in prepared_changes if (pr := prepared.pr) is not None),
+        )
+        if options.re_request
+        else {}
+    )
+    pr_plans = plan_pr_updates(
+        bottom_base_branch=observed.bottom_base_branch,
+        drafts=observed.drafts,
+        generated_descriptions=observed.generated_descriptions,
+        metadata=_pr_metadata(context=context, options=options),
+        explicit_metadata=bool(options.labels or options.reviewers or options.team_reviewers),
+        prepared_changes=prepared_changes,
+        prior_reviewers=re_request_reviewers,
+    )
+    await publish_prepared(
+        context=context,
+        github_client=github_client,
+        prepared_inputs=observed.prepared_inputs,
+        pr_plans=pr_plans,
+        remote_targets=observed.remote_targets,
+        retry_hint=retry_hint,
+        observed_stacks=observed.observed_stacks,
+        trunk_branch=observed.trunk_branch,
+        trunk_targets=observed.trunk_targets,
+        dry_run=options.dry_run,
+    )

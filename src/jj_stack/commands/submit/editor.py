@@ -190,14 +190,16 @@ def resume_edit_hint(document_path: Path) -> ui.Message:
     )
 
 
-def edit_prs_in_editor(
+def edit_pr_document(
     *,
     descriptions: dict[ChangeId, GeneratedDescription],
     drafts: dict[ChangeId, bool],
     jj_client: JjClient,
     changes: tuple[LocalCommit, ...],
     document_path: Path | None,
-) -> tuple[dict[ChangeId, GeneratedDescription], dict[ChangeId, bool], Path]:
+) -> Path:
+    """Open the descriptions in the user's editor and return the edited document's path."""
+
     editor_command = _resolve_editor_command(jj_client)
     if document_path is None:
         document = render_description_edit_document(
@@ -250,12 +252,18 @@ def edit_prs_in_editor(
             t"{completed.returncode}; submit aborted.",
             hint=recovery_hint,
         )
+    return document_path
+
+
+def parse_edited_pr_document(
+    document_path: Path, *, changes: tuple[LocalCommit, ...]
+) -> tuple[dict[ChangeId, GeneratedDescription], dict[ChangeId, bool]]:
+    """Read the edited document, which must name exactly the selected changes."""
+
+    recovery_hint = resume_edit_hint(document_path)
     try:
         edited_document = document_path.read_text(encoding="utf-8")
-        edited_descriptions, edited_drafts = parse_description_edit_document(
-            edited_document,
-            changes=changes,
-        )
+        return parse_description_edit_document(edited_document, changes=changes)
     except (OSError, UnicodeDecodeError) as error:
         raise CliError(
             t"Could not read edited pull request descriptions "
@@ -264,4 +272,3 @@ def edit_prs_in_editor(
         ) from error
     except CliError as error:
         raise CliError(error.message, hint=recovery_hint) from error
-    return edited_descriptions, edited_drafts, document_path

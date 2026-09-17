@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -19,9 +20,11 @@ from jj_stack.errors import (
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
+from jj_stack.state.operation_lock import try_acquire_operation_lock
 from jj_stack.state.store import TrackingStore, resolve_state_path
 
 from ..support.fake_github import (
+    FakeGithubRepo,
     FakeGithubState,
     create_app,
 )
@@ -1430,16 +1433,23 @@ def test_submit_describe_with_generates_pr_and_stack_metadata(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
+    state_dir = TrackingStore.for_repo(repo).path.parent
     helper = tmp_path / "describe.py"
     helper.write_text(
         "\n".join(
             [
-                "#!/usr/bin/env python3",
+                f"#!{sys.executable}",
                 "import json",
                 "import os",
                 "from pathlib import Path",
                 "import sys",
+                "from jj_stack.state.operation_lock import try_acquire_operation_lock",
                 "",
+                "# Other jj-stack commands may run in this repo while the helper runs.",
+                f"lock = try_acquire_operation_lock(Path({str(state_dir)!r}), command='helper')",
+                "if lock is None:",
+                "    raise SystemExit('the operation lock is held while the helper runs')",
+                "lock.release()",
                 "stack_input_env = 'JJ_STACK_INPUT_FILE'",
                 "kind, revset = sys.argv[1], sys.argv[2]",
                 "if kind == '--pr':",
@@ -2036,7 +2046,7 @@ def test_submit_names_sync_when_tracked_pr_is_merged(
         raise AssertionError("submit opened the editor before rejecting the merged PR")
 
     monkeypatch.setattr(
-        "jj_stack.commands.submit.command.edit_prs_in_editor",
+        "jj_stack.commands.submit.command.edit_pr_document",
         reject_editor,
     )
 
@@ -2592,11 +2602,9 @@ def test_submit_re_request_observes_reviews_before_mutation_and_retries(
 
 
 def _write_edit_editor(tmp_path: Path, name: str, body_lines: list[str]) -> str:
-    import sys as _sys
-
     editor = tmp_path / name
     editor.write_text("\n".join(body_lines) + "\n", encoding="utf-8")
-    return f"{_sys.executable} {editor}"
+    return f"{sys.executable} {editor}"
 
 
 def test_submit_edit_malformed_document_aborts_before_mutation(
@@ -2645,6 +2653,45 @@ def test_submit_edit_malformed_document_aborts_before_mutation(
     assert fake_repo.prs == {}
 
 
+def test_submit_edit_rejects_changes_rewritten_while_the_editor_was_open(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Submit observes the stack again after the editor closes and pushes nothing when the
+    document no longer names the selected changes."""
+
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "feature 1", "feature-1.txt")
+    commit_file(repo, "feature 2", "feature-2.txt")
+    bottom, top = selected_stack(repo).changes
+    editor_command = _write_edit_editor(
+        tmp_path,
+        "abandon-top-change.py",
+        [
+            "import subprocess",
+            "",
+            f"subprocess.run(['jj', 'abandon', '-r', {top.change_id!r}], check=True)",
+        ],
+    )
+    monkeypatch.delenv("VISUAL", raising=False)
+    monkeypatch.setenv("EDITOR", editor_command)
+
+    exit_code = run_main(repo, config_path, "submit", "--edit")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "unknown change" in captured.err and top.change_id[:8] in captured.err
+    saved_edit = re.search(r"--resume-edit (\S+\.md)", captured.err)
+    assert saved_edit is not None
+    Path(saved_edit.group(1)).unlink()
+    assert selected_stack(repo).changes == (bottom,)
+    assert TrackingStore.for_repo(repo).load().prs == {}
+    assert set(remote_refs(fake_repo.git_dir)) == {"refs/heads/main"}
+    assert fake_repo.prs == {}
+
+
 def test_submit_edit_sets_each_pr_draft_state(
     tmp_path: Path,
     monkeypatch,
@@ -2654,13 +2701,32 @@ def test_submit_edit_sets_each_pr_draft_state(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     commit_file(repo, "feature 1", "feature-1.txt")
     commit_file(repo, "feature 2", "feature-2.txt")
+    state_dir = TrackingStore.for_repo(repo).path.parent
+    # The editor runs with the lock free; publishing the PRs afterwards holds it.
+    published_under_lock: list[bool] = []
+    create_pr = FakeGithubRepo.create_pr
+
+    def observe_lock_then_create_pr(fake: FakeGithubRepo, *args, **kwargs):
+        probe = try_acquire_operation_lock(state_dir, command="probe")
+        published_under_lock.append(probe is None)
+        if probe is not None:
+            probe.release()
+        return create_pr(fake, *args, **kwargs)
+
+    monkeypatch.setattr(FakeGithubRepo, "create_pr", observe_lock_then_create_pr)
     editor_command = _write_edit_editor(
         tmp_path,
         "toggle-first-draft.py",
         [
             "from pathlib import Path",
             "import sys",
+            "from jj_stack.state.operation_lock import try_acquire_operation_lock",
             "",
+            "# Other jj-stack commands may run in this repo while the editor is open.",
+            f"lock = try_acquire_operation_lock(Path({str(state_dir)!r}), command='editor')",
+            "if lock is None:",
+            "    raise SystemExit('the operation lock is held while the editor runs')",
+            "lock.release()",
             "path = Path(sys.argv[-1])",
             "text = path.read_text(encoding='utf-8')",
             "path.write_text(",
@@ -2677,6 +2743,7 @@ def test_submit_edit_sets_each_pr_draft_state(
     recovery_copy = re.search(r"Editor file: (\S+)", submitted.out)
     assert recovery_copy is not None
     assert not Path(recovery_copy.group(1)).exists()
+    assert published_under_lock and all(published_under_lock)
 
     assert fake_repo.prs[1].is_draft
     assert not fake_repo.prs[2].is_draft

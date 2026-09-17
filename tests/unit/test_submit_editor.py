@@ -9,7 +9,7 @@ import pytest
 
 from jj_stack.commands.submit.editor import (
     _split_editor_command,
-    edit_prs_in_editor,
+    edit_pr_document,
     parse_description_edit_document,
     render_description_edit_document,
 )
@@ -148,7 +148,7 @@ def test_edit_aborts_when_editor_exits_nonzero(monkeypatch, tmp_path: Path) -> N
     )
 
     with pytest.raises(CliError, match="exited with status 3") as caught:
-        edit_prs_in_editor(
+        edit_pr_document(
             descriptions={
                 ChangeId("bottomchange"): GeneratedDescription(
                     body="Bottom body.", title="feature 1"

@@ -87,7 +87,7 @@ def test_merge_no_wait_resumes_a_pending_or_queued_request_and_syncs_after_waiti
     # While GitHub works through its queue, other jj-stack commands can still run: each queue
     # observation finds the repo's operation lock free. The local update afterwards holds it.
     monkeypatch.setattr("jj_stack.commands.merge.wait._QUEUE_POLL_INTERVAL_SECONDS", 0)
-    state_dir = TrackingStore.for_repo(repo).require_writable()
+    state_dir = TrackingStore.for_repo(repo).path.parent
 
     def lock_is_free() -> bool:
         probe = try_acquire_operation_lock(state_dir, command="probe")
