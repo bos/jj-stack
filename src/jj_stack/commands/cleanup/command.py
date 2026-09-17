@@ -48,7 +48,7 @@ from jj_stack.errors import (
 )
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.github.error_messages import github_target_unavailable_messages
+from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.github.resolution import GithubTarget, UnresolvedGithubTarget, resolve_github_target
 from jj_stack.identifiers import ChangeId, short_change_id
@@ -170,8 +170,14 @@ def _run_cleanup_command(
             pr=pr,
             revset=revset,
         )
-    if prepared_cleanup.candidates:
-        for message in github_target_unavailable_messages(prepared_cleanup.github_target):
+    github_target = prepared_cleanup.github_target
+    if prepared_cleanup.candidates and isinstance(github_target, UnresolvedGithubTarget):
+        for message in remote_and_github_unavailable_messages(
+            github_error=github_target.github_repo_error,
+            github_repo=None,
+            remote=github_target.remote,
+            remote_error=github_target.remote_error,
+        ):
             console.warning(plain_text(message))
 
     result = asyncio.run(

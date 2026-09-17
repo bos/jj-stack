@@ -14,7 +14,6 @@ from jj_stack.github.client import (
     GithubClient,
     GithubClientError,
 )
-from jj_stack.github.error_messages import github_action_error_message
 from jj_stack.github.resolution import (
     GithubRepoAddress,
     GithubTarget,
@@ -200,7 +199,7 @@ async def discover_pr_lookups(
                 "",
                 hint=t"Run {ui.cmd('jj-stack doctor')} to check GitHub access.",
             ) from error
-        lookup_error = github_action_error_message(action="pull request lookup", error=error)
+        lookup_error = f"pull request lookup: {error.user_facing_reason()}"
         return {
             branch: replace(
                 observations[branch], open_prs_on_branch=ObservationFailed(lookup_error)
@@ -235,7 +234,7 @@ async def discover_pr_lookups(
             )
         except GithubClientError as error:
             failure = ObservationFailed(
-                github_action_error_message(action="saved pull request lookup", error=error)
+                f"saved pull request lookup: {error.user_facing_reason()}"
             )
             remembered_prs = dict.fromkeys(remembered.values(), failure)
     return {
