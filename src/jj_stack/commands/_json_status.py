@@ -48,14 +48,13 @@ def pr_json(
 ) -> dict[str, object] | None:
     pr = change.pr
     if pr is not None:
-        return _json_object(
-            {
-                "checks": pr.check_rollup_status,
-                "merge_state_status": pr.merge_state_status,
-                "number": pr.number,
-                "url": pr.html_url,
-            }
-        )
+        values: dict[str, object] = {
+            "checks": pr.check_rollup_status,
+            "merge_state_status": pr.merge_state_status,
+            "number": pr.number,
+            "url": pr.html_url,
+        }
+        return {key: value for key, value in values.items() if value is not None}
     return saved_pr_json(change.tracked.pr_identity) if change.tracked is not None else None
 
 
@@ -63,7 +62,3 @@ def saved_pr_json(
     pr_identity: PRIdentity,
 ) -> dict[str, object]:
     return {"number": pr_identity.pr_number}
-
-
-def _json_object(values: dict[str, object]) -> dict[str, object]:
-    return {key: value for key, value in values.items() if value is not None}

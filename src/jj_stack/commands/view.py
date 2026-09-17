@@ -43,8 +43,6 @@ from jj_stack.commands.view_details import (
 )
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, UnsupportedStackError, error_message
 from jj_stack.formatting import (
-    CommitRenderClient,
-    RenderableCommit,
     format_pr_label,
     render_commit_blocks,
     render_commit_lines,
@@ -393,10 +391,9 @@ def _render_prepared_status(
         return
 
     with console.spinner(description="Rendering jj log"):
-        prerendered_blocks = _prefetch_commit_log_blocks(
+        prerendered_blocks = render_commit_blocks(
             client=prepared_status.client,
-            changes=result.changes,
-            trunk=prepared_status.stack.base_parent,
+            changes=(*result.changes, prepared_status.stack.base_parent),
         )
     _emit_lines(
         render_status_summary_lines(
@@ -489,24 +486,6 @@ def render_empty_status_lines(
         ),
         "The selected stack has no changes to show.",
     )
-
-
-def _prefetch_commit_log_blocks(
-    *,
-    client: CommitRenderClient,
-    changes: tuple[StackStatusChange, ...],
-    trunk: RenderableCommit,
-) -> dict[CommitId, tuple[str, ...]]:
-    """Render the `jj log` block for every change we will print, in parallel."""
-
-    seen: set[CommitId] = set()
-    ordered: list[RenderableCommit] = []
-    for change in (*changes, trunk):
-        if change.commit_id in seen:
-            continue
-        seen.add(change.commit_id)
-        ordered.append(change)
-    return render_commit_blocks(client=client, changes=tuple(ordered))
 
 
 def _render_summary_section(
