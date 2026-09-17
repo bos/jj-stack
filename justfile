@@ -52,6 +52,7 @@ live *args:
 
 # Build the wheel and source distribution.
 build:
+    rm -f dist/jj_stack-*.whl dist/jj_stack-*.tar.gz
     uv build
 
 # Build and smoke-test both release artifacts outside the source tree.
