@@ -639,9 +639,7 @@ class StackMachine(RuleBasedStateMachine):
             pr.is_draft = not pr.is_draft
 
     def server_merge(self, index: int, count: int, method: MergeMethod) -> None:
-        self.merge_on_server(self.published(self.paths[index])[:count], method)
-
-    def merge_on_server(self, labels: tuple[str, ...], method: MergeMethod) -> None:
+        labels = self.published(self.paths[index])[:count]
         pr = self.pr(labels[-1])
         head = self.fake.ref_target(pr.head_ref)
         assert head is not None

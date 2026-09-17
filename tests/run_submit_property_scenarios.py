@@ -61,7 +61,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(arguments[:separator])
     pytest_args = arguments[separator + 1 :]
     if args.jobs == "auto":
-        jobs = getattr(os, "process_cpu_count", os.cpu_count)() or 1
+        jobs = os.process_cpu_count() or 1
     else:
         try:
             jobs = positive_int(args.jobs)

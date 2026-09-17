@@ -15,13 +15,3 @@ def assert_output_contains(text: str, *fragments: str) -> None:
     normalized = normalize_output(text)
     for fragment in fragments:
         assert fragment in normalized
-
-
-def assert_output_in_order(text: str, *fragments: str) -> None:
-    """Assert fragments appear in order after terminal-width normalization."""
-
-    normalized = normalize_output(text)
-    start = 0
-    for fragment in fragments:
-        index = normalized.index(fragment, start)
-        start = index + len(fragment)

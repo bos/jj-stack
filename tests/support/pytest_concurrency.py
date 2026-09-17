@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 from _pytest.terminal import TerminalReporter
 
-_REPORT_DIR_NAME = "jj-stack-concurrency"
 _PLUGIN_NAME = "jj-stack-pytest-concurrency"
 
 
@@ -277,7 +276,7 @@ class _ConcurrencyReporter:
         self._config = config
         self._is_worker = hasattr(config, "workerinput")
         self._requested_slots = _requested_slots(config)
-        self._report_root = _report_root_for(config)
+        self._report_root = Path(config.rootpath) / ".pytest_cache" / "jj-stack-concurrency"
         run_id = getattr(config.option, "testrunuid", None)
         if not isinstance(run_id, str) or not run_id:
             run_id = os.environ.get("PYTEST_XDIST_TESTRUNUID") or "local"
@@ -357,16 +356,4 @@ def _requested_slots(config: pytest.Config) -> int:
     numprocesses = getattr(config.option, "numprocesses", None)
     if isinstance(numprocesses, int) and numprocesses > 0:
         return numprocesses
-    env_value = os.environ.get("PYTEST_XDIST_WORKER_COUNT")
-    if env_value is not None:
-        try:
-            parsed = int(env_value)
-        except ValueError:
-            parsed = 0
-        if parsed > 0:
-            return parsed
     return 1
-
-
-def _report_root_for(config: pytest.Config) -> Path:
-    return Path(config.rootpath) / ".pytest_cache" / _REPORT_DIR_NAME

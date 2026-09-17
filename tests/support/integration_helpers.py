@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import atexit
 import contextlib
 import io
 import os
 import pickle
 import shutil
 import subprocess
-import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -33,10 +31,6 @@ from .fake_github import (
 
 _TEMPLATE_OWNER = "octo-org"
 _TEMPLATE_NAME = "stacked-prs"
-_TEST_JJ_IDENTITY = {
-    "JJ_EMAIL": "test@example.com",
-    "JJ_USER": "Test User",
-}
 _SHARED_TEMPLATE_ROOT: Path | None = None
 _TEMPLATE_MEMO: dict[str, Path] = {}
 
@@ -155,8 +149,8 @@ def _init_fake_github_repo_fresh(
 def set_shared_template_root(root: Path) -> None:
     """Point template caching at a directory shared by all xdist workers.
 
-    Configured once per session from a conftest fixture. Without it, each
-    worker process falls back to building its own private template copies.
+    Configured once per session from a conftest fixture; building a template
+    without it fails.
     """
 
     global _SHARED_TEMPLATE_ROOT
@@ -166,9 +160,9 @@ def set_shared_template_root(root: Path) -> None:
 def _template_dir(name: str, build: Callable[[Path], None]) -> Path:
     """Return a cached template directory, building it at most once per session.
 
-    With a shared root configured, workers coordinate through an atomic lock
-    directory. One worker builds and atomically publishes the template while
-    the others wait, so readers only ever observe a complete template.
+    Workers coordinate through an atomic lock directory. One worker builds and
+    atomically publishes the template while the others wait, so readers only
+    ever observe a complete template.
     """
 
     cached = _TEMPLATE_MEMO.get(name)
@@ -176,11 +170,7 @@ def _template_dir(name: str, build: Callable[[Path], None]) -> Path:
         return cached
     root = _SHARED_TEMPLATE_ROOT
     if root is None:
-        template_root = Path(tempfile.mkdtemp(prefix=f"jjr_tpl_{name}_"))
-        atexit.register(lambda: shutil.rmtree(template_root, ignore_errors=True))
-        build(template_root)
-        _TEMPLATE_MEMO[name] = template_root
-        return template_root
+        raise RuntimeError("set_shared_template_root() has not run in this session.")
     root.mkdir(parents=True, exist_ok=True)
     target = root / name
     ready = target / ".template-ready"
@@ -459,13 +449,11 @@ def expose_pr_branch_namespace(repo: Path) -> None:
 
 
 def run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, **_TEST_JJ_IDENTITY} if command[0] == "jj" else None
     completed = subprocess.run(
         command,
         capture_output=True,
         check=False,
         cwd=cwd,
-        env=env,
         encoding="utf-8",
     )
     if completed.returncode != 0:

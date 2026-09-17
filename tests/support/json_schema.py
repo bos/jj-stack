@@ -42,9 +42,8 @@ def _error_sort_key(error: ValidationError) -> tuple[str, str]:
 
 
 def _format_errors(errors: list[ValidationError]) -> str:
-    return "\n".join(_format_error(error) for error in errors)
-
-
-def _format_error(error: ValidationError) -> str:
-    path = ".".join(str(part) for part in error.absolute_path) or "<root>"
-    return f"{path}: {error.message}"
+    lines = []
+    for error in errors:
+        path = ".".join(str(part) for part in error.absolute_path) or "<root>"
+        lines.append(f"{path}: {error.message}")
+    return "\n".join(lines)

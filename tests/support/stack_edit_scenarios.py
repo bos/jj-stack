@@ -124,8 +124,6 @@ def apply_stack_edit(
             raise ValueError("squash_into_previous requires a non-bottom change")
         rewritten.update(live[index - 1 :])
         removed_label = live.pop(index)
-    else:
-        raise ValueError(f"unsupported stack edit kind: {operation.kind}")
 
     return StackEditEffect(
         live_labels=tuple(live),

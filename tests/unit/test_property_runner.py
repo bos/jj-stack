@@ -3,9 +3,8 @@ import pytest
 from tests import run_submit_property_scenarios as runner
 
 
-@pytest.mark.parametrize("cpu_count_name", ("process_cpu_count", "cpu_count"))
 def test_reproduction_preserves_search_budgets_seed_and_pytest_filter(
-    monkeypatch, capsys, cpu_count_name
+    monkeypatch, capsys
 ) -> None:
     calls = []
 
@@ -14,9 +13,7 @@ def test_reproduction_preserves_search_budgets_seed_and_pytest_filter(
         return runner.subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(runner.subprocess, "run", run)
-    if cpu_count_name == "cpu_count":
-        monkeypatch.delattr(runner.os, "process_cpu_count")
-    monkeypatch.setattr(runner.os, cpu_count_name, lambda: 14)
+    monkeypatch.setattr(runner.os, "process_cpu_count", lambda: 14)
     assert (
         runner.main(
             (
