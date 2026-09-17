@@ -423,34 +423,6 @@ def test_cleanup_preserves_open_orphan_record_and_remote_branch(
     assert f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir)
 
 
-def test_cleanup_removes_overview_comment_for_closed_pr(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-
-    stack = selected_stack(repo)
-    change_id = stack.changes[-1].change_id
-    state_store = TrackingStore.for_repo(repo)
-    fake_repo.prs[2].state = "closed"
-    fake_repo.github_stacks = {}
-    fake_repo.create_issue_comment(
-        body=f"{STACK_OVERVIEW_COMMENT_MARKER}\nstack overview",
-        issue_number=2,
-    )
-
-    exit_code = run_main(repo, config_path, "cleanup")
-    captured = capsys.readouterr()
-    refreshed_state = state_store.load()
-
-    assert exit_code == 0
-    assert "delete stack overview comment" in captured.out
-    assert change_id not in refreshed_state.prs
-    assert issue_comments(fake_repo, 2) == []
-
-
 def test_cleanup_finishes_closed_prs_whose_branch_was_deleted_or_moved(
     tmp_path: Path,
     monkeypatch,

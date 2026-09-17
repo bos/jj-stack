@@ -42,14 +42,16 @@ def test_relink_requires_open_same_repo_pr(
 
 def test_duplicate_saved_pr_or_branch_claim_is_refused() -> None:
     branch = "jj-stack/manual-feature-feature1"
+    replacements = {ChangeId("feature1change"): make_pr_identity(head_ref=branch, pr_number=1)}
 
-    with pytest.raises(CliError, match="already linked"):
-        require_unique_pr_claims(
-            saved={ChangeId("other-change"): make_pr_identity(head_ref=branch, pr_number=2)},
-            replacements={
-                ChangeId("feature1change"): make_pr_identity(head_ref=branch, pr_number=1)
-            },
-        )
+    for saved in (
+        make_pr_identity(head_ref=branch, pr_number=2),
+        make_pr_identity(head_ref="jj-stack/other-bbbbbbbb", pr_number=1),
+    ):
+        with pytest.raises(CliError, match="already linked"):
+            require_unique_pr_claims(
+                saved={ChangeId("other-change"): saved}, replacements=replacements
+            )
 
 
 class _GithubClientStub:
