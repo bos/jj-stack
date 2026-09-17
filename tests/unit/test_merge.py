@@ -6,7 +6,6 @@ from jj_stack.commands.merge.command import _resolve_merge_method
 from jj_stack.commands.merge.plan import MergeChange, merge_precondition_error
 from jj_stack.errors import CliError
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, GithubRepo
@@ -115,54 +114,6 @@ def test_resolve_merge_method_rejects_a_method_the_repo_disallows() -> None:
 
 
 @pytest.mark.merge_recovery
-def test_merge_preconditions_reject_repo_drift() -> None:
-    expected_repo = GithubRepoAddress(
-        owner="acme",
-        repo="widgets",
-    )
-    observation = RepoFacts(
-        configured_repo=GithubRepoAddress(
-            owner="other",
-            repo="widgets",
-        ),
-        github_repo=_repo(
-            allow_merge_commit=False,
-            allow_rebase_merge=False,
-            allow_squash_merge=True,
-        ),
-        prs_by_base={},
-        rewrite_args=JjCliArgs(),
-        remote=GitRemote(
-            name="origin",
-            fetch_url="https://github.test/acme/widgets.git",
-            push_url="https://github.test/acme/widgets.git",
-        ),
-        repo=expected_repo,
-        prs={},
-    )
-
-    error = merge_precondition_error(
-        expected_repo=expected_repo,
-        expected_trunk_branch="main",
-        observation=observation,
-        remote_name="origin",
-        sync_target="abcdefgh",
-        change=MergeChange(
-            base_ref="main",
-            change_id=ChangeId("a" * 32),
-            commit_id=CommitId("c" * 40),
-            identity=PRIdentity(pr_number=1, head_ref="jj-stack/feature-aaaaaaaa"),
-        ),
-    )
-
-    assert error is not None
-    assert plain_text(error) == (
-        "the configured Git remote no longer names the planned GitHub repo; inspect it and "
-        "rerun jj-stack merge"
-    )
-
-
-@pytest.mark.merge_recovery
 def test_merge_preconditions_name_a_closed_pull_request() -> None:
     """A closed pull request is reported as closed, not as unspecified drift."""
 
@@ -211,9 +162,7 @@ def test_merge_preconditions_name_a_closed_pull_request() -> None:
 
     error = merge_precondition_error(
         expected_repo=repo,
-        expected_trunk_branch="main",
         observation=observation,
-        remote_name="origin",
         sync_target="abcdefgh",
         change=MergeChange(
             base_ref="main",

@@ -292,12 +292,10 @@ async def _stream_merge_async(
         )
     plan = build_merge_plan(
         observation=prs_task.result(),
-        remote_name=remote.name,
         repo=github_repo,
         changes=stack.changes,
         state=prepared_merge.state,
         target_change_id=prepared_merge.target_change_id,
-        trunk_branch=trunk_branch,
     )
     stacks = stacks_task.result()
     execution = MergeExecutionInputs(

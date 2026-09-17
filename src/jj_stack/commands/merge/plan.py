@@ -109,12 +109,10 @@ class MergePlan:
 def build_merge_plan(
     *,
     observation: RepoFacts,
-    remote_name: str,
     repo: GithubRepoAddress,
     changes: tuple[LocalCommit, ...],
     state: TrackingState,
     target_change_id: ChangeId | None,
-    trunk_branch: str,
 ) -> MergePlan:
     merge_changes = tuple(_merge_change(observation, change, state) for change in changes)
     candidates: list[MergeChange] = []
@@ -130,9 +128,7 @@ def build_merge_plan(
             break
         error = merge_precondition_error(
             expected_repo=repo,
-            expected_trunk_branch=trunk_branch,
             observation=observation,
-            remote_name=remote_name,
             change=change,
             sync_target=short_change_id(changes[-1].change_id),
         )
@@ -178,24 +174,15 @@ def build_merge_plan(
 def merge_precondition_error(
     *,
     expected_repo: GithubRepoAddress,
-    expected_trunk_branch: str,
     observation: RepoFacts,
-    remote_name: str,
     change: MergeChange,
     sync_target: str,
 ) -> Message | None:
     """Explain which observed precondition prevents the next action and how to clear it."""
 
-    remote = observation.remote
-    if remote is None or remote.name != remote_name:
-        return _inspect(f"Git remote {remote_name} is no longer configured")
-    if observation.configured_repo != expected_repo:
-        return _inspect("the configured Git remote no longer names the planned GitHub repo")
     github_repo = observation.github_repo
     if github_repo.full_name.casefold() != expected_repo.full_name.casefold():
         return _inspect("GitHub no longer reports the planned repo")
-    if github_repo.default_branch not in (None, "", expected_trunk_branch):
-        return _inspect("GitHub no longer reports the planned trunk branch as its default")
     return _merge_change_precondition_error(
         observation.prs[change.change_id], change, sync_target
     )
@@ -226,10 +213,6 @@ def _merge_change_precondition_error(
     if pr.is_draft:
         return _inspect(t"pull request {pr_number} is now a draft")
     submit = ui.cmd(f"jj-stack submit {short_change_id(change.change_id)}")
-    if not observed.local:
-        return (
-            t"it is no longer visible locally; find where it went with {ui.cmd('jj-stack view')}"
-        )
     if state.divergent:
         hint = divergence_recovery_hint(change.change_id, retry=t"run {submit}")
         return t"it has more than one local version; {hint}"
