@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -34,7 +35,6 @@ from jj_stack.commands.cleanup.actions import (
     apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
     blocked_pr_action,
-    check_tracked_pr,
     close_pr_on_trunk,
     github_stack_cleanup_blockers,
     plan_pr_cleanup,
@@ -57,7 +57,7 @@ from jj_stack.jj.client import PRRefUpdate
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubIssueComment, GithubPR, GithubStack
 from jj_stack.models.tracking import TrackedPR, TrackingState
-from jj_stack.stack.change_state import enumerate_orphaned_records
+from jj_stack.stack.change_state import classify, enumerate_orphaned_records
 from jj_stack.stack.pr_facts import (
     RepoFacts,
     observe_github_stacks,
@@ -357,9 +357,14 @@ async def _run_cleanup_async(
     candidates = prepared_cleanup.candidates
     github_target = prepared_cleanup.github_target
     if isinstance(github_target, GithubTarget) and candidates:
-        if github_client is not None:
+        client_context = (
+            nullcontext(github_client)
+            if github_client is not None
+            else prepared_cleanup.context.open_github_client(repo=github_target.repo)
+        )
+        async with client_context as client:
             await _run_tracked_pr_cleanup_pass(
-                github_client=github_client,
+                github_client=client,
                 candidates=candidates,
                 prepared_cleanup=prepared_cleanup,
                 preview_detached_dependents=preview_detached_dependents,
@@ -367,19 +372,6 @@ async def _run_cleanup_async(
                 record_action=record_action,
                 remote=github_target.remote,
             )
-        else:
-            async with prepared_cleanup.context.open_github_client(
-                repo=github_target.repo
-            ) as client:
-                await _run_tracked_pr_cleanup_pass(
-                    github_client=client,
-                    candidates=candidates,
-                    prepared_cleanup=prepared_cleanup,
-                    preview_detached_dependents=preview_detached_dependents,
-                    preview_local_removals=preview_local_removals,
-                    record_action=record_action,
-                    remote=github_target.remote,
-                )
     elif candidates:
         for change_id, candidate in candidates.items():
             record_action(
@@ -399,8 +391,8 @@ async def _run_tracked_pr_cleanup_pass(
     github_client: GithubClient,
     candidates: Mapping[ChangeId, TrackedPR],
     prepared_cleanup: PreparedCleanup,
-    preview_detached_dependents: frozenset[int] = frozenset(),
-    preview_local_removals: frozenset[ChangeId] = frozenset(),
+    preview_detached_dependents: frozenset[int],
+    preview_local_removals: frozenset[ChangeId],
     record_action: Callable[[CleanupAction], None],
     remote: GitRemote,
 ) -> None:
@@ -562,24 +554,21 @@ def _preflight_tracked_pr_cleanup(
     preview_detached_dependents: frozenset[int],
     preview_local_removals: frozenset[ChangeId],
 ) -> CleanupPreflight:
-    state = check_tracked_pr(change_id=change_id, observation=initial_observation)
+    state = classify(initial_observation.prs[change_id])
     if isinstance(state, UNTRUSTED_PR_STATES):
         return blocked_pr_action(state)
     local_commits = state.local
     pr = state.pr
     if pr.state == "open" and not prepared_cleanup.close_open_prs:
+        if local_commits:
+            return None
         pr_label = format_pr_label(pr.number, url=pr.html_url)
-        action = (
-            CleanupAction(
-                kind="tracking",
-                status="skipped",
-                body=t"keep open orphan {pr_label}; to close it, run "
-                t"{ui.cmd(f'jj-stack cleanup --pull-request {pr.number} --close')}",
-            )
-            if not local_commits
-            else None
+        return CleanupAction(
+            kind="tracking",
+            status="skipped",
+            body=t"keep open orphan {pr_label}; to close it, run "
+            t"{ui.cmd(f'jj-stack cleanup --pull-request {pr.number} --close')}",
         )
-        return action
     update, blocker = plan_pr_cleanup(
         observation=initial_observation,
         preview_detached_dependents=preview_detached_dependents,
@@ -593,14 +582,13 @@ def _preflight_tracked_pr_cleanup(
         and any(not commit.immutable for commit in local_commits)
     ):
         pr_label = format_pr_label(pr.number, url=pr.html_url)
-        action = CleanupAction(
+        return CleanupAction(
             kind="tracking",
             status="skipped",
             body=t"keep the saved link for merged {pr_label}: "
             t"{ui.change_id(change_id)} is still in local history; run "
             t"{ui.cmd(f'jj-stack sync {short_change_id(change_id)}')} before cleanup",
         )
-        return action
     return PRCleanup(pr=pr, update=update)
 
 
@@ -644,11 +632,7 @@ async def _apply_tracked_pr_cleanup(
         body=t"forget the saved link between {format_pr_label(pr.number, url=pr.html_url)} and "
         t"{ui.change_id(change_id)}",
     )
-    if prepared_cleanup.dry_run:
-        record_action(action)
-    else:
-        prepared_cleanup.context.state_store.remove_pr(
-            change_id,
-        )
-        record_action(action)
+    if not prepared_cleanup.dry_run:
+        prepared_cleanup.context.state_store.remove_pr(change_id)
+    record_action(action)
     return False

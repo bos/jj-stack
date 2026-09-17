@@ -14,7 +14,6 @@ from jj_stack.github.overview_comments import (
     STACK_OVERVIEW_COMMENT_LABEL,
     delete_stack_overview_comment,
 )
-from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient, PRRefUpdate
 from jj_stack.models.github import GithubIssueComment, GithubPR, GithubStack
 from jj_stack.stack.change_state import (
@@ -22,9 +21,7 @@ from jj_stack.stack.change_state import (
     PRAmbiguous,
     PRIdentityMismatch,
     PRMissing,
-    Unobserved,
     WithPR,
-    classify,
 )
 from jj_stack.stack.pr_facts import RepoFacts
 from jj_stack.ui import Message
@@ -50,12 +47,6 @@ type UntrustedPR = PRAmbiguous | PRIdentityMismatch | PRMissing
 
 # The saved link no longer identifies one open pull request, so nothing may act on it.
 UNTRUSTED_PR_STATES = (PRAmbiguous, PRIdentityMismatch, PRMissing)
-
-
-def check_tracked_pr(*, change_id: ChangeId, observation: RepoFacts) -> WithPR | UntrustedPR:
-    """Return the classified saved PR; an `UntrustedPR` says its identity cannot be trusted."""
-
-    return classify(observation.prs[change_id])
 
 
 def blocked_pr_action(state: UntrustedPR) -> CleanupAction:
@@ -184,31 +175,11 @@ def plan_pr_cleanup(
                 status="blocked",
             ),
         )
-    configured_repo = observation.configured_repo
     remote_target = state.remote_target
-    if (
-        isinstance(remote_target, Unobserved)
-        or configured_repo is None
-        or configured_repo != observation.repo
-    ):
-        pr_label = format_pr_label(pr.number, repo=observation.repo)
-        return (
-            None,
-            CleanupAction(
-                kind="remote branch",
-                body=t"cannot determine which Git remote belongs to {pr_label}; run "
-                t"{ui.cmd('jj-stack doctor')} to check the repo setup",
-                status="blocked",
-            ),
-        )
     update = (
-        None
-        if remote_target is None
-        else PRRefUpdate(
-            branch=branch,
-            expected_target=remote_target,
-            desired_target=None,
-        )
+        PRRefUpdate(branch=branch, expected_target=remote_target, desired_target=None)
+        if isinstance(remote_target, str)
+        else None
     )
     return update, None
 
