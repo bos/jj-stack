@@ -139,9 +139,6 @@ def run_editor(path: Path) -> int:
     except ValueError as error:
         print(f"Could not parse EDITOR: {error}", file=sys.stderr)
         return 1
-    if not command:
-        print("EDITOR environment variable is not set.", file=sys.stderr)
-        return 1
 
     try:
         with Path("/dev/tty").open("r+b", buffering=0) as tty:
@@ -181,9 +178,6 @@ def run_editor_command(
             stdout=stdout,
             stderr=stderr,
         )
-    except FileNotFoundError as error:
-        print(f"Could not run editor {command[0]!r}: {error}", file=sys.stderr)
-        return 1
     except OSError as error:
         print(f"Could not run editor {command[0]!r}: {error}", file=sys.stderr)
         return 1
@@ -212,8 +206,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     mode = "pr" if args.pr is not None else "stack"
     revset = args.pr if args.pr is not None else args.stack
-    if revset is None:
-        raise AssertionError("argparse should guarantee a revset.")
 
     if mode == "pr":
         context_lines = pr_context_lines(revset)

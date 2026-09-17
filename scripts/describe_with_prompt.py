@@ -109,8 +109,6 @@ def main() -> int:
     args = parse_args()
     mode = "pr" if args.pr is not None else "stack"
     revset = args.pr if args.pr is not None else args.stack
-    if revset is None:
-        raise AssertionError("argparse should guarantee a revset.")
 
     if mode == "pr":
         default_title, default_body = pr_defaults(revset)

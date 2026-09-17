@@ -238,8 +238,6 @@ def main() -> int:
     args = parse_args()
     mode = "pr" if args.pr is not None else "stack"
     revset = args.pr if args.pr is not None else args.stack
-    if revset is None:
-        raise AssertionError("argparse should guarantee a revset.")
 
     prompt = build_prompt(mode, revset, build_context(mode, revset))
     codex_bin = os.environ.get("JJ_STACK_CODEX_BIN", "codex")
