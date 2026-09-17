@@ -9,8 +9,8 @@
 # - The module keeps stdout and stderr console setup in one place so command
 #   modules do not spread Rich policy across the codebase.
 #
-# - `markup=False` remains the default so arbitrary user-facing text does not
-#   need per-call Rich escaping.
+# - Every object is converted to a Rich renderable before printing, so arbitrary
+#   user-facing text does not need per-call Rich escaping.
 #
 # - Optional time-prefixing lives here alongside the output it affects.
 
@@ -45,8 +45,6 @@ import jj_stack.ui as ui
 from jj_stack.jj.colors import JjColorWhen, SemanticStyles, semantic_styles
 
 ActionStatus = Literal["applied", "blocked", "planned", "skipped"]
-
-SIMPLE = rich_box.SIMPLE
 
 ColorMode = Literal["auto", "always", "never"]
 RequestedColorMode = Literal["always", "auto", "debug", "never"]
@@ -102,12 +100,6 @@ class _HangingIndentRenderable:
     body: RenderableType
 
     def __rich_console__(self, console, options):
-        if options.no_wrap:
-            no_wrap_options = options.update(no_wrap=True, overflow="ignore")
-            yield from console.render(self.prefix, no_wrap_options)
-            yield from console.render(self.body, no_wrap_options)
-            return
-
         prefix_options = options.update(width=self.prefix_width, max_width=self.prefix_width)
         body_width = max(1, options.max_width - self.prefix_width)
         body_options = options.update(width=body_width, max_width=body_width)
@@ -115,8 +107,6 @@ class _HangingIndentRenderable:
         prefix_lines = console.render_lines(self.prefix, prefix_options, pad=False)
         prefix_line = prefix_lines[0] if prefix_lines else []
         body_lines = console.render_lines(self.body, body_options, pad=False)
-        if not body_lines:
-            body_lines = [[]]
 
         indent = Segment(" " * self.prefix_width)
         for index, line in enumerate(body_lines):
@@ -141,10 +131,6 @@ class _TrimmedRenderable:
             _rstrip_line_segments(line)
             for line in console.render_lines(self.renderable, options, pad=False)
         ]
-        while lines and not _line_text(lines[0]):
-            lines.pop(0)
-        while lines and not _line_text(lines[-1]):
-            lines.pop()
 
         for index, line in enumerate(lines):
             yield from line
@@ -170,72 +156,28 @@ class _ConfiguredConsole:
     def print(
         self,
         *objects,
-        sep: str = " ",
         end: str = "\n",
         style=None,
-        justify=None,
-        overflow=None,
-        no_wrap=None,
-        emoji=None,
         markup=None,
-        highlight=None,
-        width=None,
-        height=None,
-        crop: bool = True,
         soft_wrap=None,
-        new_line_start: bool = False,
     ) -> None:
         if self._start is None:
             self._console.print(
-                *objects,
-                sep=sep,
-                end=end,
-                style=style,
-                justify=justify,
-                overflow=overflow,
-                no_wrap=no_wrap,
-                emoji=emoji,
-                markup=markup,
-                highlight=highlight,
-                width=width,
-                height=height,
-                crop=crop,
-                soft_wrap=soft_wrap,
-                new_line_start=new_line_start,
+                *objects, end=end, style=style, markup=markup, soft_wrap=soft_wrap
             )
             return
 
         if not objects:
             objects = (NewLine(),)
 
-        renderables = self._console._collect_renderables(
-            objects,
-            sep,
-            "",
-            justify=justify,
-            emoji=emoji,
-            markup=markup,
-            highlight=highlight,
-        )
+        renderables = self._console._collect_renderables(objects, " ", "", markup=markup)
         wrapped = _TimePrefixedRenderable(
             renderable=Group(*renderables),
             end=end,
             prefix_style=self._prefix_style,
             start=self._start,
         )
-        self._console.print(
-            wrapped,
-            end="",
-            style=style,
-            justify=justify,
-            overflow=overflow,
-            no_wrap=no_wrap,
-            width=width,
-            height=height,
-            crop=crop,
-            soft_wrap=soft_wrap,
-            new_line_start=new_line_start,
-        )
+        self._console.print(wrapped, end="", style=style, soft_wrap=soft_wrap)
 
 
 class _NullProgress:
@@ -346,7 +288,6 @@ _STDOUT_CONSOLE: _ConfiguredConsole
 _STDERR_CONSOLE: _ConfiguredConsole
 _SEMANTIC_STYLES: SemanticStyles | None
 _EFFECTIVE_COLOR: RequestedColorMode | None = None
-_ACTIVE_COLOR_MODE: ColorMode = "auto"
 _STDOUT_STREAM: IO[str] = sys.stdout
 _STDERR_STREAM: IO[str] = sys.stderr
 _TIME_OUTPUT = False
@@ -381,7 +322,6 @@ def configured_console(
     global _STDERR_CONSOLE
     global _SEMANTIC_STYLES
     global _EFFECTIVE_COLOR
-    global _ACTIVE_COLOR_MODE
     global _STDOUT_STREAM
     global _STDERR_STREAM
     global _TIME_OUTPUT
@@ -390,7 +330,6 @@ def configured_console(
         _STDERR_CONSOLE,
         _SEMANTIC_STYLES,
         _EFFECTIVE_COLOR,
-        _ACTIVE_COLOR_MODE,
         _STDOUT_STREAM,
         _STDERR_STREAM,
         _TIME_OUTPUT,
@@ -403,7 +342,6 @@ def configured_console(
         time_output=time_output,
     )
     _EFFECTIVE_COLOR = color
-    _ACTIVE_COLOR_MODE = rich_color_mode(color)
     _STDOUT_STREAM = sys.stdout if stdout is None else stdout
     _STDERR_STREAM = sys.stderr if stderr is None else stderr
     _TIME_OUTPUT = time_output
@@ -415,7 +353,6 @@ def configured_console(
             _STDERR_CONSOLE,
             _SEMANTIC_STYLES,
             _EFFECTIVE_COLOR,
-            _ACTIVE_COLOR_MODE,
             _STDOUT_STREAM,
             _STDERR_STREAM,
             _TIME_OUTPUT,
@@ -429,12 +366,10 @@ def adopt_jj_config(*, color: str | None, colors: Mapping[str, object]) -> None:
     global _STDERR_CONSOLE
     global _SEMANTIC_STYLES
     global _EFFECTIVE_COLOR
-    global _ACTIVE_COLOR_MODE
     if _EFFECTIVE_COLOR is None and color in ("always", "auto", "debug", "never"):
         _EFFECTIVE_COLOR = color
-    _ACTIVE_COLOR_MODE = rich_color_mode(_EFFECTIVE_COLOR)
     _STDOUT_CONSOLE, _STDERR_CONSOLE, _SEMANTIC_STYLES = _build_consoles(
-        color_mode=_ACTIVE_COLOR_MODE,
+        color_mode=rich_color_mode(_EFFECTIVE_COLOR),
         semantic_styles=semantic_styles(colors),
         stderr=_STDERR_STREAM,
         stdout=_STDOUT_STREAM,
@@ -493,8 +428,6 @@ def style_time_prefix(text: str) -> str:
     style = semantic_style("prefix", "timestamp")
     if style is None:
         return text
-    if not isinstance(_STDERR_CONSOLE, _ConfiguredConsole):
-        return text
     rich_console = _STDERR_CONSOLE._console
     with rich_console.capture() as capture:
         rich_console.print(Text(text, style=style), end="")
@@ -521,15 +454,12 @@ def _coerce_renderable(value: ConsoleObject) -> RenderableType:
         return _render_data_table(value)
     if isinstance(value, str | Template | ui.SemanticText | tuple):
         return rich_text(value)
-    if isinstance(value, str | ConsoleRenderable | RichCast):
-        return value
-    return str(value)
+    return value
 
 
 def output(*objects: ConsoleObject, **kwargs) -> None:
     """Write plain user-facing output to stdout."""
 
-    kwargs.setdefault("markup", False)
     _STDOUT_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
 
@@ -545,7 +475,6 @@ def machine_output(text: str) -> None:
 def error(*objects: ConsoleObject, **kwargs) -> None:
     """Write styled error output to stderr."""
 
-    kwargs.setdefault("markup", False)
     kwargs.setdefault("style", semantic_style("error heading") or "red")
     _STDERR_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
@@ -553,14 +482,12 @@ def error(*objects: ConsoleObject, **kwargs) -> None:
 def stderr_output(*objects: ConsoleObject, **kwargs) -> None:
     """Write plain user-facing output to stderr."""
 
-    kwargs.setdefault("markup", False)
     _STDERR_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
 
 def warning(*objects: ConsoleObject, **kwargs) -> None:
     """Write styled warning output to stderr."""
 
-    kwargs.setdefault("markup", False)
     kwargs.setdefault("style", semantic_style("warning heading") or "yellow")
     _STDERR_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
@@ -587,7 +514,6 @@ def action_row(*, kind: str | None, status: ActionStatus, body: ui.Message) -> N
 def note(*objects: ConsoleObject, **kwargs) -> None:
     """Write styled note output to stdout."""
 
-    kwargs.setdefault("markup", False)
     kwargs.setdefault("style", semantic_style("hint heading") or "cyan")
     _STDOUT_CONSOLE.print(*(_coerce_renderable(obj) for obj in objects), **kwargs)
 
@@ -602,7 +528,9 @@ def spinner(*, description: str, report_changes: bool = False) -> Generator[Spin
         yield handle
         return
 
-    progress_console = _progress_console(stream=_STDERR_STREAM, color_mode=_ACTIVE_COLOR_MODE)
+    progress_console = _progress_console(
+        stream=_STDERR_STREAM, color_mode=rich_color_mode(_EFFECTIVE_COLOR)
+    )
     with progress_console.status(description) as status:
         yield _RichSpinnerHandle(status=status)
 
@@ -615,7 +543,9 @@ def progress(*, description: str, total: int) -> Generator[ProgressLike]:
         yield _NullProgress()
         return
 
-    progress_console = _progress_console(stream=_STDERR_STREAM, color_mode=_ACTIVE_COLOR_MODE)
+    progress_console = _progress_console(
+        stream=_STDERR_STREAM, color_mode=rich_color_mode(_EFFECTIVE_COLOR)
+    )
     with Progress(
         SpinnerColumn(),
         TextColumn("{task.description}"),
@@ -666,7 +596,7 @@ def _append_rich_text(
         return
     if isinstance(content, ui.SemanticText):
         semantic = semantic_style(*content.labels)
-        if content.link is not None and _ACTIVE_COLOR_MODE != "never":
+        if content.link is not None and _EFFECTIVE_COLOR != "never":
             semantic = _combine_styles(semantic, Style(link=content.link, underline=True))
         rendered.append(
             content.text,
@@ -727,7 +657,7 @@ def _render_prefixed_line(line: ui.PrefixedLine) -> _HangingIndentRenderable:
 def _render_data_table(table_data: ui.DataTable) -> ConsoleRenderable:
     """Render a lightweight semantic table into a Rich table."""
 
-    box = SIMPLE if table_data.box == "simple" else None
+    box = rich_box.SIMPLE if table_data.box == "simple" else None
     table = Table(
         box=box,
         expand=False,
@@ -744,25 +674,13 @@ def _render_data_table(table_data: ui.DataTable) -> ConsoleRenderable:
     return _TrimmedRenderable(table)
 
 
-def _line_text(line: list[Segment]) -> str:
-    return "".join(segment.text for segment in line if not segment.control)
-
-
 def _rstrip_line_segments(line: list[Segment]) -> list[Segment]:
     trimmed = list(line)
     while trimmed and not trimmed[-1].control and not trimmed[-1].text.strip():
         trimmed.pop()
-    if not trimmed:
-        return []
-
-    last = trimmed[-1]
-    if not last.control:
-        right_trimmed = last.text.rstrip()
-        if right_trimmed != last.text:
-            if right_trimmed:
-                trimmed[-1] = Segment(right_trimmed, last.style, last.control)
-            else:
-                trimmed.pop()
+    if trimmed and not trimmed[-1].control:
+        last = trimmed[-1]
+        trimmed[-1] = Segment(last.text.rstrip(), last.style, last.control)
     return trimmed
 
 
