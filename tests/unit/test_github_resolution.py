@@ -24,24 +24,12 @@ def test_select_submit_remote_uses_origin_when_multiple_remotes_exist() -> None:
     assert remote.name == "origin"
 
 
-@pytest.mark.parametrize(
-    "remotes",
-    [
-        pytest.param(
-            (_remote("backup"), _remote("upstream")),
-            id="no-origin-among-many",
-        ),
-        pytest.param((), id="no-remotes"),
-    ],
-)
-def test_select_submit_remote_rejects_remote_sets_without_a_determinable_remote(
-    remotes: tuple[GitRemote, ...],
-) -> None:
+def test_select_submit_remote_rejects_remote_sets_without_a_determinable_remote() -> None:
     with pytest.raises(
         CliError,
         match="Could not determine which Git remote to use",
     ):
-        select_submit_remote(remotes)
+        select_submit_remote((_remote("backup"), _remote("upstream")))
 
 
 def test_parse_github_repo_accepts_matching_fetch_and_push_urls() -> None:

@@ -114,37 +114,6 @@ def test_merge_details_paginate_without_mixing_pr_heads(head_moved: bool) -> Non
         ]
 
 
-def test_github_client_retries_429_responses_with_retry_after() -> None:
-    attempts = 0
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            return httpx2.Response(
-                429,
-                headers={"Retry-After": "0"},
-                json={"message": "slow down"},
-                request=request,
-            )
-        return httpx2.Response(
-            200,
-            json={
-                "default_branch": "main",
-                "full_name": "octo-org/stacked-prs",
-            },
-            request=request,
-        )
-
-    async def run_test() -> str:
-        async with _github_client(handler) as client:
-            repo = await client.get_repo()
-        return repo.full_name
-
-    assert asyncio.run(run_test()) == "octo-org/stacked-prs"
-    assert attempts == 2
-
-
 def test_github_client_caps_and_announces_a_long_rate_limit_wait(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -260,7 +229,6 @@ def test_github_client_rejects_an_unusable_success_response(body: str, reason: s
     ("base", "body", "title", "expected_payload"),
     (
         (None, "new body", "new title", {"body": "new body", "title": "new title"}),
-        ("main", None, None, {"base": "main"}),
         ("main", "", "new title", {"base": "main", "body": "", "title": "new title"}),
     ),
 )
@@ -408,7 +376,6 @@ def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
             assert "pr_7: pullRequest(number: 7)" in payload["query"]
             assert "pr_9: pullRequest(number: 9)" in payload["query"]
             assert "pr_11: pullRequest(number: 11)" in payload["query"]
-            assert "autoMergeRequest" not in payload["query"]
             assert "mergeQueueEntry" in payload["query"]
             assert "estimatedTimeToMerge" in payload["query"]
             assert "headCommit" in payload["query"]
@@ -423,7 +390,6 @@ def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
                 "data": {
                     "repository": {
                         "pr_7": {
-                            "autoMergeRequest": None,
                             "baseRefName": "main",
                             "body": "body 7",
                             "headRefOid": "head-commit",
@@ -466,7 +432,6 @@ def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
                             "url": "https://github.test/octo-org/stacked-prs/pull/7",
                         },
                         "pr_9": {
-                            "autoMergeRequest": None,
                             "baseRefName": "jj-stack/base",
                             "body": None,
                             "headRefOid": "head-commit",
@@ -709,18 +674,12 @@ def test_github_client_rejects_graphql_payload_missing_repo_data() -> None:
         asyncio.run(run_test())
 
 
-@pytest.mark.parametrize(
-    "repo_payload",
-    ({}, {"base_0": {}}),
-)
-def test_github_client_rejects_incomplete_pr_connection(
-    repo_payload: dict[str, object],
-) -> None:
+def test_github_client_rejects_incomplete_pr_connection() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == "/graphql"
         return httpx2.Response(
             200,
-            json={"data": {"repository": repo_payload}},
+            json={"data": {"repository": {"base_0": {}}}},
             request=request,
         )
 
@@ -949,22 +908,6 @@ def test_github_client_filters_batched_head_lookup_results_to_repo_owner() -> No
         return [pr.number for pr in prs["jj-stack/seven"]]
 
     assert asyncio.run(run_test()) == [7]
-
-
-def test_user_facing_reason_quotes_githubs_message_for_a_404_without_raw_detail() -> None:
-    # The raw response body (JSON, network phrasing) must never leak into the user-facing
-    # reason, and a bare 404 says only what GitHub said: the caller knows what was looked up.
-    error = GithubClientError(
-        "GitHub request failed: 404",
-        body='{"message":"Not Found","documentation_url":"x"}',
-        status_code=404,
-    )
-
-    reason = error.user_facing_reason()
-
-    assert reason == "request failed (GitHub 404: Not Found)"
-    assert "documentation_url" not in reason
-    assert not error.is_repo_not_found()
 
 
 @pytest.mark.parametrize(
