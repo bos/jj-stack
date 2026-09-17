@@ -25,6 +25,7 @@ _FAKE_GITHUB_GIT_ENV = {
 }
 _GRAPHQL_VARIABLE_PATTERN = r"\$[_A-Za-z][_0-9A-Za-z]*"
 _GRAPHQL_STRING_ARGUMENT_PATTERN = rf'(?:{_GRAPHQL_VARIABLE_PATTERN}|"(?:[^"\\]|\\.)*")'
+_WEB_ORIGIN = "https://github.test"
 
 
 @dataclass(slots=True)
@@ -54,12 +55,7 @@ class FakeGithubPR:
     def graphql_state(self) -> str:
         return "merged" if self.merged_at is not None else self.state
 
-    def to_payload(
-        self,
-        *,
-        repo: FakeGithubRepo,
-        web_origin: str,
-    ) -> dict[str, object]:
+    def to_payload(self, repo: FakeGithubRepo) -> dict[str, object]:
         self._refresh_head_sha(repo)
         return {
             "base": {"label": f"{repo.full_name}:{self.base_ref}", "ref": self.base_ref},
@@ -70,7 +66,7 @@ class FakeGithubPR:
                 "ref": self.head_ref,
                 "sha": self.head_sha,
             },
-            "html_url": f"{web_origin}/{repo.full_name}/pull/{self.number}",
+            "html_url": f"{_WEB_ORIGIN}/{repo.full_name}/pull/{self.number}",
             "merge_commit_sha": self.merge_commit_sha,
             "merged_at": self.merged_at,
             "node_id": self.node_id,
@@ -79,12 +75,7 @@ class FakeGithubPR:
             "title": self.title,
         }
 
-    def to_graphql_payload(
-        self,
-        *,
-        repo: FakeGithubRepo,
-        web_origin: str,
-    ) -> dict[str, object]:
+    def to_graphql_payload(self, repo: FakeGithubRepo) -> dict[str, object]:
         head_target = self._refresh_head_sha(repo)
         return {
             "autoMergeRequest": {"enabledAt": "now"} if self.auto_merge_enabled else None,
@@ -110,7 +101,7 @@ class FakeGithubPR:
                 None if self.check_rollup_state is None else {"state": self.check_rollup_state}
             ),
             "title": self.title,
-            "url": f"{web_origin}/{repo.full_name}/pull/{self.number}",
+            "url": f"{_WEB_ORIGIN}/{repo.full_name}/pull/{self.number}",
         }
 
     def _refresh_head_sha(self, repo: FakeGithubRepo) -> str | None:
@@ -1004,7 +995,6 @@ class FakeGithubState:
     """Static state served by the fake GitHub app."""
 
     repos: dict[tuple[str, str], FakeGithubRepo]
-    web_origin: str = "https://github.test"
 
     @classmethod
     def single_repo(cls, repo: FakeGithubRepo) -> FakeGithubState:
@@ -1184,12 +1174,7 @@ def _register_graphql_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
             pr.is_draft = False
             return {
                 "data": {
-                    "markPullRequestReadyForReview": {
-                        "pullRequest": pr.to_graphql_payload(
-                            repo=repo,
-                            web_origin=fake_state.web_origin,
-                        )
-                    }
+                    "markPullRequestReadyForReview": {"pullRequest": pr.to_graphql_payload(repo)}
                 }
             }
         if "convertPullRequestToDraft" in query:
@@ -1202,12 +1187,7 @@ def _register_graphql_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
             pr.is_draft = True
             return {
                 "data": {
-                    "convertPullRequestToDraft": {
-                        "pullRequest": pr.to_graphql_payload(
-                            repo=repo,
-                            web_origin=fake_state.web_origin,
-                        )
-                    }
+                    "convertPullRequestToDraft": {"pullRequest": pr.to_graphql_payload(repo)}
                 }
             }
         owner = _require_graphql_variable(raw_variables, "owner")
@@ -1217,7 +1197,6 @@ def _register_graphql_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
             query=query,
             repo=repo,
             variables=raw_variables,
-            web_origin=fake_state.web_origin,
         )
         result: dict[str, object] = {"data": {"repository": repository}}
         # GitHub reports an unresolvable `pullRequest(number:)` alias as `null` in `data` *and*
@@ -1265,7 +1244,7 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
             head_ref=head_ref,
             title=title,
         )
-        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
+        return pr.to_payload(repo)
 
     @app.get("/repos/{owner}/{repo_name}/pulls/{pr_number}")
     async def get_pr(
@@ -1278,7 +1257,7 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
         if pr is None:
             raise HTTPException(status_code=404, detail="Not Found")
         repo.refresh_pr_state(pr)
-        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
+        return pr.to_payload(repo)
 
     @app.patch("/repos/{owner}/{repo_name}/pulls/{pr_number}")
     async def update_pr(
@@ -1321,7 +1300,7 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
                 pr,
                 base_ref=base_ref,
             )
-        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
+        return pr.to_payload(repo)
 
     @app.put("/repos/{owner}/{repo_name}/pulls/{pr_number}/merge-async")
     async def submit_stack_merge(
@@ -1439,7 +1418,7 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
         )
         if state == "closed":
             repo.refresh_pr_state(pr)
-        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
+        return pr.to_payload(repo)
 
     @app.post(
         "/repos/{owner}/{repo_name}/pulls/{pr_number}/requested_reviewers",
@@ -1461,7 +1440,7 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
         pr.requested_team_reviewers = list(
             dict.fromkeys((*pr.requested_team_reviewers, *requested_teams))
         )
-        return pr.to_payload(repo=repo, web_origin=fake_state.web_origin)
+        return pr.to_payload(repo)
 
     @app.post("/repos/{owner}/{repo_name}/issues/{issue_number}/labels")
     async def add_labels(
@@ -1826,7 +1805,6 @@ def _graphql_repo_payload(
     query: str,
     repo: FakeGithubRepo,
     variables: dict[str, object],
-    web_origin: str,
 ) -> dict[str, object]:
     if "BaseBranchMergeQueue" in query:
         return {
@@ -1897,7 +1875,6 @@ def _graphql_repo_payload(
                     _graphql_pr_payload(
                         pr=pr,
                         repo=repo,
-                        web_origin=web_origin,
                         refreshed=True,
                     )
                     for pr in matching_prs
@@ -1937,7 +1914,6 @@ def _graphql_repo_payload(
         graphql_payload = _graphql_pr_payload(
             pr=pr,
             repo=repo,
-            web_origin=web_origin,
             refreshed=True,
         )
         if "comments(" in query:
@@ -2037,15 +2013,11 @@ def _graphql_pr_payload(
     *,
     pr: FakeGithubPR,
     repo: FakeGithubRepo,
-    web_origin: str,
     refreshed: bool = False,
 ) -> dict[str, object]:
     if not refreshed:
         repo.refresh_pr_state(pr)
-    payload = pr.to_graphql_payload(
-        repo=repo,
-        web_origin=web_origin,
-    )
+    payload = pr.to_graphql_payload(repo)
     payload["reviewDecision"] = _graphql_review_decision(repo, pr.number)
     return payload
 
