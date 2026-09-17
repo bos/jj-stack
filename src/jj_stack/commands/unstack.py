@@ -242,12 +242,10 @@ def _run_local_unstack(
 ) -> LocalUnstackResult:
     state, stack = _resolve_local_stack(context=context, pr=pr, revset=revset)
     actions: list[LocalUnstackAction] = []
-    forgotten: list[ChangeId] = []
     for change in stack.changes:
         tracked_pr = state.prs.get(change.change_id)
         if tracked_pr is None:
             continue
-        forgotten.append(change.change_id)
         actions.append(
             LocalUnstackAction(
                 branch=tracked_pr.pr_identity.head_ref,
@@ -255,9 +253,9 @@ def _run_local_unstack(
                 subject=change.subject,
             )
         )
-    if actions and not dry_run:
-        for change_id in forgotten:
-            context.state_store.remove_pr(change_id)
+    if not dry_run:
+        for action in actions:
+            context.state_store.remove_pr(action.change_id)
     return LocalUnstackResult(actions=tuple(actions), dry_run=dry_run)
 
 
@@ -267,32 +265,21 @@ def _resolve_local_stack(
     pr: str | None,
     revset: str | None,
 ) -> tuple[TrackingState, LocalStack]:
-    selected_revset = _resolve_local_revset(context=context, pr=pr, revset=revset)
-    state = context.state_store.load()
-    with console.spinner(description="Inspecting jj stack"):
-        stack = select_stack_path(
-            jj_client=context.jj_client,
-            revset=selected_revset,
-            state=state,
-        ).stack
-    return state, stack
-
-
-def _resolve_local_revset(
-    *,
-    context: CommandContext,
-    pr: str | None,
-    revset: str | None,
-) -> str | None:
     if pr is not None:
-        resolved_revset, note = resolve_linked_change_for_pr(
+        revset, note = resolve_linked_change_for_pr(
             jj_client=context.jj_client,
             pr_reference=pr,
             revset=revset,
         )
         console.note(note)
-        return resolved_revset
-    return revset
+    state = context.state_store.load()
+    with console.spinner(description="Inspecting jj stack"):
+        stack = select_stack_path(
+            jj_client=context.jj_client,
+            revset=revset,
+            state=state,
+        ).stack
+    return state, stack
 
 
 def _print_local_unstack_result(result: LocalUnstackResult) -> None:
