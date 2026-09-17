@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
-from argparse import SUPPRESS, Action, ArgumentParser, _SubParsersAction
+from argparse import SUPPRESS, Action, ArgumentParser, ArgumentTypeError, _SubParsersAction
 from dataclasses import dataclass
 
 _DIRECTORY_OPTION_DESTS = frozenset({"repo"})
-_FILE_OPTION_DESTS = frozenset({"config", "edit"})
+_FILE_OPTION_DESTS = frozenset({"edit"})
 _JJ_ALIAS_RE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 
 
@@ -46,16 +46,18 @@ class CompletionSpec:
         return tuple(command.name for command in self.commands if command.visible)
 
     @property
-    def value_option_flags(self) -> tuple[str, ...]:
-        flags: list[str] = []
-        for option in self.top_level_options:
-            if option.takes_value:
-                flags.extend(option.flags)
+    def value_option_flags(self) -> dict[str, str]:
+        """Map each value-taking flag to its value kind; the first definition wins."""
+
+        flags: dict[str, str] = {}
+        options = [*self.top_level_options]
         for command in self.commands:
-            for option in command.options:
-                if option.takes_value:
-                    flags.extend(option.flags)
-        return tuple(dict.fromkeys(flags))
+            options.extend(command.options)
+        for option in options:
+            if option.takes_value:
+                for flag in option.flags:
+                    flags.setdefault(flag, option.value_kind)
+        return flags
 
 
 def emit_shell_completion(
@@ -66,8 +68,6 @@ def emit_shell_completion(
 ) -> str:
     """Render a shell completion script for the requested shell."""
 
-    if jj_alias is not None:
-        validate_jj_alias(jj_alias)
     spec = _build_completion_spec(parser)
     if shell == "bash":
         return _render_bash_completion(spec, jj_alias=jj_alias)
@@ -82,7 +82,7 @@ def validate_jj_alias(value: str) -> str:
     """Return a shell-safe jj command alias or reject it."""
 
     if _JJ_ALIAS_RE.fullmatch(value) is None:
-        raise ValueError(
+        raise ArgumentTypeError(
             "A jj alias must start with a lowercase letter and contain only lowercase letters, "
             "digits, and single dashes."
         )
@@ -134,7 +134,7 @@ def _extract_options(parser: ArgumentParser) -> tuple[CompletionOption, ...]:
         options.append(
             CompletionOption(
                 flags=tuple(action.option_strings),
-                takes_value=_option_takes_value(action),
+                takes_value=action.nargs != 0,
                 value_kind=_option_value_kind(action),
             )
         )
@@ -151,17 +151,8 @@ def _extract_positional_choices(parser: ArgumentParser) -> tuple[str, ...]:
     return ()
 
 
-def _option_takes_value(action: Action) -> bool:
-    nargs = action.nargs
-    if nargs == 0:
-        return False
-    if nargs is None:
-        return True
-    return bool(nargs)
-
-
 def _option_value_kind(action: Action) -> str:
-    if not _option_takes_value(action):
+    if action.nargs == 0:
         return "none"
     if action.dest in _DIRECTORY_OPTION_DESTS:
         return "directory"
@@ -219,8 +210,7 @@ def _render_bash_completion(
             '    case "$prev" in',
         ]
     )
-    for option in spec.value_option_flags:
-        kind = _value_kind_for_flag(spec, option)
+    for option, kind in spec.value_option_flags.items():
         if kind == "directory":
             lines.extend(
                 [
@@ -468,14 +458,3 @@ def _flags(options: tuple[CompletionOption, ...]) -> tuple[str, ...]:
 
 def _join_words(words: tuple[str, ...]) -> str:
     return " ".join(words)
-
-
-def _value_kind_for_flag(spec: CompletionSpec, flag: str) -> str:
-    for option in spec.top_level_options:
-        if flag in option.flags:
-            return option.value_kind
-    for command in spec.commands:
-        for option in command.options:
-            if flag in option.flags:
-                return option.value_kind
-    return "none"

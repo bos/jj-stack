@@ -14,7 +14,6 @@ from argparse import (
     SUPPRESS,
     Action,
     ArgumentParser,
-    ArgumentTypeError,
     HelpFormatter,
     Namespace,
     _SubParsersAction,
@@ -665,7 +664,7 @@ def build_parser() -> ArgumentParser:
         completion_parser,
         "--jj-alias",
         metavar="NAME",
-        type=_parse_jj_alias,
+        type=validate_jj_alias,
         help=(
             t"Also complete an existing {ui.code('jj')} alias that runs {ui.code('jj-stack')}, "
             t"such as {ui.code('stack')}"
@@ -1060,13 +1059,6 @@ def _completion_handler(args: Namespace) -> int:
         soft_wrap=True,
     )
     return 0
-
-
-def _parse_jj_alias(value: str) -> str:
-    try:
-        return validate_jj_alias(value)
-    except ValueError as error:
-        raise ArgumentTypeError(str(error)) from error
 
 
 @contextmanager
