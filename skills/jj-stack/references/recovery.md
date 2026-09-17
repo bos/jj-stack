@@ -36,10 +36,14 @@ observations. Use `jj op log` and `jj undo` for local recovery, never destructiv
 - Do not run a separate `jj git fetch` merely to prepare this recovery. `sync` performs the
   required fetch itself; importing rewritten PR branches first can create avoidable local
   divergence.
-- If a direct merge completed but automatic sync failed, do not rerun `merge`; continue with the
-  `sync` command printed in the diagnostic.
-- If a queued PR is still waiting, do not submit or sync that stack. Independent stacks remain
-  usable.
+- If GitHub completed the merge but the local update failed, do not rerun `merge`; continue
+  with the `sync` or `cleanup` command printed in the diagnostic.
+- If a selected PR is still in the merge queue, do not submit or sync that stack; rerun the same
+  `merge` command to resume waiting. Independent stacks remain usable.
+- If `sync` stops because someone pushed to a PR branch before GitHub merged that PR, follow its
+  hint: compare the PR's files on GitHub with `jj diff -r <change-id>`, then either
+  `jj abandon <change-id>` and run `cleanup`, or run `unstack --local <change-id>` and submit
+  again.
 - If trunk merely advanced, none of the stack merged, and GitHub left every PR branch alone, use
   `jj rebase` with a selector for the affected stack; `sync` handles merges and GitHub rewrites.
 
@@ -56,9 +60,16 @@ diagnostic before retrying it with an explicit selector.
 After an interrupted `checkout` or `sync`, run `view` with the original explicit selector and
 retry the same command from current observations.
 
+After `merge --no-wait` or an interrupted `merge`, the request is still running on GitHub. Rerun
+the same `merge` command to resume waiting, or run `sync <head-change-id>` once GitHub reports the
+merge finished. If GitHub removed a PR from the merge queue, `merge` reports GitHub's reason and
+links to the checks on the queue's temporary merge commit. Fix the cause, run
+`sync <head-change-id>` if a lower PR merged, then rerun the same `merge` command.
+
 For a rejected merge, fix the reported check, conflict, policy, or access problem. Rerun the same
-explicit selector and merge method only when GitHub did not complete the merge. If a matching
-request is pending, wait and observe it rather than starting another request.
+explicit selector and merge method only when GitHub did not complete the merge. If `merge` reports
+that another merge request is already pending, check its status on GitHub rather than starting
+another request.
 
 ## Adopt, repair, or forget tracking
 
@@ -98,8 +109,9 @@ report the PR's current state on GitHub.
 ## Diagnose local setup
 
 Use `doctor --fix` only when a diagnostic names a repo setup defect that blocks the
-requested task. It can restore the normal fetch exclusion for the reserved PR-branch
-namespace. A visible PR bookmark is acceptable when it matches saved tracking state; repair
-only a collision or mismatch named by the affected command. Do not run `doctor --fix` after a
-successful operation as general cleanup. Use `doctor` for authentication, remote resolution,
-push permission, and interrupted checkout or sync leftovers.
+requested task. It configures fetches to skip jj-stack's PR branches, forgets untracked PR
+bookmarks imported by a fetch, and removes checkout or sync leftovers. A visible PR bookmark is
+acceptable when it matches saved tracking state; repair only a collision or mismatch named by the
+affected command. Do not run `doctor --fix` after a successful operation as general cleanup. Use
+`doctor` for authentication, remote resolution, push permission, and interrupted checkout or sync
+leftovers.

@@ -77,7 +77,8 @@ it may describe a different release, and do not fetch it for routine stack opera
   a child stack based on another PR, a move between stacks, a split or join, or a command
   that would change more than one GitHub stack.
 - Read [recovery workflows](references/recovery.md) after an interrupted or externally completed
-  operation, a direct structural GitHub mutation, lost or ambiguous tracking, an orphaned PR,
+  operation, a `merge` that stopped waiting or reported a merge queue removal, a direct
+  structural GitHub mutation, lost or ambiguous tracking, an orphaned PR,
   a mismatch between local and GitHub stacks, or any task involving `sync --all`,
   `unstack --stack`, `checkout`, `relink`, or starting over.
 
@@ -128,7 +129,9 @@ use the recovery reference to reconcile afterward. Existing explicit authorizati
    consecutive open, non-draft PRs from the bottom and requires their exact submitted commits.
    To merge only through a particular PR, use `merge --pull-request <pr>`; automatic sync still
    covers the surviving changes above it in the containing stack.
-   GitHub decides approvals, checks, conflicts, and repo policy. `merge` waits for GitHub,
+   GitHub decides approvals, checks, conflicts, and repo policy. `view` and `list` show
+   GitHub's merge state separately from reviews and checks; `view --verbose` lists unresolved
+   review threads and failed or pending checks with links. `merge` waits for GitHub,
    including a merge queue, then updates the local stack; it never pushes trunk. Run
    `sync <head-change-id>` only after `merge --no-wait`, an interrupted wait, or a merge made
    through GitHub.
