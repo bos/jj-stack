@@ -131,7 +131,7 @@ async def apply_overview_comment_cleanup(
 def plan_pr_cleanup(
     *,
     observation: RepoFacts,
-    preview_detached_dependents: frozenset[int] = frozenset(),
+    preview_detached_dependents: frozenset[int],
     state: WithPR,
 ) -> tuple[PRRefUpdate | None, CleanupAction | None]:
     """Plan branch deletion for a PR whose identity and lifecycle the caller checked."""
