@@ -135,13 +135,11 @@ def test_merge_preconditions_name_a_closed_pull_request() -> None:
         title="feature",
     )
     observation = RepoFacts(
-        configured_repo=repo,
         github_repo=_repo(
             allow_merge_commit=False, allow_rebase_merge=False, allow_squash_merge=True
         ),
         prs_by_base={},
         rewrite_args=JjCliArgs(),
-        remote=remote,
         repo=repo,
         prs={
             change.change_id: TrackedPRObservation(

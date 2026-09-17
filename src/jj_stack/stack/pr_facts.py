@@ -14,7 +14,6 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.stack_availability import github_stacks_unavailable_error
 from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR, GithubRepo, GithubStack
 from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.change_state import UNOBSERVED, TrackedPRObservation
@@ -26,11 +25,9 @@ from jj_stack.stack.trunk_evidence import CommitAncestry
 class RepoFacts:
     """PR and branch observations used to check command preconditions."""
 
-    configured_repo: github_resolution.GithubRepoAddress | None
     github_repo: GithubRepo
     # Contains an entry, possibly empty, for each branch whose dependents were observed.
     prs_by_base: Mapping[str, tuple[GithubPR, ...]]
-    remote: GitRemote | None
     repo: github_resolution.GithubRepoAddress
     prs: Mapping[ChangeId, TrackedPRObservation]
     # The jj config that lets rewrites touch the observed PR-branch commits.
@@ -135,10 +132,8 @@ async def observe_prs(
     }
 
     return RepoFacts(
-        configured_repo=github_resolution.parse_github_repo(remote) if remote else None,
         github_repo=github_repo,
         prs_by_base=by_base,
-        remote=remote,
         repo=repo,
         prs=prs,
         rewrite_args=observed_locally.cli_args,
