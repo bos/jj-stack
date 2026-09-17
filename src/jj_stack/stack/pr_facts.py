@@ -145,44 +145,32 @@ async def observe_prs(
     )
 
 
-def classify_commit_ancestries(
-    *,
-    commit_ids: tuple[CommitId | None, ...],
-    context: CommandContext,
-    trunk_commit_id: CommitId,
-) -> dict[CommitId, CommitAncestry]:
-    """Classify commits in one scan while keeping unavailable commits distinct."""
-
-    present_commit_ids = tuple(commit_id for commit_id in commit_ids if commit_id is not None)
-    memberships = context.jj_client.query_present_commit_ancestor_membership(
-        present_commit_ids,
-        descendant_commit_id=trunk_commit_id,
-    )
-    states: dict[bool, CommitAncestry] = {True: "on_trunk", False: "not_on_trunk"}
-    return {
-        commit_id: states[memberships[commit_id]] if commit_id in memberships else "unresolved"
-        for commit_id in dict.fromkeys(present_commit_ids)
-    }
-
-
 def classify_observed_commit_ancestries(
     *,
     context: CommandContext,
     observation: RepoFacts,
     trunk_commit_id: CommitId,
 ) -> dict[CommitId, CommitAncestry]:
-    return classify_commit_ancestries(
-        commit_ids=tuple(
-            commit_id
-            for item in observation.prs.values()
-            for commit_id in (
-                item.tracked.submitted_baseline.commit_id,
-                item.pr.merge_commit_sha if item.pr is not None else None,
-            )
-        ),
-        context=context,
-        trunk_commit_id=trunk_commit_id,
+    """Classify commits in one scan while keeping unavailable commits distinct."""
+
+    commit_ids = tuple(
+        commit_id
+        for item in observation.prs.values()
+        for commit_id in (
+            item.tracked.submitted_baseline.commit_id,
+            item.pr.merge_commit_sha if item.pr is not None else None,
+        )
+        if commit_id is not None
     )
+    memberships = context.jj_client.query_present_commit_ancestor_membership(
+        commit_ids,
+        descendant_commit_id=trunk_commit_id,
+    )
+    states: dict[bool, CommitAncestry] = {True: "on_trunk", False: "not_on_trunk"}
+    return {
+        commit_id: states[memberships[commit_id]] if commit_id in memberships else "unresolved"
+        for commit_id in dict.fromkeys(commit_ids)
+    }
 
 
 async def observe_github_stacks(*, github: GithubClient) -> tuple[GithubStack, ...]:

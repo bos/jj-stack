@@ -267,7 +267,14 @@ def _require_no_divergent_remaining_changes(
     adopted_ids = {item.change_id for item in adopted}
     for change in (*actions.remaining_changes, *actions.working_copy_children):
         if change.divergent and change.change_id not in adopted_ids:
-            raise divergent_change_error(change.change_id, head=head)
+            raise CliError(
+                t"Cannot rebase remaining {ui.change_id(change.change_id)} because it has "
+                t"multiple visible commits.",
+                hint=divergence_recovery_hint(
+                    change.change_id,
+                    retry=t"rerun {ui.cmd(f'jj-stack sync {head}')} for this stack",
+                ),
+            )
 
 
 def adopts_github_rewrite(items: tuple[RewrittenPRChange, ...]) -> bool:
@@ -282,17 +289,6 @@ def adopts_github_rewrite(items: tuple[RewrittenPRChange, ...]) -> bool:
         item.local_change.commit_id == item.candidate.submitted_baseline.commit_id
         and item.pr.head.sha != item.candidate.submitted_baseline.commit_id
         for item in items
-    )
-
-
-def divergent_change_error(change_id: str, *, head: str) -> CliError:
-    return CliError(
-        t"Cannot rebase remaining {ui.change_id(change_id)} because it has multiple visible "
-        t"commits.",
-        hint=divergence_recovery_hint(
-            change_id,
-            retry=t"rerun {ui.cmd(f'jj-stack sync {head}')} for this stack",
-        ),
     )
 
 
