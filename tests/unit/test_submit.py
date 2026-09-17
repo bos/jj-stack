@@ -7,6 +7,7 @@ import pytest
 
 from jj_stack.commands.submit.changes import prepare_submit_changes
 from jj_stack.commands.submit.command import _pr_metadata
+from jj_stack.commands.submit.inputs import preflight_private_commits
 from jj_stack.commands.submit.models import SubmitOptions
 from jj_stack.commands.submit.overview_comments import sync_stack_overview_comments
 from jj_stack.commands.submit.revision_comments import _include_submitted_force_push
@@ -15,6 +16,7 @@ from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import CommitId
+from jj_stack.jj.client import JjClient
 from jj_stack.models.github import (
     GithubIssueComment,
     GithubPRRevision,
@@ -105,6 +107,19 @@ def test_first_submit_stops_when_github_rejects_the_open_pr_lookup() -> None:
                 trunk=trunk,
             ),
         )
+
+
+def test_preflight_private_commits_rejects_blocked_change() -> None:
+    private = make_change(
+        commit_id="head",
+        change_id="head-change",
+        description="private thing\n",
+    )
+    client = Mock(spec=JjClient)
+    client.find_private_commits.return_value = (private,)
+
+    with pytest.raises(CliError, match="git.private-commits"):
+        preflight_private_commits(client, (private,))
 
 
 def test_submit_metadata_prefers_cli_values_over_config() -> None:
