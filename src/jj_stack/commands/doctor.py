@@ -45,14 +45,12 @@ from jj_stack.ui import Message
 
 HELP = "Check repo setup and GitHub connectivity"
 
-type CheckDetail = Message
-
 
 @dataclass(slots=True, frozen=True)
 class CheckResult:
     label: str
     status: Literal["ok", "warn", "fail", "fixed", "skip"]
-    detail: CheckDetail
+    detail: Message
 
 
 # The checks that need the GitHub API, in report order. The later ones are skipped when the
@@ -197,7 +195,7 @@ def _check_pr_branch_fetch_isolation(
             dry_run=not fix,
         )
     except CliError as error:
-        detail: CheckDetail = error_message(error)
+        detail: Message = error_message(error)
         if error.hint is not None:
             detail = (detail, t" {error.hint}")
         return CheckResult("PR branch fetch", "warn", detail)
@@ -230,7 +228,7 @@ def _check_pr_bookmarks(*, context: CommandContext, fix: bool) -> CheckResult:
     client = context.jj_client
     imported = client.untracked_pr_bookmarks()
     visible = tuple(name for name in client.visible_pr_bookmark_targets() if name not in imported)
-    remaining: CheckDetail = (
+    remaining: Message = (
         t"; visible bookmarks remain: {ui.join(ui.bookmark, visible)}" if visible else ""
     )
     if imported and fix:
@@ -357,7 +355,7 @@ async def _check_github_stacks(
             error=error,
             repo=parsed_repo.full_name,
         )
-        detail: CheckDetail = (
+        detail: Message = (
             (unavailable.message, t" {unavailable.hint}")
             if unavailable is not None
             else f"could not inspect stacks: {error.user_facing_reason()}"

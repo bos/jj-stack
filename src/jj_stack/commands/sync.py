@@ -396,6 +396,7 @@ def _checked_out_workspace_hint(
     known = {workspace.name: workspace for workspace in context.jj_client.list_workspaces()}
     hint: list[Message] = ["Move each workspace off the merged change:\n"]
     disposable: list[tuple[str, str]] = []
+    shell = " (PowerShell)" if sys.platform == "win32" else ""
     for name in workspaces:
         workspace = known.get(name)
         if workspace is None or workspace.root is None:
@@ -407,8 +408,7 @@ def _checked_out_workspace_hint(
                 t"directory.\n"
             )
             continue
-        root = str(workspace.root or context.repo_root)
-        shell = " (PowerShell)" if sys.platform == "win32" else ""
+        root = str(workspace.root)
         hint.append(
             t"For {ui.code(name)} at {ui.code(root)}{shell}:\n  "
             t"{ui.cmd(_workspace_move_command(root=root, platform=sys.platform))}\n"
@@ -420,7 +420,6 @@ def _checked_out_workspace_hint(
             "needed:\n"
         )
         for name, root in disposable:
-            shell = " (PowerShell)" if sys.platform == "win32" else ""
             command = _workspace_disposal_command(name=name, root=root, platform=sys.platform)
             hint.append(t"For {ui.code(name)}{shell}:\n  {ui.cmd(command)}\n")
     hint.append("Then rerun the same jj-stack sync command.")

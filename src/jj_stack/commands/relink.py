@@ -31,7 +31,7 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.errors import CliError, UsageError
+from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label, format_pr_number
 from jj_stack.github.client import GithubClient
 from jj_stack.github.pr_refs import load_pr, parse_repo_pr_reference, require_managed_pr_head
@@ -78,7 +78,7 @@ def relink(
     pr: str,
     repo: Path | None,
     replace_remote: bool,
-    revset: str | None,
+    revset: str,
 ) -> int:
     """CLI entrypoint for `relink`."""
 
@@ -105,12 +105,10 @@ async def _run_relink_async(
     context: CommandContext,
     pr_reference: str,
     replace_remote: bool,
-    revset: str | None,
+    revset: str,
 ) -> RelinkResult:
     client = context.jj_client
     state = context.state_store.load()
-    if revset is None:
-        raise UsageError(t"{ui.cmd('jj-stack relink')} requires an explicit change selection.")
     stack = select_stack_path(
         jj_client=client,
         revset=revset,
