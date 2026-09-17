@@ -8,19 +8,7 @@ from typing import Protocol
 import jj_stack.ui as ui
 from jj_stack.console import color_when
 from jj_stack.identifiers import CommitId
-from jj_stack.jj.client import RenderableCommit
-from jj_stack.jj.colors import JjColorWhen
-
-
-class CommitRenderClient(Protocol):
-    """Subset of the jj client interface used for change rendering."""
-
-    def render_commit_log_blocks(
-        self,
-        changes: tuple[RenderableCommit, ...],
-        *,
-        color_when: JjColorWhen,
-    ) -> dict[CommitId, tuple[str, ...]]: ...
+from jj_stack.jj.client import JjClient, RenderableCommit
 
 
 class GithubRepoRenderTarget(Protocol):
@@ -85,7 +73,7 @@ def render_commit_lines(
 
 def render_commit_blocks(
     *,
-    client: CommitRenderClient,
+    client: JjClient,
     changes: tuple[RenderableCommit, ...],
 ) -> dict[CommitId, tuple[str, ...]]:
     """Render several changes using the active CLI/UI color policy."""
