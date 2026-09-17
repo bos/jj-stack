@@ -88,12 +88,6 @@ class OrphanRow:
     subject: str
 
 
-@dataclass(frozen=True, slots=True)
-class _PreparedDiscoveredStack:
-    current: bool
-    prepared: PreparedLocalStack
-
-
 def list_(
     *,
     as_json: bool,
@@ -138,16 +132,15 @@ def _run_list(
         else UnresolvedGithubTarget()
     )
     github_repo = github_target.repo if isinstance(github_target, GithubTarget) else None
+    current_heads = frozenset(
+        stack.head.commit_id
+        for stack in discovered
+        if any(change.commit_id == current_tracked_commit_id for change in stack.changes)
+    )
     ordered = tuple(
         sorted(
             discovered,
-            key=lambda stack: (
-                0
-                if current_tracked_commit_id is not None
-                and any(change.commit_id == current_tracked_commit_id for change in stack.changes)
-                else 1,
-                stack.head.change_id,
-            ),
+            key=lambda stack: (stack.head.commit_id not in current_heads, stack.head.change_id),
         )
     )
     duplicate_branches = duplicate_pr_branch_claims(
@@ -172,25 +165,19 @@ def _run_list(
                 t"{ui.join(ui.change_id, change_ids)}. Live GitHub details for those changes "
                 t"were not inspected."
             )
-        prepared_discovered = tuple(
-            _PreparedDiscoveredStack(
-                current=current_tracked_commit_id is not None
-                and any(
-                    change.commit_id == current_tracked_commit_id for change in stack.changes
-                ),
-                prepared=PreparedLocalStack(
-                    client=context.jj_client,
-                    github_target=github_target,
-                    stack=stack,
-                    state=state,
-                ),
+        prepared_stacks = tuple(
+            PreparedLocalStack(
+                client=context.jj_client,
+                github_target=github_target,
+                stack=stack,
+                state=state,
             )
             for stack in ordered
         )
         with console.spinner(description="Inspecting GitHub"):
             lookups = observe_status(
                 context=context,
-                prepared=tuple(item.prepared for item in prepared_discovered),
+                prepared=prepared_stacks,
                 exclude_branches=duplicate_branch_names,
             )
         github_error = error_message(lookups) if isinstance(lookups, CliError) else None
@@ -204,11 +191,11 @@ def _run_list(
         rows = tuple(
             _build_row(
                 github_repo=github_repo,
-                is_current=item.current,
-                prepared_stack=item.prepared,
+                is_current=prepared.stack.head.commit_id in current_heads,
+                prepared_stack=prepared,
                 pr_lookups=lookups,
             )
-            for item in prepared_discovered
+            for prepared in prepared_stacks
         )
     incomplete = bool(duplicate_branches) or any(row.incomplete for row in rows)
     if as_json:
@@ -405,9 +392,7 @@ def _state_from_status(
                 joined.append(", ")
             joined.append(fragment)
         return tuple(joined)
-    if any(state.tracked is not None for state in states):
-        return "tracked"
-    return "not submitted"
+    return "tracked"
 
 
 def _status_fragments(
@@ -468,8 +453,6 @@ def _format_pr_summary(
     repo: GithubRepoAddress | None,
 ) -> ui.Message:
     references = _pr_references_from_changes(changes)
-    if not references:
-        return ""
     if len(references) == 1:
         number, url = references[0]
         return format_pr_label(
