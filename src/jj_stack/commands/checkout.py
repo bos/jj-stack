@@ -396,7 +396,11 @@ def _save_checkout_tracking(
     # commit, and every branch must name the change it is paired with.
     replacements: dict[ChangeId, TrackedPR] = {}
     for pr, head_sha, change in zip(prs, pr_heads, changes, strict=True):
-        _require_branch_matches_change(branch=pr.head.ref, change=change)
+        if not pr_branch_matches_change(pr.head.ref, change.change_id):
+            raise CliError(
+                t"PR branch {ui.bookmark(pr.head.ref)} does not match change "
+                t"{ui.change_id(change.change_id)}."
+            )
         pr_label = format_pr_label(pr.number, url=pr.html_url)
         if pr is not prs[-1] and head_sha != change.commit_id:
             raise CliError(
@@ -433,14 +437,6 @@ def _save_checkout_tracking(
         replacements=replacements,
     )
     return changed_count
-
-
-def _require_branch_matches_change(*, branch: str, change: LocalCommit) -> None:
-    if not pr_branch_matches_change(branch, change.change_id):
-        raise CliError(
-            t"PR branch {ui.bookmark(branch)} does not match change "
-            t"{ui.change_id(change.change_id)}."
-        )
 
 
 async def _pick_stack(
@@ -548,7 +544,10 @@ def _picker_choices(
             continue
         bottom = resolved[0]
         top = next(member for member in reversed(resolved) if member.number in active_numbers)
-        statuses = Counter(_picker_pr_status(member) for member in resolved)
+        statuses = Counter(
+            "draft" if member.state == "open" and member.is_draft else member.state
+            for member in resolved
+        )
         status = ", ".join(
             f"{count} {name}"
             for name in ("open", "draft", "closed", "merged")
@@ -595,12 +594,6 @@ def _picker_choices(
             )
         )
     return tuple(choices)
-
-
-def _picker_pr_status(pr: GithubPR) -> str:
-    if pr.state == "open" and pr.is_draft:
-        return "draft"
-    return pr.state
 
 
 def _picker_pr_is_adoptable(
