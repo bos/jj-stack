@@ -152,8 +152,6 @@ class _GraphqlPRConnection(BaseModel):
 
 
 class _GraphqlPageInfo(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     end_cursor: str | None = Field(default=None, alias="endCursor")
     has_next_page: bool = Field(default=False, alias="hasNextPage")
 
@@ -191,33 +189,22 @@ class _GraphqlRef(BaseModel):
     target: _GraphqlGitObject
 
 
-class _GraphqlRefConnection(BaseModel):
-    nodes: tuple[_GraphqlRef | None, ...]
-    page_info: _GraphqlPageInfo = Field(alias="pageInfo")
-
-
 class _GraphqlIssueCommentConnection(BaseModel):
     nodes: tuple[GithubIssueComment | None, ...] | None = None
     page_info: _GraphqlPageInfo = Field(alias="pageInfo")
 
 
 class _GraphqlForcePushEvent(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     after_commit: _GraphqlGitObject | None = Field(default=None, alias="afterCommit")
     before_commit: _GraphqlGitObject | None = Field(default=None, alias="beforeCommit")
 
 
 class _GraphqlTimelineItemConnection(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     filtered_count: int = Field(alias="filteredCount")
     nodes: tuple[_GraphqlForcePushEvent | None, ...] | None = None
 
 
 class _GraphqlPRHistory(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     comments: _GraphqlIssueCommentConnection | None = None
     timeline_items: _GraphqlTimelineItemConnection | None = Field(
         default=None,
@@ -247,9 +234,6 @@ class GithubClient:
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
-        await self.aclose()
-
-    async def aclose(self) -> None:
         await self._client.aclose()
 
     async def get_repo(self) -> GithubRepo:
@@ -281,9 +265,14 @@ class GithubClient:
                 raw_ref = repo.get(f"branch_{index}")
                 if raw_ref is None:
                     continue
-                observed_branch, target = _branch_target_from_graphql(
-                    raw_ref,
-                    response_name="branch target lookup",
+                observed_branch, target = _branch_target(
+                    _validate_model(
+                        raw_ref,
+                        model=_GraphqlRef,
+                        error_context=(
+                            "GitHub branch target lookup response had invalid ref data"
+                        ),
+                    )
                 )
                 if observed_branch != branch:
                     raise GithubClientError(
@@ -322,7 +311,7 @@ class GithubClient:
                 for index, (suffix, _cursor) in enumerate(pending):
                     connection = _validate_model(
                         repo.get(f"suffix_{index}"),
-                        model=_GraphqlRefConnection,
+                        model=_GraphqlConnection[_GraphqlRef],
                         error_context=(
                             "GitHub branch suffix lookup response had invalid ref data"
                         ),
@@ -333,12 +322,7 @@ class GithubClient:
                         branch, target = _branch_target(raw_ref)
                         if branch.startswith(branch_prefix) and branch.endswith(suffix):
                             targets[branch] = target
-                    if connection.page_info.has_next_page:
-                        cursor = connection.page_info.end_cursor
-                        if cursor is None:
-                            raise GithubClientError(
-                                "GitHub branch suffix lookup response had no page cursor."
-                            )
+                    if (cursor := connection.page_info.next_cursor) is not None:
                         next_page.append((suffix, cursor))
                 pending = tuple(next_page)
         return targets
@@ -392,7 +376,6 @@ class GithubClient:
             f"{self._repo_path}/stacks/{stack_number}/unstack",
         )
         if response.status_code == 204:
-            _expect_success(response)
             return None
         return _validate_stack_payload(
             self._expect_json_payload(response, response_name="unstack"),
@@ -551,7 +534,7 @@ class GithubClient:
         body_marker: str,
         pr_numbers: Sequence[int],
     ) -> dict[int, GithubIssueComment | None]:
-        comments_by_marker, _revisions = await self._get_pr_history(
+        comments_by_marker, _revisions = await self.find_issue_comments_and_revisions(
             body_markers=(body_marker,),
             pr_numbers=pr_numbers,
             revision_limit=None,
@@ -563,29 +546,13 @@ class GithubClient:
         *,
         body_markers: Sequence[str],
         pr_numbers: Sequence[int],
-        revision_limit: int,
+        revision_limit: int | None,
     ) -> tuple[
         dict[str, dict[int, GithubIssueComment | None]],
         dict[int, tuple[GithubPRRevision, ...]],
     ]:
         """Batch managed-comment lookups with recent PR revisions."""
 
-        return await self._get_pr_history(
-            body_markers=body_markers,
-            pr_numbers=pr_numbers,
-            revision_limit=revision_limit,
-        )
-
-    async def _get_pr_history(
-        self,
-        *,
-        body_markers: Sequence[str],
-        pr_numbers: Sequence[int],
-        revision_limit: int | None,
-    ) -> tuple[
-        dict[str, dict[int, GithubIssueComment | None]],
-        dict[int, tuple[GithubPRRevision, ...]],
-    ]:
         numbers = sorted(set(pr_numbers))
         markers = tuple(dict.fromkeys(body_markers))
         comments_by_marker: dict[str, dict[int, GithubIssueComment | None]] = {
@@ -619,13 +586,18 @@ class GithubClient:
                 )
                 for number in request_numbers:
                     alias = f"pr_{number}"
-                    history = _pr_history_from_graphql(
-                        alias=alias,
-                        raw_pr=repo.get(alias),
-                        response_name="pull request history lookup",
-                    )
+                    history = None
+                    if (raw_pr := repo.get(alias)) is not None:
+                        history = _validate_model(
+                            raw_pr,
+                            model=_GraphqlPRHistory,
+                            error_context=(
+                                "GitHub pull request history lookup response had invalid "
+                                f"pull request payload for {alias}"
+                            ),
+                        )
                     if number in pending_comments:
-                        comments, cursor = _issue_comments_from_graphql(history, alias=alias)
+                        comments, cursor = _issue_comments_from_graphql(history)
                         for marker in markers:
                             if comments_by_marker[marker][number] is None:
                                 comments_by_marker[marker][number] = next(
@@ -1176,7 +1148,7 @@ def _graphql_mutation_pr_payload(
     )
 
 
-def _prs_by_number_query(numbers: Sequence[int], *, merge_progress: bool = False) -> str:
+def _prs_by_number_query(numbers: Sequence[int], *, merge_progress: bool) -> str:
     selections = "\n\n".join(
         _graphql_document(
             f"""
@@ -1618,7 +1590,7 @@ def _pr_connection_from_graphql(
     *,
     alias: str,
     connection: object,
-    expected_head_label: str | None = None,
+    expected_head_label: str | None,
     response_name: str,
 ) -> tuple[GithubPR, ...]:
     parsed = _validate_model(
@@ -1634,19 +1606,6 @@ def _pr_connection_from_graphql(
             continue
         prs.append(pr)
     return tuple(prs)
-
-
-def _branch_target_from_graphql(
-    raw_ref: object,
-    *,
-    response_name: str,
-) -> tuple[str, CommitId]:
-    parsed = _validate_model(
-        raw_ref,
-        model=_GraphqlRef,
-        error_context=f"GitHub {response_name} response had invalid ref data",
-    )
-    return _branch_target(parsed)
 
 
 def _branch_target(ref: _GraphqlRef) -> tuple[str, CommitId]:
@@ -1676,40 +1635,14 @@ def build_github_client(*, repo: GithubRepoAddress, token: str | None = None) ->
     )
 
 
-def _pr_history_from_graphql(
-    *,
-    alias: str,
-    raw_pr: object,
-    response_name: str,
-) -> _GraphqlPRHistory | None:
-    if raw_pr is None:
-        return None
-    return _validate_model(
-        raw_pr,
-        model=_GraphqlPRHistory,
-        error_context=(
-            f"GitHub {response_name} response had invalid pull request payload for {alias}"
-        ),
-    )
-
-
 def _issue_comments_from_graphql(
     history: _GraphqlPRHistory | None,
-    *,
-    alias: str,
 ) -> tuple[tuple[GithubIssueComment, ...], str | None]:
     comments = history.comments if history is not None else None
     if comments is None:
         return (), None
     valid_comments = tuple(comment for comment in comments.nodes or () if comment is not None)
-    if not comments.page_info.has_next_page:
-        return valid_comments, None
-    cursor = comments.page_info.end_cursor
-    if cursor is None:
-        raise GithubClientError(
-            f"GitHub pull request history lookup response had no page cursor for {alias}."
-        )
-    return valid_comments, cursor
+    return valid_comments, comments.page_info.next_cursor
 
 
 def _revisions_from_graphql(
