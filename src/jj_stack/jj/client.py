@@ -174,7 +174,9 @@ class StaleWorkspaceError(CliError):
     """Raised when `jj` refuses to run because the current workspace is stale."""
 
 
-class _RenderableCommit(Protocol):
+class RenderableCommit(Protocol):
+    """Change-like value that can be rendered by commit ID."""
+
     @property
     def commit_id(self) -> CommitId: ...
 
@@ -392,7 +394,7 @@ class JjClient:
 
     def render_commit_log_lines(
         self,
-        change: _RenderableCommit,
+        change: RenderableCommit,
         *,
         color_when: JjColorWhen,
     ) -> tuple[str, ...]:
@@ -414,7 +416,7 @@ class JjClient:
 
     def render_commit_log_blocks(
         self,
-        changes: Sequence[_RenderableCommit],
+        changes: Sequence[RenderableCommit],
         *,
         color_when: JjColorWhen,
     ) -> dict[CommitId, tuple[str, ...]]:

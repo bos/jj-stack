@@ -8,14 +8,8 @@ from typing import Protocol
 import jj_stack.ui as ui
 from jj_stack.console import color_when
 from jj_stack.identifiers import CommitId
+from jj_stack.jj.client import RenderableCommit
 from jj_stack.jj.colors import JjColorWhen
-
-
-class RenderableCommit(Protocol):
-    """Change-like value that can be rendered by commit ID."""
-
-    @property
-    def commit_id(self) -> CommitId: ...
 
 
 class CommitRenderClient(Protocol):
