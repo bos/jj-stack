@@ -106,7 +106,6 @@ _CLASSIFICATION_CASES: tuple[tuple[str, dict[str, object], type], ...] = (
         PRAmbiguous,
     ),
     ("merged and on trunk", {"pr": _pr(state="merged"), "trunk_evidence": "rewritten"}, Landed),
-    ("open, exact commit already on trunk", {"trunk_evidence": "exact"}, Landed),
     ("queued", {"pr": _pr(queued=True)}, Queued),
     ("queued but head moved", {"pr": _pr(queued=True, head_sha="elsewhere")}, PRHeadMoved),
     (

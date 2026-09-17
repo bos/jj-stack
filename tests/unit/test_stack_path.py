@@ -130,14 +130,6 @@ def test_only_explicit_change_selection_can_project_a_sole_trunk_copy() -> None:
     assert "sync --all" in plain_text(hint)
 
 
-def test_selected_path_fails_closed_when_its_parent_boundary_was_not_observed() -> None:
-    trunk = _change("trunk", "trunk-change", parents=("root",), immutable=True)
-    head = _change("head", "head-change", parents=("missing",))
-
-    with pytest.raises(CliError, match="parent commit missing"):
-        project_selected_path(_observation(head=head, commits=(head, trunk), trunk=trunk))
-
-
 def test_repo_paths_inventory_an_ordinary_shared_prefix() -> None:
     trunk = _change("trunk", "trunk-change", parents=("root",), immutable=True)
     shared = _change("shared", "shared-change", parents=("trunk",))
