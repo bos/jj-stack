@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from string.templatelib import Template
-from typing import TypedDict, overload
+from typing import TypedDict, final, overload
 
 import jj_stack.ui as ui
 from jj_stack.errors import CliError, DriftCondition, DriftError
@@ -32,6 +32,7 @@ from jj_stack.stack.trunk_evidence import (
 from jj_stack.ui import Message
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class Unobserved:
     """A fact the command did not look up, as opposed to one it observed to be absent."""
