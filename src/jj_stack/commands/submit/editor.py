@@ -127,17 +127,13 @@ def parse_description_edit_document(
 
 
 def _resolve_editor_command(jj_client: JjClient) -> list[str]:
-    for candidate in (
-        jj_client.get_config_string("ui.editor"),
-        os.environ.get("VISUAL"),
-        os.environ.get("EDITOR"),
-    ):
-        if candidate and candidate.strip():
-            return _split_editor_command(candidate)
-    raise UsageError(
-        t"{ui.cmd('--edit')} needs an editor: set jj's {ui.code('ui.editor')} config "
-        t"or the {ui.code('VISUAL')} or {ui.code('EDITOR')} environment variable."
-    )
+    editor = jj_client.get_config_string("ui.editor")
+    if editor is None:
+        raise UsageError(
+            t"{ui.cmd('--edit')} needs an editor: set jj's {ui.code('ui.editor')} config "
+            t"or the {ui.code('VISUAL')} or {ui.code('EDITOR')} environment variable."
+        )
+    return _split_editor_command(editor)
 
 
 def _split_editor_command(command: str) -> list[str]:

@@ -36,9 +36,6 @@ def resolve_generated_descriptions(
 ) -> tuple[dict[ChangeId, GeneratedDescription], GeneratedDescription | None]:
     """Resolve pull request descriptions and an optional stack description."""
 
-    if descriptions and describe_with is not None:
-        raise UsageError(t"Use either {ui.cmd('--describe')} or {ui.cmd('--describe-with')}.")
-
     if describe_with is None:
         default_descriptions: dict[ChangeId, GeneratedDescription] = {
             change.change_id: GeneratedDescription(

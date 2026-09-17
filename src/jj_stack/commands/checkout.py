@@ -98,11 +98,6 @@ def checkout(
     """CLI entrypoint for `checkout`."""
 
     context = bootstrap_context(repo=repo, cli_args=cli_args, debug=debug)
-    if pr is not None and revset is not None:
-        raise UsageError(
-            t"{ui.cmd('jj-stack checkout')} accepts at most one selector: "
-            t"{ui.cmd('--pull-request')} or {ui.cmd('--revset')}."
-        )
     result = asyncio.run(_checkout_async(context=context, pick=pick, pr=pr, revset=revset))
     if result.fetched_tip_commit is not None:
         console.output(ui.prefixed_line("Fetched PR head commit: ", result.fetched_tip_commit))
