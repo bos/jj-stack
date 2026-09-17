@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import tomllib
-from importlib import import_module
 from io import StringIO
+
+from rich.style import Style
+from rich.text import Span
 
 import jj_stack.console as console_module
 import jj_stack.ui as ui_module
 from jj_stack.jj.colors import SemanticStyles, semantic_styles
-
-
-def _style_cls():
-    return import_module("rich.style").Style
 
 
 def _theme(listing: str) -> SemanticStyles | None:
@@ -90,8 +88,8 @@ def test_semantic_style_uses_jj_color_config() -> None:
         semantic_styles=theme,
     ):
         assert console_module.semantic_style("missing") is None
-        assert console_module.semantic_style("change_id") == _style_cls()(color="color(81)")
-        assert console_module.semantic_style("working_copy", "change_id") == _style_cls()(
+        assert console_module.semantic_style("change_id") == Style(color="color(81)")
+        assert console_module.semantic_style("working_copy", "change_id") == Style(
             color="bright_magenta",
             bold=True,
         )
@@ -118,10 +116,10 @@ def test_rich_text_renders_template_semantics() -> None:
     assert text.plain == "delete jj-stack/feature-aaaaaaaa for aaaa1111"
     assert text.spans[0].start == 7
     assert text.spans[0].end == 32
-    assert text.spans[0].style == _style_cls()(color="green")
+    assert text.spans[0].style == Style(color="green")
     assert text.spans[1].start == 37
     assert text.spans[1].end == 45
-    assert text.spans[1].style == _style_cls()(color="color(81)", bold=True)
+    assert text.spans[1].style == Style(color="color(81)", bold=True)
 
 
 def test_joined_semantic_template_interpolation_renders_plain_text_and_styles() -> None:
@@ -143,12 +141,11 @@ def test_joined_semantic_template_interpolation_renders_plain_text_and_styles() 
     ):
         text = console_module.rich_text(message)
 
-    style = _style_cls()(color="green")
-    span_cls = import_module("rich.text").Span
+    style = Style(color="green")
     first_start = expected.index(first)
     second_start = expected.index(second)
     assert text.plain == expected
     assert text.spans == [
-        span_cls(first_start, first_start + len(first), style),
-        span_cls(second_start, second_start + len(second), style),
+        Span(first_start, first_start + len(first), style),
+        Span(second_start, second_start + len(second), style),
     ]

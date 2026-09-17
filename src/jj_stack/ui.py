@@ -212,28 +212,7 @@ def _append_plain_text(parts: list[str], content: Message) -> None:
 
 def resolve_interpolation(interpolation: Interpolation) -> Message:
     value = interpolation.value
-    if isinstance(value, SemanticText):
-        if interpolation.conversion is not None:
-            converted = convert(value.text, interpolation.conversion)
-            return (
-                format(converted, interpolation.format_spec)
-                if interpolation.format_spec
-                else converted
-            )
-        if interpolation.format_spec:
-            return SemanticText(
-                text=format(value.text, interpolation.format_spec),
-                labels=value.labels,
-                link=value.link,
-            )
-        return value
-    if isinstance(value, (Template, tuple)):
-        if interpolation.conversion is not None or interpolation.format_spec:
-            plain = plain_text(value)
-            converted = convert(plain, interpolation.conversion)
-            if interpolation.format_spec:
-                return format(converted, interpolation.format_spec)
-            return converted
+    if isinstance(value, (SemanticText, Template, tuple)):
         return value
 
     converted = convert(value, interpolation.conversion)
