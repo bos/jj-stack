@@ -188,9 +188,6 @@ async def discover_pr_lookups(
     """
 
     branches = tuple(observations)
-    if not branches:
-        return {}
-
     try:
         open_prs_by_branch = await github_client.get_open_prs_by_head_refs(head_refs=branches)
     except GithubClientError as error:

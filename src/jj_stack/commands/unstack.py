@@ -220,7 +220,6 @@ async def _check_selected_prs(
             change_ids=change_ids,
             context=context,
             github_client=github_client,
-            include_dependents=False,
             remote_name=remote_name,
             state=state,
         )
