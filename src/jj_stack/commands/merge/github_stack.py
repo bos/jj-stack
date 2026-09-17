@@ -68,6 +68,40 @@ class AsyncMergePlan:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PendingMerge:
+    """A merge request GitHub accepted but has not finished."""
+
+    execution: MergeExecutionInputs
+    merge: AsyncMergePlan
+    merge_action: str
+    merge_method: str | None
+    request: GithubStackMerge
+
+    def result(self) -> MergeResult:
+        """Report the request as still pending."""
+
+        return _accepted_result(
+            self.execution,
+            self.merge,
+            result=self.request,
+            merge_action=self.merge_action,
+            merge_method=self.merge_method,
+        )
+
+    async def wait(self, github: GithubClient) -> MergeResult:
+        """Wait for GitHub to finish the request, then report its outcome."""
+
+        terminal = await wait_for_merge(github, self.request, self.merge.planned, self.execution)
+        return _terminal_result(
+            self.execution,
+            self.merge,
+            terminal,
+            merge_action=self.merge_action,
+            merge_method=self.merge_method,
+        )
+
+
 def build_async_merge_plan(
     merge_plan: MergePlan,
     stacks: tuple[GithubStack, ...],
@@ -102,8 +136,9 @@ async def execute_async_merge(
     merge_action: str,
     merge_method: str | None,
     merge: AsyncMergePlan,
-    no_wait: bool,
-) -> MergeResult:
+) -> MergeResult | PendingMerge:
+    """Ask GitHub to merge; report the outcome, or the request GitHub is still working on."""
+
     if not merge.planned:
         return MergeResult(actions=merge.actions())
     pr_label = format_pr_label(merge.target.identity.pr_number, repo=github.repo)
@@ -150,9 +185,28 @@ async def execute_async_merge(
             reason="another merge request is already pending; check its status on GitHub "
             "and run jj-stack sync if it merges",
         )
-    terminal = submission.result
-    if not no_wait and terminal.status in {"pending", "enqueued"}:
-        terminal = await wait_for_merge(github, terminal, merge.planned, execution)
+    request = submission.result
+    if request.status in {"pending", "enqueued"}:
+        return PendingMerge(
+            execution=execution,
+            merge=merge,
+            merge_action=merge_action,
+            merge_method=merge_method,
+            request=request,
+        )
+    return _terminal_result(
+        execution, merge, request, merge_action=merge_action, merge_method=merge_method
+    )
+
+
+def _terminal_result(
+    execution: MergeExecutionInputs,
+    merge: AsyncMergePlan,
+    terminal: GithubStackMerge,
+    *,
+    merge_action: str,
+    merge_method: str | None,
+) -> MergeResult:
     if terminal.status == "failed":
         return _blocked_result(
             execution,

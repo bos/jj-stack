@@ -8,9 +8,15 @@ from jj_stack.errors import EXIT_GITHUB, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
 from jj_stack.jj.client import JjClient
+from jj_stack.state.operation_lock import try_acquire_operation_lock
 from jj_stack.state.store import TrackingStore
 
-from ..support.fake_github import FakeGithubState, _complete_stack_merge, create_app
+from ..support.fake_github import (
+    FakeGithubRepo,
+    FakeGithubState,
+    _complete_stack_merge,
+    create_app,
+)
 from ..support.integration_helpers import (
     commit_file,
     delete_remote_ref,
@@ -78,11 +84,40 @@ def test_merge_no_wait_resumes_a_pending_or_queued_request_and_syncs_after_waiti
     assert "jj-stack sync" in queued.out
     assert fake_repo.stack_merge_requests == [request]
 
+    # While GitHub works through its queue, other jj-stack commands can still run: each queue
+    # observation finds the repo's operation lock free. The local update afterwards holds it.
     monkeypatch.setattr("jj_stack.commands.merge.wait._QUEUE_POLL_INTERVAL_SECONDS", 0)
+    state_dir = TrackingStore.for_repo(repo).require_writable()
+
+    def lock_is_free() -> bool:
+        probe = try_acquire_operation_lock(state_dir, command="probe")
+        if probe is not None:
+            probe.release()
+        return probe is not None
+
+    free_during_queue_waits: list[bool] = []
+    free_during_local_rewrites: list[bool] = []
+    advance_merge_queue = FakeGithubRepo.advance_merge_queue
+
+    def observe_then_advance(fake: FakeGithubRepo) -> None:
+        free_during_queue_waits.append(lock_is_free())
+        advance_merge_queue(fake)
+
+    monkeypatch.setattr(FakeGithubRepo, "advance_merge_queue", observe_then_advance)
+    for name in ("abandon_commits", "prepare_rebase_changes", "rebase_changes"):
+        rewrite = getattr(JjClient, name)
+
+        def observe_then_rewrite(client, *args, rewrite=rewrite, **kwargs):
+            free_during_local_rewrites.append(lock_is_free())
+            return rewrite(client, *args, **kwargs)
+
+        monkeypatch.setattr(JjClient, name, observe_then_rewrite)
     assert run_main(repo, config_path, "merge", *selector) == 0
     completed = capsys.readouterr()
     assert "Merge completed" in completed.out
     assert "PR #1" in completed.err
+    assert free_during_queue_waits and all(free_during_queue_waits)
+    assert free_during_local_rewrites and not any(free_during_local_rewrites)
     assert fake_repo.stack_merge_requests == [request]
     assert set(TrackingStore.for_repo(repo).load().prs) == {stack.head.change_id}
     remaining = selected_stack(repo)

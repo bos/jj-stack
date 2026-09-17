@@ -48,7 +48,7 @@ from jj_stack.github.error_messages import (
     read_or_stop,
     require_github_target,
 )
-from jj_stack.github.resolution import GithubTarget
+from jj_stack.github.resolution import GithubTarget, resolve_github_target
 from jj_stack.identifiers import ChangeId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.models.github import GithubRepo
@@ -60,9 +60,9 @@ from jj_stack.stack.selection import (
     resolve_linked_change_for_pr,
 )
 from jj_stack.stack.trunk import observe_trunk_branch
-from jj_stack.state.operation_lock import operation_lock
+from jj_stack.state.operation_lock import OperationLockBusyError, operation_lock
 
-from .github_stack import build_async_merge_plan, execute_async_merge
+from .github_stack import PendingMerge, build_async_merge_plan, execute_async_merge
 from .plan import MergeExecutionInputs, MergeResult, build_merge_plan
 
 _RERUN_HINT = "Resolve the GitHub error above, then rerun jj-stack merge."
@@ -104,21 +104,16 @@ def merge(
         cli_args=cli_args,
         debug=debug,
     )
-    with operation_lock(
-        context.state_store,
-        command="merge",
-        mutating=not dry_run,
-    ):
-        return asyncio.run(
-            _run_merge(
-                context=context,
-                dry_run=dry_run,
-                merge_method=merge_method,
-                no_wait=no_wait,
-                pr=pr,
-                revset=revset,
-            )
+    return asyncio.run(
+        _run_merge(
+            context=context,
+            dry_run=dry_run,
+            merge_method=merge_method,
+            no_wait=no_wait,
+            pr=pr,
+            revset=revset,
         )
+    )
 
 
 async def _run_merge(
@@ -130,23 +125,29 @@ async def _run_merge(
     pr: str | None,
     revset: str | None,
 ) -> int:
-    selected_revset, target_change_id = _resolve_merge_target(
-        context=context,
-        pr=pr,
-        revset=revset,
-    )
-    with console.spinner(description="Inspecting jj stack"):
-        prepared_merge = _prepare_merge(
-            context=context,
-            dry_run=dry_run,
-            merge_method=merge_method,
-            revset=selected_revset,
-            target_change_id=target_change_id,
-        )
-    async with context.open_github_client(repo=prepared_merge.target.repo) as github_client:
-        result, github_repo_state = await _stream_merge_async(
-            prepared_merge, github_client, no_wait=no_wait
-        )
+    target = require_github_target(resolve_github_target(context.jj_client.list_git_remotes()))
+    async with context.open_github_client(repo=target.repo) as github_client:
+        # Other jj-stack commands may run while GitHub works: the lock covers inspecting the
+        # stack and requesting the merge, and again the local update once GitHub has finished.
+        with operation_lock(context.state_store, command="merge", mutating=not dry_run):
+            selected_revset, target_change_id = _resolve_merge_target(
+                context=context,
+                pr=pr,
+                revset=revset,
+            )
+            with console.spinner(description="Inspecting jj stack"):
+                prepared_merge = _prepare_merge(
+                    context=context,
+                    dry_run=dry_run,
+                    merge_method=merge_method,
+                    revset=selected_revset,
+                    target_change_id=target_change_id,
+                )
+            outcome, github_repo_state = await _request_merge_async(prepared_merge, github_client)
+        if isinstance(outcome, PendingMerge):
+            result = outcome.result() if no_wait else await outcome.wait(github_client)
+        else:
+            result = outcome
         _print_merge_result(result, sync_head=prepared_merge.sync_head)
         if result.blocked:
             return 1
@@ -155,14 +156,21 @@ async def _run_merge(
         sync_change_id = prepared_merge.stack.head.change_id
         console.output("Updating the local stack after the completed merge:")
         try:
-            exit_code = await converge_selected_stack(
-                context=context,
-                github=github_client,
-                github_repo=github_repo_state,
-                dry_run=False,
-                fetch_remote_state=True,
-                revset=sync_change_id,
+            with operation_lock(context.state_store, command="merge"):
+                exit_code = await converge_selected_stack(
+                    context=context,
+                    github=github_client,
+                    github_repo=github_repo_state,
+                    dry_run=False,
+                    fetch_remote_state=True,
+                    revset=sync_change_id,
+                )
+        except OperationLockBusyError as error:
+            _warn_incomplete_post_merge_sync(prepared_merge.sync_head, has_recovery_hint=True)
+            error.hint = (
+                t"After it finishes, run {ui.cmd(f'jj-stack sync {prepared_merge.sync_head}')}."
             )
+            raise
         except BaseException as error:
             _warn_incomplete_post_merge_sync(
                 prepared_merge.sync_head, has_recovery_hint=error_hint(error) is not None
@@ -236,9 +244,9 @@ def _prepare_merge(
     )
 
 
-async def _stream_merge_async(
-    prepared_merge: PreparedMerge, github_client: GithubClient, *, no_wait: bool
-) -> tuple[MergeResult, GithubRepo]:
+async def _request_merge_async(
+    prepared_merge: PreparedMerge, github_client: GithubClient
+) -> tuple[MergeResult | PendingMerge, GithubRepo]:
     stack = prepared_merge.stack
     github_repo = prepared_merge.target.repo
     remote = prepared_merge.target.remote
@@ -323,7 +331,6 @@ async def _stream_merge_async(
         merge_action=merge_action,
         merge_method=resolved_merge_method,
         merge=async_merge,
-        no_wait=no_wait,
     ), github_repo_state
 
 

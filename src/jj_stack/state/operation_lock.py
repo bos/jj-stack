@@ -34,6 +34,10 @@ class OperationLockHolder:
     started_at: str
 
 
+class OperationLockBusyError(CliError):
+    """Another jj-stack command holds the repo operation lock."""
+
+
 class OperationLock:
     """Held operation lock.
 
@@ -87,7 +91,7 @@ def acquire_operation_lock(
             return lock
         if time.monotonic() >= deadline:
             holder = read_operation_lock_holder(state_dir)
-            raise CliError(
+            raise OperationLockBusyError(
                 _operation_lock_busy_message(state_dir, holder),
                 hint="Wait for that command to finish, then retry.",
             )

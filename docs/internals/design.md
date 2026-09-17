@@ -245,10 +245,11 @@ removed, so `in-use` continues to report adoption. `view`, `list`, and `in-use` 
 An unreadable or invalid file blocks commands that load it and names the path to move aside before
 using `checkout` or `relink` to restore links. A newer unsupported schema requires an upgrade.
 
-Mutating commands serialize per repo. An interruption can leave completed external effects even
-if the command reports failure. A retry computes what remains from current observations; it never
-replays a saved plan or selector. The submitted baseline records an acknowledged commit, not
-pending work.
+Mutating commands serialize per repo while they observe and mutate. A command that waits for
+GitHub, an editor, or a describe helper releases that serialization while it waits and observes
+again before it mutates. An interruption can leave completed external effects even if the command
+reports failure. A retry computes what remains from current observations; it never replays a
+saved plan or selector. The submitted baseline records an acknowledged commit, not pending work.
 
 ## Policies
 
