@@ -20,7 +20,7 @@ VENV_PYTHON = (
 )
 PytestJobs = int | Literal["auto"]
 _TYPE_CHECK_TARGETS = ("src", "tests", "tools", "check.py")
-_TYPE_CHECKERS = ("pyrefly", "ty", "mypy")
+_TYPE_CHECKERS = ("pyrefly", "ty")
 _FRAGILE_TEST_OUTPUT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "use output assertion helpers instead of exact captured output equality",
@@ -79,7 +79,7 @@ def _build_checks(
         )
     type_checks: list[tuple[str, tuple[str, ...]]] = []
     for checker in type_checkers:
-        command = ("-m", checker) if checker == "mypy" else ("-m", checker, "check")
+        command = ("-m", checker, "check")
         type_checks.append((checker, (*command, *_TYPE_CHECK_TARGETS)))
         if checker == "pyrefly":
             type_checks.append(

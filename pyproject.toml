@@ -50,10 +50,6 @@ dev = [
   "pytest>=9.1.1,<10",
   "ruff>=0.16.4,<0.17",
 ]
-mypy = [
-  "mypy>=2.3.1,<2.4",
-  "types-jsonschema>=4.26.0.20260518,<5",
-]
 ty = [
   "ty>=0.0.70,<0.1",
   "types-jsonschema>=4.26.0.20260518,<5",
@@ -91,9 +87,6 @@ combine-as-imports = true
 
 [tool.pyrefly]
 search_path = ["src", "."]
-
-[tool.mypy]
-plugins = ["pydantic.mypy"]
 
 [tool.hatch.build]
 exclude = ["/.jj", "/.tmp"]
