@@ -23,6 +23,7 @@ from ..support.integration_helpers import (
     update_remote_ref,
     write_file,
 )
+from ..support.output_assertions import assert_output_contains
 from .submit_command_helpers import (
     configure_submit_environment,
     read_remote_ref,
@@ -362,7 +363,7 @@ def test_sync_keeps_tracking_and_names_the_recovery_when_a_merged_pr_head_change
     fake_repo.apply_squash_merge(pr)
 
     assert run_main(repo, config_path, "sync", "--all") == 1
-    assert "last submitted commit" in capsys.readouterr().err
+    assert_output_contains(capsys.readouterr().err, "last submitted commit")
     assert submitted.change_id in state_store.load().prs
 
     exit_code = run_main(repo, config_path, "sync", submitted.change_id)
