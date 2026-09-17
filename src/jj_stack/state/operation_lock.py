@@ -112,7 +112,7 @@ def operation_lock(
     if not mutating:
         yield
         return
-    with acquire_operation_lock(state_store._path.parent, command=command):
+    with acquire_operation_lock(state_store.path.parent, command=command):
         yield
 
 
@@ -213,7 +213,6 @@ def _unlock_file(lock_file: BinaryIO) -> None:
 
 
 def _write_holder(holder_path: Path, holder: OperationLockHolder) -> None:
-    holder_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path_str = tempfile.mkstemp(
         dir=holder_path.parent,
         prefix=holder_path.name + ".",

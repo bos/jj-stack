@@ -32,7 +32,7 @@ class TrackingStore:
     """Load and atomically write pull request tracking state."""
 
     def __init__(self, path: Path) -> None:
-        self._path = path
+        self.path = path
 
     @classmethod
     def for_repo(cls, repo_root: Path) -> TrackingStore:
@@ -44,12 +44,12 @@ class TrackingStore:
         """Return whether a valid tracking file exists without creating one."""
 
         try:
-            self._path.lstat()
+            self.path.lstat()
         except FileNotFoundError:
             return False
         except OSError as error:
             raise TrackingStateError(
-                f"Could not inspect jj-stack data path {self._path}: {error}"
+                f"Could not inspect jj-stack data path {self.path}: {error}"
             ) from error
         self.load()
         return True
@@ -89,25 +89,25 @@ class TrackingStore:
     def load(self) -> TrackingState:
         """Load and validate the complete tracking file."""
 
-        if not self._path.exists():
+        if not self.path.exists():
             return TrackingState()
-        if not self._path.is_file():
-            raise self._invalid_state_error(f"jj-stack data path is not a file: {self._path}")
+        if not self.path.is_file():
+            raise self._invalid_state_error(f"jj-stack data path is not a file: {self.path}")
         try:
-            rendered = self._path.read_text(encoding="utf-8")
+            rendered = self.path.read_text(encoding="utf-8")
         except OSError as error:
             raise self._invalid_state_error(
-                f"Could not read jj-stack data file {self._path}: {error}"
+                f"Could not read jj-stack data file {self.path}: {error}"
             ) from error
         try:
             raw = json.loads(rendered)
         except json.JSONDecodeError as error:
             raise self._invalid_state_error(
-                f"Invalid jj-stack data in {self._path}: {error}"
+                f"Invalid jj-stack data in {self.path}: {error}"
             ) from error
         if not isinstance(raw, dict):
             raise self._invalid_state_error(
-                f"Invalid jj-stack data in {self._path}: top level must be an object"
+                f"Invalid jj-stack data in {self.path}: top level must be an object"
             )
         try:
             raw = migrate_tracking_state(raw)
@@ -116,35 +116,35 @@ class TrackingStore:
                 _require_identity_matches_change(tracked.pr_identity, change_id)
         except (ValidationError, ValueError) as error:
             raise self._invalid_state_error(
-                f"Invalid jj-stack data in {self._path}: {error}"
+                f"Invalid jj-stack data in {self.path}: {error}"
             ) from error
         return state
 
     def _persist(self, state: TrackingState) -> TrackingState:
         rendered = state.model_dump_json(exclude_none=True, indent=2) + "\n"
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp_name = tempfile.mkstemp(
-                dir=self._path.parent,
-                prefix=self._path.name + ".",
+                dir=self.path.parent,
+                prefix=self.path.name + ".",
                 suffix=".tmp",
             )
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as tmp:
                     tmp.write(rendered)
-                Path(tmp_name).replace(self._path)
+                Path(tmp_name).replace(self.path)
             except OSError:
                 Path(tmp_name).unlink(missing_ok=True)
                 raise
         except OSError as error:
             raise TrackingStateError(
-                f"Could not write jj-stack data file {self._path}: {error}"
+                f"Could not write jj-stack data file {self.path}: {error}"
             ) from error
         return state
 
     def _invalid_state_error(self, message: str) -> TrackingStateError:
-        backup_path = self._path.with_name(f"{self._path.name}.bak")
-        move_command = f"mv -i {shlex.quote(str(self._path))} {shlex.quote(str(backup_path))}"
+        backup_path = self.path.with_name(f"{self.path.name}.bak")
+        move_command = f"mv -i {shlex.quote(str(self.path))} {shlex.quote(str(backup_path))}"
         return TrackingStateError(
             message,
             hint=(
