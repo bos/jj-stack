@@ -33,7 +33,7 @@ def _queued_pr(number: int) -> GithubPR:
         number=number,
         state="open",
         title="feature",
-        merge_queue_entry=GithubMergeQueueEntry(id=f"queue-{number}"),
+        merge_queue_entry=GithubMergeQueueEntry(),
     )
 
 

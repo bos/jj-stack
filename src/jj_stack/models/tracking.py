@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from jj_stack.identifiers import ChangeId, CommitId
-
-if TYPE_CHECKING:
-    from jj_stack.models.github import GithubPR
 
 
 class PRIdentity(BaseModel):
@@ -19,11 +16,6 @@ class PRIdentity(BaseModel):
 
     pr_number: int
     head_ref: str
-
-    def matches_pr(self, pr: GithubPR) -> bool:
-        """Whether the PR number and head branch match the saved link."""
-
-        return pr.number == self.pr_number and pr.head.ref == self.head_ref
 
 
 class SubmittedBaseline(BaseModel):

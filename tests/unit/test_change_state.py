@@ -54,7 +54,7 @@ def _pr(
         base=GithubBranchRef(ref="main"),
         head=GithubPRHead(ref=head_ref, sha=head_sha),
         html_url=f"https://github.test/octo/repo/pull/{number}",
-        merge_queue_entry=GithubMergeQueueEntry(id="entry") if queued else None,
+        merge_queue_entry=GithubMergeQueueEntry() if queued else None,
         node_id=f"PR_{number}",
         number=number,
         state=state,

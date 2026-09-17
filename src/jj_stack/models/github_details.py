@@ -44,7 +44,6 @@ class GithubCheckCounts(BaseModel):
 
 
 class GithubMergeQueueEntry(BaseModel):
-    id: str
     position: int | None = None
     state: str | None = None
     estimated_seconds: int | None = Field(default=None, alias="estimatedTimeToMerge")

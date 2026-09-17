@@ -564,7 +564,7 @@ def _picker_choices(
             member.number: saved[0]
             for member in active_members
             if (saved := saved_by_pr.get(member.number)) is not None
-            and saved[1].matches_pr(member)
+            and saved[1].head_ref == member.head.ref
         }
         local = len(change_id_by_pr) == len(active_members) and all(
             member.head.sha in visible_commit_ids for member in active_members

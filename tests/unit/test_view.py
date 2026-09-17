@@ -187,7 +187,7 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
         change_id="cdefghijklmn",
         pr_identity=make_pr_identity(head_ref="jj-stack/feature", pr_number=3),
         pr=_pr(number=3, state="open").model_copy(
-            update={"merge_queue_entry": GithubMergeQueueEntry(id="entry")}
+            update={"merge_queue_entry": GithubMergeQueueEntry()}
         ),
     )
     waiting_lines = _render_lines(
