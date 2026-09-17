@@ -27,15 +27,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_tested_versions(ci_workflow: Path) -> list[str]:
-    workflow_text = ci_workflow.read_text(encoding="utf-8")
+def read_tested_versions() -> list[str]:
+    workflow_text = CI_WORKFLOW.read_text(encoding="utf-8")
     match = re.search(r"jj-version:\s*\[(.*?)\]", workflow_text)
     if match is None:
-        raise SystemExit(f"Could not find jj-version matrix in {ci_workflow}")
+        raise SystemExit(f"Could not find jj-version matrix in {CI_WORKFLOW}")
 
     versions = re.findall(r'"(v[^"]+)"', match.group(1))
     if not versions:
-        raise SystemExit(f"Could not parse jj versions from {ci_workflow}")
+        raise SystemExit(f"Could not parse jj versions from {CI_WORKFLOW}")
     return versions
 
 
@@ -92,7 +92,6 @@ def tracking_issue_body(
     latest_version: str,
     latest_url: str,
     tested_versions: list[str],
-    ci_workflow: Path,
 ) -> str:
     tested_display = ", ".join(tested_versions)
     return (
@@ -101,7 +100,7 @@ def tracking_issue_body(
         f"- Release notes: {latest_url}\n"
         f"- Versions currently tested in CI: `{tested_display}`\n\n"
         "Update both of these files in the same change:\n"
-        f"- `{ci_workflow}`: add `{latest_version}` to the `jj-version` matrix\n"
+        f"- `{CI_WORKFLOW}`: add `{latest_version}` to the `jj-version` matrix\n"
         "- `tools/install-jj-release.sh`: replace the prior version's checksum cases with "
         "SHA-256 checksums for every supported platform for the new release\n"
     )
@@ -114,7 +113,6 @@ def sync_issue_state(
     latest_version: str,
     latest_url: str,
     tested_versions: list[str],
-    ci_workflow: Path,
 ) -> None:
     issue = find_open_issue(repo, token)
     if latest_version in tested_versions:
@@ -132,7 +130,6 @@ def sync_issue_state(
         latest_version=latest_version,
         latest_url=latest_url,
         tested_versions=tested_versions,
-        ci_workflow=ci_workflow,
     )
     if issue is None:
         created = github_request(
@@ -155,7 +152,7 @@ def sync_issue_state(
 
 def main() -> int:
     args = parse_args()
-    tested_versions = read_tested_versions(CI_WORKFLOW)
+    tested_versions = read_tested_versions()
     latest_version, latest_url = latest_jj_release()
     tested_display = ", ".join(tested_versions)
     if latest_version in tested_versions:
@@ -179,7 +176,6 @@ def main() -> int:
         latest_version=latest_version,
         latest_url=latest_url,
         tested_versions=tested_versions,
-        ci_workflow=CI_WORKFLOW,
     )
     return 0
 
