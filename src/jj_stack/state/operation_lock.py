@@ -49,7 +49,6 @@ class OperationLock:
     ) -> None:
         self._file = file
         self._holder_path = holder_path
-        self._released = False
 
     def __enter__(self) -> OperationLock:
         return self
@@ -65,9 +64,6 @@ class OperationLock:
     def release(self) -> None:
         """Release the OS lock and remove our holder metadata."""
 
-        if self._released:
-            return
-        self._released = True
         self._holder_path.unlink(missing_ok=True)
         _unlock_file(self._file)
         self._file.close()
@@ -116,7 +112,7 @@ def operation_lock(
     if not mutating:
         yield
         return
-    with acquire_operation_lock(state_store.require_writable(), command=command):
+    with acquire_operation_lock(state_store._path.parent, command=command):
         yield
 
 
@@ -202,10 +198,6 @@ def _try_lock_file(lock_file: BinaryIO) -> bool:
             return True
         except BlockingIOError:
             return False
-        except OSError as error:
-            if error.errno in (errno.EACCES, errno.EAGAIN):
-                return False
-            raise
 
 
 def _unlock_file(lock_file: BinaryIO) -> None:

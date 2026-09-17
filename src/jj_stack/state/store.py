@@ -40,22 +40,6 @@ class TrackingStore:
 
         return cls(resolve_state_path(repo_root))
 
-    def require_writable(self) -> Path:
-        """Create the data directory; later lock and write operations report access failures."""
-
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as error:
-            raise TrackingStateError(
-                f"Could not create jj-stack data directory {self._path.parent}: {error}"
-            ) from error
-        return self._path.parent
-
-    def load(self) -> TrackingState:
-        """Load and validate the complete tracking file."""
-
-        return self._load_state()
-
     def is_in_use(self) -> bool:
         """Return whether a valid tracking file exists without creating one."""
 
@@ -67,7 +51,7 @@ class TrackingStore:
             raise TrackingStateError(
                 f"Could not inspect jj-stack data path {self._path}: {error}"
             ) from error
-        self._load_state()
+        self.load()
         return True
 
     def relink_pr(
@@ -92,17 +76,19 @@ class TrackingStore:
 
         for change_id, tracked in replacements.items():
             _require_identity_matches_change(tracked.pr_identity, change_id)
-        return self._persist(TrackingState(prs={**self._load_state().prs, **replacements}))
+        return self._persist(TrackingState(prs={**self.load().prs, **replacements}))
 
     def remove_pr(self, change_id: ChangeId) -> None:
         """Atomically remove one complete pull request record."""
 
-        state = self._load_state()
+        state = self.load()
         prs = dict(state.prs)
         del prs[change_id]
         self._persist(TrackingState(prs=prs))
 
-    def _load_state(self) -> TrackingState:
+    def load(self) -> TrackingState:
+        """Load and validate the complete tracking file."""
+
         if not self._path.exists():
             return TrackingState()
         if not self._path.is_file():
