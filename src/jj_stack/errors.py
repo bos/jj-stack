@@ -37,16 +37,13 @@ class SummarizedError(RuntimeError):
         raise NotImplementedError
 
 
-def resolve_exit_code(error: BaseException) -> int:
+def resolve_exit_code(error: CliError) -> int:
     """Return the process exit code for a raised CLI error.
 
     A `CliError` subclass with its own category code wins. A generic
     `CliError` wrapping a categorized cause inherits the cause's code, so wrap
     sites do not each need a subclass.
     """
-
-    if not isinstance(error, CliError):
-        return EXIT_FAILURE
 
     current: BaseException | None = error
     while current is not None:
@@ -177,12 +174,10 @@ class UnsupportedStackError(CliError):
         self,
         message: ErrorMessage,
         *,
-        change_id: str | None = None,
         hint: ErrorHint | None = None,
         reason: UnsupportedStackReason | None = None,
     ) -> None:
         super().__init__(message, hint=hint)
-        self.change_id = change_id
         self.reason = reason
 
     @classmethod
@@ -196,7 +191,6 @@ class UnsupportedStackError(CliError):
     ) -> UnsupportedStackError:
         return cls(
             t"Unsupported stack shape at {ui.change_id(change_id)}: {detail}",
-            change_id=change_id,
             hint=hint,
             reason=reason,
         )

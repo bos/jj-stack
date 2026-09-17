@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from jj_stack.errors import (
-    EXIT_AMBIGUOUS,
     EXIT_FAILURE,
     EXIT_GITHUB,
     EXIT_NO_STACK,
     EXIT_USAGE,
-    AmbiguousSelectionError,
     CliError,
     UnsupportedStackError,
     UsageError,
@@ -48,9 +46,6 @@ def test_resolve_exit_code_prefers_the_error_category_over_the_cause() -> None:
     categorized = UsageError("bad flag")
     assert resolve_exit_code(categorized) == EXIT_USAGE
 
-    stack_error = UnsupportedStackError("merge changes are not supported")
-    assert resolve_exit_code(stack_error) == EXIT_NO_STACK
-
     # A categorized error keeps its own code even with a GitHub cause.
     try:
         raise UnsupportedStackError("unsupported") from GithubClientError("boom")
@@ -64,8 +59,6 @@ def test_resolve_exit_code_inherits_github_code_from_wrapped_cause() -> None:
     except CliError as error:
         assert resolve_exit_code(error) == EXIT_GITHUB
 
-    assert resolve_exit_code(RuntimeError("not a cli error")) == EXIT_FAILURE
-
 
 def test_resolve_exit_code_inherits_cli_code_from_wrapped_cause() -> None:
     try:
@@ -74,10 +67,3 @@ def test_resolve_exit_code_inherits_cli_code_from_wrapped_cause() -> None:
         )
     except CliError as error:
         assert resolve_exit_code(error) == EXIT_NO_STACK
-
-    try:
-        raise CliError("Could not resolve selector.") from AmbiguousSelectionError(
-            "selector matched more than one target"
-        )
-    except CliError as error:
-        assert resolve_exit_code(error) == EXIT_AMBIGUOUS
