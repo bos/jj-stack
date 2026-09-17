@@ -142,7 +142,7 @@ def test_find_private_commits_returns_matching_changes(monkeypatch: pytest.Monke
             "-r",
             "(description(private)) & ('head' | 'parent')",
             "-T",
-            _template(),
+            _COMMIT_TEMPLATE,
         ): json.dumps(
             {
                 "change_id": "head-change",
@@ -276,14 +276,6 @@ def test_missing_pr_branch_fetch_isolation_is_a_shared_dry_run_terminal(
         invocation = tuple(command)
         seen_commands.append(invocation)
         if invocation[:4] == ("jj", "--ignore-working-copy", "config", "list"):
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if invocation[:5] == (
-            "jj",
-            "--ignore-working-copy",
-            "bookmark",
-            "list",
-            "--all-remotes",
-        ):
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if invocation == ("jj", "--ignore-working-copy", "git", "root"):
             return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
@@ -430,22 +422,8 @@ def test_remote_pr_branch_ref_mutation_uses_one_atomic_exact_lease_push(
         assert Path(kwargs["cwd"]) == Path("/repo")
         invocation = tuple(command)
         seen_commands.append(invocation)
-        if invocation[:4] == ("jj", "--ignore-working-copy", "config", "list"):
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if invocation[:5] == (
-            "jj",
-            "--ignore-working-copy",
-            "bookmark",
-            "list",
-            "--all-remotes",
-        ):
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if invocation == ("jj", "--ignore-working-copy", "git", "root"):
             return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
-        if invocation[-3:] == ("config", "--get-all", "remote.origin.fetch"):
-            return subprocess.CompletedProcess(
-                command, 0, stdout="^refs/heads/jj-stack/*\n", stderr=""
-            )
         if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
             return subprocess.CompletedProcess(
                 command,
@@ -503,22 +481,8 @@ def test_remote_change_id_inspection_fetches_an_object_without_creating_a_ref(
         nonlocal cat_file_calls
         invocation = tuple(command)
         seen_commands.append(invocation)
-        if invocation[:4] == ("jj", "--ignore-working-copy", "config", "list"):
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if invocation[:5] == (
-            "jj",
-            "--ignore-working-copy",
-            "bookmark",
-            "list",
-            "--all-remotes",
-        ):
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if invocation == ("jj", "--ignore-working-copy", "git", "root"):
             return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
-        if invocation[-3:] == ("config", "--get-all", "remote.origin.fetch"):
-            return subprocess.CompletedProcess(
-                command, 0, stdout="^refs/heads/jj-stack/*\n", stderr=""
-            )
         if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
             return subprocess.CompletedProcess(
                 command,
@@ -634,10 +598,6 @@ def test_temp_ref_cleanup_removes_raw_ref_when_forgetting_bookmark_fails(
     assert any(command[3:4] == ("update-ref",) for command in seen_commands)
 
 
-def _template() -> str:
-    return _COMMIT_TEMPLATE
-
-
 def _runner(responses: dict[tuple[str, ...], str]):
     def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         key = tuple(command)
@@ -650,55 +610,6 @@ def _runner(responses: dict[tuple[str, ...], str]):
         assert kwargs["check"] is False
         assert Path(kwargs["cwd"]) == Path("/repo")
         assert kwargs["text"] is True
-        if (
-            response_key not in responses
-            and len(response_key) == 8
-            and response_key[:4] == ("jj", "log", "--no-graph", "-r")
-            and response_key[5] == "-T"
-            and response_key[6] == _template()
-            and response_key[7] == "--limit"
-        ):
-            # Defensive guard; the boundary probe always includes the limit value.
-            raise AssertionError(f"Unexpected truncated command: {key!r}")
-        if (
-            response_key not in responses
-            and len(response_key) == 9
-            and response_key[:4] == ("jj", "log", "--no-graph", "-r")
-            and response_key[5] == "-T"
-            and response_key[6] == _template()
-            and response_key[7:] == ("--limit", "2")
-        ):
-            boundary_revset = response_key[4]
-            if boundary_revset.startswith("heads(first_ancestors(") and boundary_revset.endswith(
-                "& ::'trunk')"
-            ):
-                fallback_key = (
-                    "jj",
-                    "log",
-                    "--no-graph",
-                    "-r",
-                    "trunk()",
-                    "-T",
-                    _template(),
-                    "--limit",
-                    "2",
-                )
-                if fallback_key in responses:
-                    return subprocess.CompletedProcess(
-                        command,
-                        0,
-                        stdout=responses[fallback_key],
-                        stderr="",
-                    )
-        if (
-            response_key not in responses
-            and len(response_key) == 7
-            and response_key[:4] == ("jj", "log", "--no-graph", "-r")
-            and response_key[5:] == ("-T", _template())
-        ):
-            revset = response_key[4]
-            if revset.startswith("children(") and ") & merges() & ::" in revset:
-                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if response_key not in responses:
             raise AssertionError(f"Unexpected command: {key!r}")
         return subprocess.CompletedProcess(command, 0, stdout=responses[response_key], stderr="")
