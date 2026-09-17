@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from string.templatelib import Interpolation, Template
+from string.templatelib import Template
 from typing import TypedDict, overload
 
 import jj_stack.ui as ui
@@ -132,7 +132,7 @@ class Stop:
         raise NotImplementedError
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         raise NotImplementedError
 
     @property
@@ -148,9 +148,6 @@ class Stop:
 @dataclass(frozen=True, kw_only=True)
 class Unpublished(_State):
     """No tracking; the change has never been submitted from a tracked repo."""
-
-    # A branch already at the local commit is an interrupted first push, which submit finishes.
-    remote_target: CommitId | None | Unobserved
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -207,7 +204,7 @@ class LookupFailed(Stop, _State):
         return self.error
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         return t"run {ui.cmd('jj-stack doctor')} to check GitHub access"
 
 
@@ -230,7 +227,7 @@ class PRMissing(Stop, _State):
         return reason
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         return _relink(self.change_id)
 
 
@@ -248,7 +245,7 @@ class PRIdentityMismatch(Stop, WithPR):
         )
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         return _relink(self.change_id)
 
 
@@ -269,7 +266,7 @@ class PRAmbiguous(Stop, _State):
         )
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         return _relink(self.change_id)
 
 
@@ -296,7 +293,7 @@ class CompetingOpenPR(Stop, WithPR):
         )
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         others = ui.join(_pr_label, self.competitors)
         return t"close or retarget {others}, or {_relink(self.change_id)}"
 
@@ -318,7 +315,7 @@ class UntrackedPRExists(Stop, _State):
         )
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         short = short_change_id(self.change_id)
         if len(self.open_prs_on_branch) == 1:
             number = self.open_prs_on_branch[0].number
@@ -344,7 +341,7 @@ class BranchClaimed(Stop, _State):
         )
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         return (
             t"check the branch's work on GitHub before moving or deleting it, or choose another "
             t"PR branch name by editing the subject with "
@@ -367,7 +364,7 @@ class PRHeadMoved(Stop, WithPR):
         )
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         number = self.pr.number
         short = short_change_id(self.change_id)
         return (
@@ -388,7 +385,7 @@ class BranchMissing(Stop, WithPR):
         return t"PR branch {self._branch_label()} for {_pr_label(self.pr)} no longer exists"
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         # GitHub closes a pull request whose head branch is deleted and reopens it only once
         # the branch is back, so the two states need different next steps.
         if self.pr.state == "closed":
@@ -419,7 +416,7 @@ class BranchDisagrees(Stop, WithPR):
         )
 
     @property
-    def repair(self) -> Message:
+    def repair(self) -> Template:
         return (
             t"check the PR with {ui.cmd(f'jj-stack view {short_change_id(self.change_id)}')}; "
             t"GitHub may still be catching up with a recent push"
@@ -447,7 +444,7 @@ type ChangeState = (
 )
 
 
-def _relink(change_id: ChangeId) -> Message:
+def _relink(change_id: ChangeId) -> Template:
     short = short_change_id(change_id)
     return (
         t"check the change with {ui.cmd(f'jj-stack view {short}')}, then link the intended pull "
@@ -549,11 +546,7 @@ def _classify_pr(
         tracked=tracked,
         pr=pr,
         remote_target=o.remote_target,
-        trunk_evidence_reason=(
-            o.trunk_evidence_reason
-            if evidence is None and not isinstance(evidence, Unobserved)
-            else None
-        ),
+        trunk_evidence_reason=o.trunk_evidence_reason if evidence is None else None,
     )
     competitors = tuple(candidate for candidate in open_prs if candidate.number != pr.number)
     if competitors:
@@ -582,7 +575,7 @@ def _classify_untracked(
     remote = o.remote_target
     if isinstance(remote, str) and remote not in _local_commit_ids(o):
         return BranchClaimed(**common, tracked=None, remote_target=remote)
-    return Unpublished(**common, tracked=None, remote_target=remote)
+    return Unpublished(**common, tracked=None)
 
 
 def _classify_open(
@@ -651,30 +644,9 @@ def stop_error(state: Stop, *, rerun: str) -> CliError:
     return DriftError(message, condition=condition, hint=hint)
 
 
-def _capitalized(message: Message) -> Message:
-    if isinstance(message, str):
-        return message[:1].upper() + message[1:]
-    if isinstance(message, tuple):
-        return (_capitalized(message[0]), *message[1:]) if message else message
-    if isinstance(message, Template):
-        first = message.strings[0]
-        interpolations = list(message.interpolations)
-        if first:
-            first = first[:1].upper() + first[1:]
-        elif interpolations:
-            # The message starts with another message, such as a shared repair clause.
-            leading = interpolations[0]
-            interpolations[0] = Interpolation(
-                _capitalized(leading.value),
-                leading.expression,
-                leading.conversion,
-                leading.format_spec,
-            )
-        parts: list[str | Interpolation] = [first]
-        for interpolation, text in zip(interpolations, message.strings[1:], strict=True):
-            parts.extend((interpolation, text))
-        return Template(*parts)
-    return message
+def _capitalized(message: Template) -> Template:
+    first = message.strings[0]
+    return Template(first[:1].upper() + first[1:], *list(message)[1:])
 
 
 # ---- shared derived rules ---------------------------------------------------------------
