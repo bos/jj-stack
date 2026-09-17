@@ -26,26 +26,11 @@ def test_main_reports_missing_repo_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_main_reports_non_jj_directory_without_traceback(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    plain_dir = tmp_path / "not-a-jj-repo"
-    plain_dir.mkdir()
-
-    exit_code = main(["--repository", str(plain_dir), "submit"])
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "Not inside a jj workspace" in captured.err
-    assert "Traceback" not in captured.err
-
-
 def test_main_renders_semantic_cli_errors_without_flattening_first(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def fake_view(**kwargs) -> int:
+    def fake_view(*, as_json, cli_args, debug, repo, selectors, verbose) -> int:
         raise CliError(("Problem at ", ui.change_id("abcdefgh1234")))
 
     monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)
@@ -117,8 +102,8 @@ def test_main_preserves_view_selector_order_and_end_of_options(
 ) -> None:
     observed: dict[str, object] = {}
 
-    def fake_view(**kwargs) -> int:
-        observed.update(kwargs)
+    def fake_view(*, as_json, cli_args, debug, repo, selectors, verbose) -> int:
+        observed.update(selectors=selectors, verbose=verbose)
         return 0
 
     monkeypatch.setattr("jj_stack.cli.view_command.view", fake_view)

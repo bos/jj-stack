@@ -8,7 +8,6 @@ and diagnostics. Stack summaries in `submit`, `view`, and `list` link through th
 
 from __future__ import annotations
 
-import logging
 import re
 import sys
 from argparse import (
@@ -63,9 +62,7 @@ from jj_stack.errors import (
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.settings import read_jj_settings
 
-logger = logging.getLogger(__name__)
 _COLOR_CHOICES: tuple[RequestedColorMode, ...] = ("always", "never", "debug", "auto")
-_TOP_LEVEL_HELP_USAGE = "jj-stack [--help] [--color WHEN] [--version] [<command> ...]"
 _TOP_LEVEL_HELP_DESCRIPTION = """
 Create and update stacked GitHub pull requests from your `jj` changes.
 
@@ -147,21 +144,10 @@ _KNOWN_COMMANDS = frozenset(
     for entry in entries
     for name in (entry.name, *_COMMAND_ALIASES.get(entry.name, ()))
 )
-type _ArgSource = str | Callable[[Namespace], Any]
-
-
-_VIEW_HANDLER_ARGS = tuple(
-    name
-    for name, parameter in signature(view_command.view).parameters.items()
-    if parameter.kind is not parameter.VAR_KEYWORD
-)
 
 
 class _TopLevelArgumentParser(ArgumentParser):
     """ArgumentParser with custom grouped help for the top-level CLI."""
-
-    def format_usage(self) -> str:
-        return f"usage: {_TOP_LEVEL_HELP_USAGE}\n"
 
     def error(self, message: str) -> NoReturn:
         raise _cli_parse_error(message)
@@ -385,7 +371,7 @@ def build_parser() -> ArgumentParser:
         aliases=_COMMAND_ALIASES["view"],
         help_text=normalized_help_text(view_command.HELP),
         description_text=view_command.__doc__ or "",
-        handler=_forward_handler(view_command.view, *_VIEW_HANDLER_ARGS),
+        handler=_forward_handler(view_command.view),
     )
     view_parser.set_defaults(selectors=())
     add_help_argument(
@@ -436,12 +422,28 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="Output tracked stacks and orphaned PRs as JSON",
     )
-    _add_relink_parser(
+    relink_parser = _add_command_parser(
         subcommands,
         command="relink",
         help_text=normalized_help_text(relink_command.HELP),
         description_text=relink_command.__doc__ or "",
         handler=_forward_handler(relink_command.relink),
+    )
+    add_help_argument(relink_parser, "pr", metavar="PR", help="Pull request number or URL")
+    add_help_argument(
+        relink_parser,
+        "revset",
+        metavar="REVSET",
+        help="Local change to link to the pull request",
+    )
+    add_help_argument(
+        relink_parser,
+        "--replace-remote",
+        action="store_true",
+        help=(
+            t"Link even if the PR branch has changed unexpectedly; the next "
+            t"{ui.cmd('jj-stack submit')} overwrites it with the local change"
+        ),
     )
     merge_parser = _add_revset_command(
         subcommands,
@@ -520,12 +522,35 @@ def build_parser() -> ArgumentParser:
         metavar="NUMBER",
         help="Separate this GitHub stack even when no matching local stack is available",
     )
-    _add_checkout_parser(
+    checkout_parser = _add_command_parser(
         subcommands,
         command="checkout",
         help_text=normalized_help_text(checkout_command.HELP),
         description_text=checkout_command.__doc__ or "",
         handler=_forward_handler(checkout_command.checkout),
+    )
+    checkout_selector = checkout_parser.add_mutually_exclusive_group(required=False)
+    add_help_argument(
+        checkout_selector,
+        *_PR_OPTION_STRINGS,
+        dest="pr",
+        metavar="PR",
+        help="Pull request to check out, by number or URL",
+    )
+    add_help_argument(
+        checkout_selector,
+        "--revset",
+        help=(
+            t"Edit the head of a locally tracked stack without contacting GitHub; "
+            t"defaults to {ui.revset('@')} when the working-copy change is described and "
+            t"nonempty, otherwise {ui.revset('@-')}"
+        ),
+    )
+    add_help_argument(
+        checkout_selector,
+        "--pick",
+        action="store_true",
+        help="Interactively choose a local or GitHub stack to check out",
     )
 
     cleanup_parser = _add_revset_command(
@@ -720,10 +745,7 @@ def _find_subcommand_parser(
 
 def _print_cli_error(error: CliError) -> None:
     message = error_message(error)
-    if str(error).startswith("Error:"):
-        console.error(message, soft_wrap=True)
-    else:
-        console.error(("Error: ", message), soft_wrap=True)
+    console.error(("Error: ", message), soft_wrap=True)
     hint = error_hint(error)
     if hint is not None:
         console.stderr_output(
@@ -786,7 +808,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return a process exit code."""
 
     parser = build_parser()
-    cli_args = JjCliArgs()
     normalized_argv = list(sys.argv[1:] if argv is None else argv)
     try:
         cli_args, stripped_argv = _extract_config_overrides(normalized_argv)
@@ -868,7 +889,7 @@ def _add_revset_command(
     help_text: str,
     description_text: str,
     handler: Callable[[Namespace], int],
-    revset_help: ui.Message | str = "Revset selecting the stack to operate on",
+    revset_help: ui.Message | str,
 ) -> ArgumentParser:
     parser = _add_command_parser(
         subcommands,
@@ -880,79 +901,6 @@ def _add_revset_command(
     )
     add_help_argument(parser, "revset", nargs="?", help=revset_help)
     return parser
-
-
-def _add_relink_parser(
-    subcommands: _SubParsersAction[Any],
-    *,
-    command: str,
-    help_text: str,
-    description_text: str,
-    handler: Callable[[Namespace], int],
-) -> None:
-    parser = _add_command_parser(
-        subcommands,
-        command=command,
-        help_text=help_text,
-        description_text=description_text,
-        handler=handler,
-    )
-    add_help_argument(parser, "pr", metavar="PR", help="Pull request number or URL")
-    add_help_argument(
-        parser,
-        "revset",
-        metavar="REVSET",
-        help="Local change to link to the pull request",
-    )
-    add_help_argument(
-        parser,
-        "--replace-remote",
-        action="store_true",
-        help=(
-            t"Link even if the PR branch has changed unexpectedly; the next "
-            t"{ui.cmd('jj-stack submit')} overwrites it with the local change"
-        ),
-    )
-
-
-def _add_checkout_parser(
-    subcommands: _SubParsersAction[Any],
-    *,
-    command: str,
-    help_text: str,
-    description_text: str,
-    handler: Callable[[Namespace], int],
-) -> None:
-    parser = _add_command_parser(
-        subcommands,
-        command=command,
-        help_text=help_text,
-        description_text=description_text,
-        handler=handler,
-    )
-    selector = parser.add_mutually_exclusive_group(required=False)
-    add_help_argument(
-        selector,
-        *_PR_OPTION_STRINGS,
-        dest="pr",
-        metavar="PR",
-        help="Pull request to check out, by number or URL",
-    )
-    add_help_argument(
-        selector,
-        "--revset",
-        help=(
-            t"Edit the head of a locally tracked stack without contacting GitHub; "
-            t"defaults to {ui.revset('@')} when the working-copy change is described and "
-            t"nonempty, otherwise {ui.revset('@-')}"
-        ),
-    )
-    add_help_argument(
-        selector,
-        "--pick",
-        action="store_true",
-        help="Interactively choose a local or GitHub stack to check out",
-    )
 
 
 def _add_common_options(
@@ -1088,35 +1036,17 @@ def _extract_config_overrides(argv: Sequence[str]) -> tuple[JjCliArgs, list[str]
 
 def _forward_handler(
     function: Callable[..., int],
-    *fallback_arg_names: str,
-    **arg_sources: _ArgSource,
+    **arg_sources: str,
 ) -> Callable[[Namespace], int]:
     """Build a command handler that forwards argparse values as keyword arguments."""
 
-    parameters = signature(function).parameters
-    if any(parameter.kind is parameter.VAR_KEYWORD for parameter in parameters.values()):
-        parameter_names = fallback_arg_names
-    else:
-        parameter_names = tuple(
-            name
-            for name, parameter in parameters.items()
-            if parameter.kind is not parameter.VAR_KEYWORD
-        )
-    parameter_sources: dict[str, _ArgSource] = dict(arg_sources)
-    for name in parameter_names:
-        parameter_sources[name] = arg_sources.get(
-            name,
-            name,
-        )
+    parameter_sources = {
+        name: arg_sources.get(name, name) for name in signature(function).parameters
+    }
 
     def handler(args: Namespace) -> int:
         values = vars(args)
-        return function(
-            **{
-                name: source(args) if not isinstance(source, str) else values[source]
-                for name, source in parameter_sources.items()
-            }
-        )
+        return function(**{name: values[source] for name, source in parameter_sources.items()})
 
     return handler
 
@@ -1216,7 +1146,3 @@ def _rewrite_help_args(argv: list[str]) -> list[str]:
 
     tail = ["--all"] if "--all" in argv else []
     return [*globals_, "help", *tail]
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
