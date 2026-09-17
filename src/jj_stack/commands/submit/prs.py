@@ -148,12 +148,10 @@ async def _apply_draft_action(
         else t"Could not mark draft pull request {pr_number} ready for review for "
         t"{github_client.repo.full_name}"
     )
-    request = (
-        github_client.convert_pr_to_draft(pr_id=pr.node_id)
-        if action == "draft"
-        else github_client.mark_pr_ready_for_review(pr_id=pr.node_id)
+    return await _github_request(
+        github_client.set_pr_draft(pr_id=pr.node_id, draft=action == "draft"),
+        error_message=message,
     )
-    return await _github_request(request, error_message=message)
 
 
 def _reviewers_to_re_request(

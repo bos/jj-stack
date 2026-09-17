@@ -750,36 +750,18 @@ class GithubClient:
             error_context="GitHub pull request update response had invalid data",
         )
 
-    async def mark_pr_ready_for_review(
-        self,
-        *,
-        pr_id: str,
-    ) -> GithubPR:
+    async def set_pr_draft(self, *, pr_id: str, draft: bool) -> GithubPR:
+        mutation_name = "convertPullRequestToDraft" if draft else "markPullRequestReadyForReview"
+        response_name = (
+            "convert pull request to draft" if draft else "mark pull request ready for review"
+        )
         payload = await self._graphql_query(
-            _mark_pr_ready_for_review_mutation(),
-            response_name="mark pull request ready for review",
+            _pr_draft_mutation(mutation_name),
+            response_name=response_name,
             variables={"pullRequestId": pr_id},
         )
         return _graphql_mutation_pr_payload(
-            payload,
-            mutation_name="markPullRequestReadyForReview",
-            response_name="mark pull request ready for review",
-        )
-
-    async def convert_pr_to_draft(
-        self,
-        *,
-        pr_id: str,
-    ) -> GithubPR:
-        payload = await self._graphql_query(
-            _convert_pr_to_draft_mutation(),
-            response_name="convert pull request to draft",
-            variables={"pullRequestId": pr_id},
-        )
-        return _graphql_mutation_pr_payload(
-            payload,
-            mutation_name="convertPullRequestToDraft",
-            response_name="convert pull request to draft",
+            payload, mutation_name=mutation_name, response_name=response_name
         )
 
     async def base_branch_uses_merge_queue(self, *, branch: str) -> bool:
@@ -1458,33 +1440,17 @@ def _pr_history_query(
     )
 
 
-def _mark_pr_ready_for_review_mutation() -> str:
+def _pr_draft_mutation(mutation_name: str) -> str:
     return _with_pr_fields_fragment(
         _graphql_document(
-            """
-            mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
-              markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
-                pullRequest {
+            f"""
+            mutation SetPullRequestDraft($pullRequestId: ID!) {{
+              {mutation_name}(input: {{pullRequestId: $pullRequestId}}) {{
+                pullRequest {{
                   ...PullRequestFields
-                }
-              }
-            }
-            """
-        )
-    )
-
-
-def _convert_pr_to_draft_mutation() -> str:
-    return _with_pr_fields_fragment(
-        _graphql_document(
-            """
-            mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
-              convertPullRequestToDraft(input: {pullRequestId: $pullRequestId}) {
-                pullRequest {
-                  ...PullRequestFields
-                }
-              }
-            }
+                }}
+              }}
+            }}
             """
         )
     )
