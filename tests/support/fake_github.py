@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -24,7 +23,6 @@ _FAKE_GITHUB_GIT_ENV = {
     "GIT_COMMITTER_NAME": "Fake GitHub",
 }
 _GRAPHQL_VARIABLE_PATTERN = r"\$[_A-Za-z][_0-9A-Za-z]*"
-_GRAPHQL_STRING_ARGUMENT_PATTERN = rf'(?:{_GRAPHQL_VARIABLE_PATTERN}|"(?:[^"\\]|\\.)*")'
 _WEB_ORIGIN = "https://github.test"
 
 
@@ -78,7 +76,6 @@ class FakeGithubPR:
     def to_graphql_payload(self, repo: FakeGithubRepo) -> dict[str, object]:
         head_target = self._refresh_head_sha(repo)
         return {
-            "autoMergeRequest": {"enabledAt": "now"} if self.auto_merge_enabled else None,
             "baseRefName": self.base_ref,
             "body": self.body,
             "headRef": None if head_target is None else {"name": self.head_ref},
@@ -125,7 +122,6 @@ class FakeGithubPRReview:
     """Mutable pull request review state served by the fake API."""
 
     id: int
-    pr_number: int
     reviewer_login: str
     state: str
 
@@ -203,7 +199,6 @@ class FakeGithubIssueComment:
 
     body: str
     id: int
-    issue_number: int
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -232,7 +227,6 @@ class FakeGithubRepo:
     allow_rebase_merge: bool = False
     allow_squash_merge: bool = True
     merge_queue_enabled: bool = False
-    merge_queue_method: str = "squash"
     merge_queue: list[FakeQueueEntry] = field(default_factory=list)
     # The latest queue timeline event per PR, as the merge-progress query selects it.
     queue_events: dict[int, FakeQueueEvent] = field(default_factory=dict)
@@ -331,7 +325,7 @@ class FakeGithubRepo:
         else:
             self.merge_queue.remove(entry)
             self.update_pr_base(pr, base_ref=trunk)
-            self.apply_pr_merge(pr, merge_method=self.merge_queue_method)
+            self.apply_pr_merge(pr, merge_method="squash")
             self._rewrite_unqueued_stack_members_above(pr.number, base_ref=trunk)
 
     def run_merge_queue(self) -> None:
@@ -397,11 +391,7 @@ class FakeGithubRepo:
             "state": "QUEUED" if entry.phase == "queued" else "AWAITING_CHECKS",
             "estimatedTimeToMerge": 60 * position,
             "mergeQueue": {"entries": {"totalCount": len(visible)}},
-            "headCommit": (
-                None
-                if entry.group_commit is None
-                else {"oid": entry.group_commit, "statusCheckRollup": checks}
-            ),
+            "headCommit": None if entry.group_commit is None else {"statusCheckRollup": checks},
         }
 
     def queue_timeline_payload(self, pr_number: int) -> list[dict[str, object]]:
@@ -428,13 +418,7 @@ class FakeGithubRepo:
             "allow_squash_merge": self.allow_squash_merge,
             "default_branch": self.default_branch,
             "full_name": self.full_name,
-            "permissions": {
-                "admin": False,
-                "maintain": False,
-                "pull": True,
-                "push": self.push_permission,
-                "triage": False,
-            },
+            "permissions": {"push": self.push_permission},
         }
 
     def create_pr(
@@ -448,13 +432,9 @@ class FakeGithubRepo:
     ) -> FakeGithubPR:
         number = self.next_pr_number
         self.next_pr_number += 1
-        # Tests may construct a historical PR after deleting or without creating
-        # its source branch. Real GitHub still retains the PR's last head OID.
-        head_sha = self.ref_target(head_ref) or self.ref_target(base_ref)
+        head_sha = self.ref_target(head_ref)
         if head_sha is None:
-            raise AssertionError(
-                f"Fake GitHub branches {head_ref!r} and {base_ref!r} do not exist."
-            )
+            raise AssertionError(f"Fake GitHub branch {head_ref!r} does not exist.")
         pr = FakeGithubPR(
             base_ref=base_ref,
             body=body,
@@ -934,7 +914,6 @@ class FakeGithubRepo:
         self._require_issue_number(pr_number)
         review = FakeGithubPRReview(
             id=self.next_pr_review_id,
-            pr_number=pr_number,
             reviewer_login=reviewer_login,
             state=state,
         )
@@ -956,7 +935,6 @@ class FakeGithubRepo:
         comment = FakeGithubIssueComment(
             body=body,
             id=self.next_issue_comment_id,
-            issue_number=issue_number,
         )
         self.next_issue_comment_id += 1
         self.issue_comments.setdefault(issue_number, []).append(comment)
@@ -1416,8 +1394,6 @@ def _register_pr_routes(app: FastAPI, fake_state: FakeGithubState) -> None:
             pr,
             state=state,
         )
-        if state == "closed":
-            repo.refresh_pr_state(pr)
         return pr.to_payload(repo)
 
     @app.post(
@@ -1631,14 +1607,7 @@ def _stack_pr_payload(
     repo: FakeGithubRepo,
     pr_number: int,
 ) -> dict[str, object]:
-    pr = repo.prs.get(pr_number)
-    if pr is None:
-        return {
-            "head": {"ref": f"jj-stack/pull-{pr_number}", "sha": f"head-{pr_number}"},
-            "merged_at": None,
-            "number": pr_number,
-            "state": "open",
-        }
+    pr = repo.prs[pr_number]
     pr._refresh_head_sha(repo)
     return {
         "head": {"ref": pr.head_ref, "sha": pr.head_sha},
@@ -1793,11 +1762,7 @@ def _require_graphql_variable(payload: dict[str, object], key: str) -> str:
 
 
 def _resolve_graphql_string(token: str, variables: dict[str, object]) -> str:
-    """Resolve one GraphQL string argument, either a $variable or a JSON literal."""
-
-    if token.startswith("$"):
-        return _require_graphql_variable(variables, token[1:])
-    return json.loads(token)
+    return _require_graphql_variable(variables, token[1:])
 
 
 def _graphql_repo_payload(
@@ -1871,14 +1836,7 @@ def _graphql_repo_payload(
                 key=lambda candidate: candidate.number,
             )
             payload[alias] = {
-                "nodes": [
-                    _graphql_pr_payload(
-                        pr=pr,
-                        repo=repo,
-                        refreshed=True,
-                    )
-                    for pr in matching_prs
-                ][:first]
+                "nodes": [_graphql_pr_payload(pr=pr, repo=repo) for pr in matching_prs][:first]
             }
         return payload
 
@@ -1911,11 +1869,7 @@ def _graphql_repo_payload(
         if pr is None:
             payload[alias] = None
             continue
-        graphql_payload = _graphql_pr_payload(
-            pr=pr,
-            repo=repo,
-            refreshed=True,
-        )
+        graphql_payload = _graphql_pr_payload(pr=pr, repo=repo)
         if "comments(" in query:
             graphql_payload["comments"] = {
                 "nodes": [
@@ -1953,7 +1907,7 @@ def _graphql_branch_targets(
 ) -> dict[str, object]:
     payload: dict[str, object] = {}
     pattern = re.compile(
-        rf"^\s*(branch_\d+): ref\(qualifiedName: ({_GRAPHQL_STRING_ARGUMENT_PATTERN})\)",
+        rf"^\s*(branch_\d+): ref\(qualifiedName: ({_GRAPHQL_VARIABLE_PATTERN})\)",
         re.MULTILINE,
     )
     for match in pattern.finditer(query):
@@ -1982,8 +1936,8 @@ def _graphql_branch_targets_by_suffix(
     payload: dict[str, object] = {}
     pattern = re.compile(
         rf"^\s*(suffix_\d+): refs\(\s*(?:after: {_GRAPHQL_VARIABLE_PATTERN},\s*)?"
-        rf"first: 100,\s*query: ({_GRAPHQL_STRING_ARGUMENT_PATTERN}),\s*"
-        rf"refPrefix: ({_GRAPHQL_STRING_ARGUMENT_PATTERN})\s*\)",
+        rf"first: 100,\s*query: ({_GRAPHQL_VARIABLE_PATTERN}),\s*"
+        rf"refPrefix: ({_GRAPHQL_VARIABLE_PATTERN})\s*\)",
         re.MULTILINE,
     )
     heads = repo.branch_heads()
@@ -2009,14 +1963,7 @@ def _graphql_branch_targets_by_suffix(
     return payload
 
 
-def _graphql_pr_payload(
-    *,
-    pr: FakeGithubPR,
-    repo: FakeGithubRepo,
-    refreshed: bool = False,
-) -> dict[str, object]:
-    if not refreshed:
-        repo.refresh_pr_state(pr)
+def _graphql_pr_payload(*, pr: FakeGithubPR, repo: FakeGithubRepo) -> dict[str, object]:
     payload = pr.to_graphql_payload(repo)
     payload["reviewDecision"] = _graphql_review_decision(repo, pr.number)
     return payload
