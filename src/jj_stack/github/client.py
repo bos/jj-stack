@@ -1022,7 +1022,7 @@ class GithubClient:
         response_name: str,
     ) -> tuple[object, ...]:
         items: list[object] = []
-        next_path: str | None = path
+        next_path: str | None = f"{path}?per_page={PR_PAGE_SIZE}"
 
         while next_path is not None:
             response = await self._request("GET", next_path)
