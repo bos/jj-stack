@@ -73,7 +73,7 @@ def test_partial_rebase_merge_preserves_surviving_ids_and_reviews(machine: Stack
 @pytest.mark.parametrize("kind", ["pr_base_retargeted", "remote_branch_deleted"])
 @given(data=st.data())
 @settings(max_examples=1, deadline=None)
-def test_generated_drift_leaves_a_queued_stack_available_for_completion(
+def test_waiting_for_another_stack_completes_queued_prs_despite_drift_above_them(
     kind: Drift,
     data: st.DataObject,
 ) -> None:
@@ -82,7 +82,11 @@ def test_generated_drift_leaves_a_queued_stack_available_for_completion(
         machine.start(size=3, submitted=True, queue=True)
         machine.enqueue_path(0, 2)
         machine.server_change(kind, data)
-        assert machine.run_queue(None) == ("c1", "c2")
+        machine.new_stack(1)
+        machine.submit_path(1)
+        machine.approve(machine.paths[1])
+        machine.wait_for_queue(1, 1, None)
+        assert machine.merged(machine.paths[0]) == ("c1", "c2")
         machine.model_matches()
     finally:
         machine.teardown()

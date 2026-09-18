@@ -303,14 +303,20 @@ class StackMachine(RuleBasedStateMachine):
         ]
         return groups == [numbers] if groups else len(numbers) < 2
 
-    def outside(self, selected: tuple[str, ...]) -> dict[str, object]:
+    def outside(
+        self, selected: tuple[str, ...], *, advancing: tuple[str, ...] = ()
+    ) -> dict[str, object]:
         refs = remote_refs(self.fake.git_dir)
         state = self.store.load()
         return {
             label: (
                 state.prs.get(self.ids[label]),
-                refs.get(f"refs/heads/{record.pr_identity.head_ref}"),
-                pr_state(self.pr(label)),
+                None
+                if label in advancing
+                else (
+                    refs.get(f"refs/heads/{record.pr_identity.head_ref}"),
+                    pr_state(self.pr(label)),
+                ),
             )
             for label, record in self.submitted.items()
             if label not in selected
@@ -714,6 +720,15 @@ class StackMachine(RuleBasedStateMachine):
         self.land(landed)
         return landed
 
+    def queue_scope(self) -> tuple[str, ...]:
+        """PRs the queue can merge or rewrite, including unqueued members above them."""
+
+        numbers = {entry.pr_number for entry in self.fake.merge_queue}
+        for members in self.fake.github_stacks.values():
+            if numbers.intersection(members):
+                numbers.update(members)
+        return tuple(label for label in self.submitted if self.pr(label).number in numbers)
+
     def wait_for_queue(self, index: int, count: int, failing: int | None) -> None:
         """Merge through the queue and wait; the fake advances it on each observation."""
 
@@ -726,8 +741,9 @@ class StackMachine(RuleBasedStateMachine):
         if failing is None:
             self.merge_path(index, count, None)
         else:
-            # The merged prefix lands; GitHub leaves the removed PRs at their submitted heads
-            # and bases; nothing else on GitHub moves, and locally only the fetch of trunk does.
+            # The merged prefix lands; removed PRs keep their submitted heads and bases.
+            # Earlier queue entries can also land and rewrite their unqueued descendants.
+            advancing = {f"refs/heads/{self.pr(label).head_ref}" for label in self.queue_scope()}
             local = self.snapshot()
             stack_before = self.stack_commits(path)
             refs = remote_refs(self.fake.git_dir)
@@ -739,7 +755,9 @@ class StackMachine(RuleBasedStateMachine):
             after = self.snapshot()
             assert (after[0], *after[3:7]) == (local[0], *local[3:7])
             assert self.stack_commits(path) == stack_before
-            refs.pop("refs/heads/main")
+            refs = {
+                k: v for k, v in refs.items() if k != "refs/heads/main" and k not in advancing
+            }
             assert {k: v for k, v in remote_refs(self.fake.git_dir).items() if k in refs} == refs
             self.land(labels[:failing])
             for label in labels[failing:]:
@@ -936,7 +954,8 @@ class StackMachine(RuleBasedStateMachine):
         path = self.paths[index]
         boundary = self.submitted[path[count - 1]]
         scope = self.recovery_scope(path)
-        outside = self.outside(scope)
+        advancing = self.queue_scope() if method is None else ()
+        outside = self.outside(scope, advancing=advancing)
         blocked = any(
             self.dependents(label, excluding=path)
             for label in (*path[:count], *scope[len(path) :])
@@ -956,7 +975,7 @@ class StackMachine(RuleBasedStateMachine):
         )
         self.land(path[:count])
         self.accept_merge(index, count)
-        assert self.outside(scope) == outside
+        assert self.outside(scope, advancing=advancing) == outside
 
     def accept_merge(self, index: int, count: int) -> None:
         path = self.paths[index]
