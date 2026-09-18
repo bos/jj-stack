@@ -13,8 +13,10 @@ from jj_stack.identifiers import short_change_id
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import TrackingStore
 
+from ..support.fake_github import _complete_stack_merge
 from ..support.integration_helpers import (
     commit_file,
+    expose_pr_branch_namespace,
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     remote_refs,
@@ -1236,3 +1238,40 @@ def test_sync_all_finishes_exact_prs_after_an_external_fast_forward(
     assert state_store.load().prs == {}
     assert all(fake_repo.ref_target(branch) is None for branch in identities.values())
     assert fake_repo.ref_target("main") == second.commit_id
+
+
+def test_sync_of_a_change_the_fetch_removed_finishes_the_completed_merge(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    # After `merge --no-wait`, the documented follow-up is `sync <head>`. When the PR branches
+    # are visible as bookmarks and GitHub deletes them on merge, the fetch inside sync abandons
+    # the merged changes before sync can select the stack.
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.delete_branch_on_merge = True
+    fake_repo.github_stacks = {7: (1, 2)}
+    expose_pr_branch_namespace(repo)
+    state_store = TrackingStore.for_repo(repo)
+    stack = selected_stack(repo)
+    sync_head = short_change_id(stack.head.change_id)
+
+    assert run_main(repo, config_path, "merge", "--no-wait") == 0
+    requested = capsys.readouterr()
+    assert f"jj-stack sync {sync_head}" in requested.out
+    _complete_stack_merge(fake_repo, fake_repo.stack_merge_operations[2])
+
+    exit_code = run_main(repo, config_path, "sync", sync_head)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert read_remote_ref(fake_repo.git_dir, "main") == fake_repo.prs[2].merge_commit_sha
+    assert state_store.load().prs == {}
+    assert not any(
+        ref.startswith("refs/heads/jj-stack/") for ref in remote_refs(fake_repo.git_dir)
+    )
+    copies = JjClient(repo).query_commits_by_change_ids(
+        tuple(change.change_id for change in stack.changes)
+    )
+    assert all(not changes for changes in copies.values())

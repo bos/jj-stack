@@ -33,7 +33,10 @@ from pathlib import Path
 import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
-from jj_stack.commands.cleanup.command import cleanup_tracked_prs
+from jj_stack.commands.cleanup.command import (
+    cleanup_stack_without_local_copies,
+    cleanup_tracked_prs,
+)
 from jj_stack.commands.submit.render import print_selected_line
 from jj_stack.commands.sync_apply import apply_pr_finishes, apply_selected_convergence
 from jj_stack.concurrency import wait_for_read_tasks
@@ -77,6 +80,7 @@ from jj_stack.stack.preparation import (
     PreparedLocalStack,
     prepare_local_stack,
 )
+from jj_stack.stack.selected import is_change_id_prefix
 from jj_stack.stack.selection import resolve_linked_change_for_pr
 from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock
@@ -130,14 +134,50 @@ async def _sync_async(
                 jj_client=context.jj_client, pr_reference=pr, revset=None
             )
             console.note(note)
-        return await converge_selected_stack(
+        try:
+            prepared = _prepare_selected_stack(
+                context=context,
+                containing_change_id=containing_change_id,
+                fetch_remote_state=True,
+                revset=revset,
+            )
+        except CliError:
+            gone = _tracked_change_without_local_copy(context, containing_change_id or revset)
+            if gone is None:
+                raise
+        else:
+            return await converge_prepared_stack(
+                context=context,
+                dry_run=dry_run,
+                github=github,
+                prepared=prepared,
+                print_selected=revset is None,
+            )
+        return await cleanup_stack_without_local_copies(
+            change_id=gone,
             context=context,
-            github=github,
-            containing_change_id=containing_change_id,
             dry_run=dry_run,
-            print_selected=revset is None,
-            revset=revset,
+            github_client=github,
+            github_target=target,
         )
+
+
+def _tracked_change_without_local_copy(
+    context: CommandContext, selector: str | None
+) -> ChangeId | None:
+    """The one tracked change a change-ID selector names, when jj shows no commit for it."""
+
+    if selector is None or not is_change_id_prefix(selector):
+        return None
+    matches = [
+        change_id
+        for change_id in context.state_store.load().prs
+        if change_id.startswith(selector)
+    ]
+    if len(matches) != 1:
+        return None
+    copies = context.jj_client.query_commits_by_change_ids(matches)[matches[0]]
+    return None if copies else matches[0]
 
 
 async def _run_all_convergence(
@@ -253,13 +293,49 @@ async def converge_selected_stack(
     revset: str | None,
     trunk_branch: str | None = None,
 ) -> int:
+    prepared = _prepare_selected_stack(
+        context=context,
+        containing_change_id=containing_change_id,
+        fetch_remote_state=fetch_remote_state,
+        revset=revset,
+    )
+    return await converge_prepared_stack(
+        context=context,
+        dry_run=dry_run,
+        github=github,
+        github_repo=github_repo,
+        prepared=prepared,
+        print_selected=print_selected,
+        trunk_branch=trunk_branch,
+    )
+
+
+def _prepare_selected_stack(
+    *,
+    context: CommandContext,
+    containing_change_id: str | None,
+    fetch_remote_state: bool,
+    revset: str | None,
+) -> PreparedLocalStack:
     with console.spinner(description="Inspecting local stack"):
-        prepared = prepare_local_stack(
+        return prepare_local_stack(
             containing_change_id=containing_change_id,
             context=context,
             fetch_remote_state=fetch_remote_state,
             revset=revset,
         )
+
+
+async def converge_prepared_stack(
+    *,
+    context: CommandContext,
+    dry_run: bool,
+    github: GithubClient,
+    github_repo: GithubRepo | None = None,
+    prepared: PreparedLocalStack,
+    print_selected: bool = False,
+    trunk_branch: str | None = None,
+) -> int:
     if print_selected and prepared.stack.changes:
         head = prepared.stack.head
         print_selected_line(head.change_id, head.subject)

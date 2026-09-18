@@ -448,8 +448,10 @@ work reached this repo's trunk:
 `sync` may use either result. `sync --all` uses each rewritten merge result to select and
 reconcile its affected local paths; it does not apply one PR's evidence to unrelated work. It
 continues with independent stacks when one is blocked. If no local copy remains, it uses that
-evidence only for ordinary cleanup. A native GitHub stack rebase without a merge requires `sync`
-for that stack; `sync --all` discovers work from merge evidence.
+evidence only for ordinary cleanup. A `sync` whose selected change has a saved link but no
+visible commit after the fetch runs only cleanup for the merged PRs of that change's GitHub
+stack. A native GitHub stack rebase without a merge requires `sync` for that stack; `sync --all`
+discovers work from merge evidence.
 
 When an unmerged local change sits below a submitted change whose submitted commit or merge result
 is on trunk, `sync` stops without mutation. Rebasing would silently decide whether that local
