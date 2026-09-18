@@ -288,5 +288,10 @@ def _accepted_result(
     return MergeResult(
         actions=merge.actions(action),
         final_trunk_commit_id=result.details.sha,
+        merged_change_ids=(
+            tuple(change.change_id for change in merge.planned)
+            if result.status == "merged"
+            else ()
+        ),
         pending=result.status if result.status in {"pending", "enqueued"} else None,
     )

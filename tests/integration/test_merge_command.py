@@ -20,6 +20,7 @@ from ..support.fake_github import (
 from ..support.integration_helpers import (
     commit_file,
     delete_remote_ref,
+    expose_pr_branch_namespace,
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
     patch_github_client_builders,
@@ -409,6 +410,38 @@ def test_stack_rewriting_merge_automatically_removes_pre_merge_copies(
         )
     else:
         assert all(not changes for changes in copies.values())
+
+
+def test_merge_finishes_with_cleanup_when_the_fetch_removes_the_merged_changes(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    # A clone that fetches the PR branch namespace shows the PR branches as bookmarks. When
+    # GitHub deletes those branches after the merge, jj abandons their commits during the
+    # follow-up fetch, so nothing is left for sync to remove.
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.delete_branch_on_merge = True
+    fake_repo.github_stacks = {7: (1, 2)}
+    expose_pr_branch_namespace(repo)
+    state_store = TrackingStore.for_repo(repo)
+    stack = selected_stack(repo)
+
+    exit_code = run_main(repo, config_path, "merge")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert "Do not run" not in captured.err
+    assert read_remote_ref(fake_repo.git_dir, "main") == fake_repo.prs[2].merge_commit_sha
+    assert state_store.load().prs == {}
+    assert not any(
+        ref.startswith("refs/heads/jj-stack/") for ref in remote_refs(fake_repo.git_dir)
+    )
+    copies = JjClient(repo).query_commits_by_change_ids(
+        tuple(change.change_id for change in stack.changes)
+    )
+    assert all(not changes for changes in copies.values())
 
 
 def test_stack_merge_rejection_is_atomic_and_names_the_next_step(

@@ -42,6 +42,7 @@ class MergeResult:
     actions: tuple[MergeAction, ...]
     pending: Literal["pending", "enqueued"] | None = None
     final_trunk_commit_id: CommitId | None = None
+    merged_change_ids: tuple[ChangeId, ...] = ()
 
     @property
     def applied(self) -> bool:

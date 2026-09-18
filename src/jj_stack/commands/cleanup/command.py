@@ -245,6 +245,47 @@ async def cleanup_tracked_prs(
     return result
 
 
+async def cleanup_stack_without_local_copies(
+    *,
+    change_id: ChangeId,
+    context: CommandContext,
+    dry_run: bool,
+    github_client: GithubClient,
+    github_target: GithubTarget,
+) -> int:
+    """Clean up the merged PRs of a tracked change's GitHub stack once its local copies are gone.
+
+    jj abandons the old targets of remote refs that a fetch deletes or moves. When GitHub deleted
+    the merged PR branches and they were visible as bookmarks, the fetch removed the local copies
+    itself, leaving only the saved links to reconcile.
+    """
+
+    state = context.state_store.load()
+    pr_number = state.prs[change_id].pr_identity.pr_number
+    console.output(
+        t"Change {ui.change_id(change_id)} has no visible commit, so there is no local stack to "
+        t"update; cleaning up its merged pull requests."
+    )
+    with console.spinner(description="Inspecting GitHub stacks"):
+        stacks = await observe_github_stacks(github=github_client)
+    stack = next((item for item in stacks if pr_number in item.pr_numbers), None)
+    selected = {pr_number}
+    if stack is not None:
+        selected.update(pr.number for pr in stack.historical_prs)
+    result = await cleanup_tracked_prs(
+        change_ids=tuple(
+            linked_change_id
+            for linked_change_id, tracked in state.prs.items()
+            if tracked.pr_identity.pr_number in selected
+        ),
+        context=context,
+        dry_run=dry_run,
+        github_client=github_client,
+        github_target=github_target,
+    )
+    return 1 if any(action.status == "blocked" for action in result.actions) else 0
+
+
 def _prepare_cleanup(
     *,
     close: bool,

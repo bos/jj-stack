@@ -387,8 +387,9 @@ method is not part of that identity because the queue chooses it. Queue waiting 
 polling a direct merge request does. A rejection leaves local changes unchanged.
 
 Automatic reconciliation identifies the containing stack by the full change ID of the head
-resolved before the merge request. It does not reinterpret the original revset
-after fetching the changed trunk.
+resolved before the merge request. It does not reinterpret the original revset after fetching
+the changed trunk. If the fetch leaves that head with no visible commit, the local copies are
+already gone, and the follow-up runs only cleanup for the merged PRs.
 
 GitHub merge success and local reconciliation are separate outcomes. If GitHub completes the
 merge but the automatic sync stops, `merge` returns the sync failure status and says that the
