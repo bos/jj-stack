@@ -12,6 +12,7 @@ from rich.text import Text
 
 from jj_stack.errors import CliError
 from jj_stack.jj.cli_args import JjCliArgs
+from jj_stack.timing import timed
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,13 +49,14 @@ def read_jj_settings(*, cwd: Path, cli_args: JjCliArgs) -> JjSettings:
         "list",
         "--include-defaults",
     ]
-    completed = subprocess.run(
-        command,
-        capture_output=True,
-        check=False,
-        cwd=cwd,
-        encoding="utf-8",
-    )
+    with timed("jj", "jj config list --include-defaults"):
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            cwd=cwd,
+            encoding="utf-8",
+        )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
         raise CliError(f"Could not read jj config: {detail}")

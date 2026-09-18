@@ -43,6 +43,7 @@ from rich.text import Text
 import jj_stack
 import jj_stack.ui as ui
 from jj_stack.jj.colors import JjColorWhen, SemanticStyles, semantic_styles
+from jj_stack.timing import timed
 
 ActionStatus = Literal["applied", "blocked", "planned", "skipped"]
 
@@ -522,17 +523,18 @@ def note(*objects: ConsoleObject, **kwargs) -> None:
 def spinner(*, description: str, report_changes: bool = False) -> Generator[SpinnerLike]:
     """Render a transient spinner, optionally logging changed status when stderr is redirected."""
 
-    if not _stream_supports_live_progress(_STDERR_STREAM):
-        handle = _TextSpinner() if report_changes else _NullSpinner()
-        handle.update(description)
-        yield handle
-        return
+    with timed("phase", description):
+        if not _stream_supports_live_progress(_STDERR_STREAM):
+            handle = _TextSpinner() if report_changes else _NullSpinner()
+            handle.update(description)
+            yield handle
+            return
 
-    progress_console = _progress_console(
-        stream=_STDERR_STREAM, color_mode=rich_color_mode(_EFFECTIVE_COLOR)
-    )
-    with progress_console.status(description) as status:
-        yield _RichSpinnerHandle(status=status)
+        progress_console = _progress_console(
+            stream=_STDERR_STREAM, color_mode=rich_color_mode(_EFFECTIVE_COLOR)
+        )
+        with progress_console.status(description) as status:
+            yield _RichSpinnerHandle(status=status)
 
 
 @contextmanager

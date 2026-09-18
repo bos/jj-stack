@@ -22,6 +22,7 @@ from collections.abc import Callable, Sequence
 from contextlib import contextmanager, suppress
 from inspect import signature
 from pathlib import Path
+from time import perf_counter
 from typing import Any, NoReturn, SupportsIndex
 
 import jj_stack.bootstrap as bootstrap
@@ -37,8 +38,9 @@ import jj_stack.commands.sync as sync_command
 import jj_stack.commands.unstack as unstack_command
 import jj_stack.commands.view as view_command
 import jj_stack.console as console
+import jj_stack.timing as timing
 import jj_stack.ui as ui
-from jj_stack import __version__
+from jj_stack import PROCESS_START, __version__
 from jj_stack.cli_help import (
     HelpCommand,
     add_help_argument,
@@ -806,6 +808,7 @@ def _color_arg_from_argv(argv: Sequence[str]) -> RequestedColorMode | None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return a process exit code."""
 
+    imports_seconds = perf_counter() - PROCESS_START
     parser = build_parser()
     normalized_argv = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -820,7 +823,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     effective_color = "never" if args.command == "in-use" else args.color
     try:
         with configured_console(color=effective_color, time_output=args.time_output):
-            with _time_output(enabled=args.time_output):
+            with _time_output(enabled=args.time_output, imports_seconds=imports_seconds):
                 handler = args.handler
                 try:
                     return handler(args)
@@ -959,7 +962,10 @@ def _add_common_options(
         "--time-output",
         action="store_true",
         default=SUPPRESS if suppress_defaults else False,
-        help="Prefix each output line with elapsed seconds",
+        help=(
+            "Prefix each output line with elapsed seconds and report how long each jj, git, "
+            "gh, and GitHub API call took"
+        ),
     )
 
 
@@ -1062,7 +1068,7 @@ def _completion_handler(args: Namespace) -> int:
 
 
 @contextmanager
-def _time_output(*, enabled: bool):
+def _time_output(*, enabled: bool, imports_seconds: float):
     if not enabled:
         yield
         return
@@ -1071,6 +1077,7 @@ def _time_output(*, enabled: bool):
     try:
         yield
     finally:
+        timing.logger.info(timing.summary(imports_seconds=imports_seconds))
         bootstrap.time_output_active = False
 
 

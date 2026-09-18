@@ -87,6 +87,11 @@ level = "INFO"
 
 `level` accepts a Python logging level name such as `DEBUG`, `INFO`, or `WARNING`.
 
+To see where a command spends its time, pass `--time-output`. It prefixes each output line with
+the seconds elapsed since startup, logs every jj, git, and `gh` subprocess and every GitHub API
+request with its duration as it finishes, and ends with one line totalling them by kind.
+Concurrent GitHub requests overlap, so their total can exceed the wall time.
+
 ## Invoke it as `jj stack`
 
 Add a command alias to your `jj` configuration:

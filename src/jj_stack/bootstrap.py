@@ -20,6 +20,7 @@ from jj_stack.jj.client import JjClient
 from jj_stack.jj.settings import read_jj_settings
 from jj_stack.pr_branch_namespace import install_pr_branch_namespace
 from jj_stack.state.store import TrackingStore
+from jj_stack.timing import timed
 
 _MINIMUM_JJ_VERSION = (0, 45, 1)
 _jj_version_verified = False
@@ -94,6 +95,9 @@ def configure_logging(*, debug: bool, configured_level: str) -> None:
         handler.setFormatter(formatter)
     app_level = logging.DEBUG if debug else root_level
     logging.getLogger("jj_stack").setLevel(app_level)
+    logging.getLogger("jj_stack.timing").setLevel(
+        logging.DEBUG if time_output_active else logging.NOTSET
+    )
     logging.getLogger("httpx2").setLevel(logging.WARNING)
     logging.getLogger("httpcore2").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
@@ -133,12 +137,13 @@ def check_jj_version() -> None:
     if _jj_version_verified:
         return
     try:
-        completed = subprocess.run(
-            ["jj", "--version"],
-            capture_output=True,
-            check=False,
-            text=True,
-        )
+        with timed("jj", "jj --version"):
+            completed = subprocess.run(
+                ["jj", "--version"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
     except FileNotFoundError as error:
         raise CliError(t"{ui.cmd('jj')} is not installed or is not on PATH.") from error
 

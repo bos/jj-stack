@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Sequence
 from email.utils import parsedate_to_datetime
@@ -30,6 +31,7 @@ from jj_stack.models.github import (
     GithubStackMergeSubmission,
 )
 from jj_stack.models.github_details import GithubCheck, GithubPRMergeDetails, GithubReviewThread
+from jj_stack.timing import timed
 
 logger = logging.getLogger(__name__)
 GITHUB_API_BASE_URL = "https://api.github.com"
@@ -954,11 +956,12 @@ class GithubClient:
         attempt = 0
         while True:
             try:
-                response = await self._client.request(
-                    method,
-                    path,
-                    json=json,
-                )
+                with timed("github", _request_label(method, path, json, attempt=attempt)):
+                    response = await self._client.request(
+                        method,
+                        path,
+                        json=json,
+                    )
             except httpx2.RequestError as error:
                 raise GithubClientError(f"could not reach GitHub: {error}") from error
 
@@ -1079,6 +1082,18 @@ def _expect_success(response: httpx2.Response) -> None:
             rate_limit_reset_seconds=reset_seconds,
             status_code=error.response.status_code,
         ) from error
+
+
+_GRAPHQL_OPERATION = re.compile(r"\b(?:query|mutation)\s+(\w+)")
+
+
+def _request_label(
+    method: str, path: str, json: dict[str, object] | None, *, attempt: int
+) -> str:
+    query = json.get("query") if json is not None else None
+    operation = _GRAPHQL_OPERATION.search(query) if isinstance(query, str) else None
+    label = f"{method} {path}" if operation is None else f"{method} {path} {operation.group(1)}"
+    return label if attempt == 0 else f"{label} retry {attempt}"
 
 
 def _retry_after_seconds(*, attempt: int, response: httpx2.Response) -> float | None:

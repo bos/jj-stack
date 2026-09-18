@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import subprocess
 
+from jj_stack.timing import timed
+
 
 def github_token_from_env() -> str | None:
     return os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -18,12 +20,13 @@ def github_token() -> str | None:
 
 def _github_token_from_gh_cli() -> str | None:
     try:
-        completed = subprocess.run(
-            ["gh", "auth", "token"],
-            capture_output=True,
-            check=False,
-            text=True,
-        )
+        with timed("gh", "gh auth token"):
+            completed = subprocess.run(
+                ["gh", "auth", "token"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
     except FileNotFoundError:
         return None
     if completed.returncode != 0:

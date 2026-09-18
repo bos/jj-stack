@@ -33,6 +33,7 @@ from jj_stack.jj.settings import JjSettings
 from jj_stack.models.git import GitRemote
 from jj_stack.models.stack import LocalCommit
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace
+from jj_stack.timing import timed
 
 QUERY_BATCH_SIZE = 200
 
@@ -1145,15 +1146,16 @@ class JjClient:
         return_stderr: bool = False,
     ) -> str:
         try:
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                check=False,
-                cwd=self._repo_root,
-                encoding="utf-8",
-                errors="replace" if lossy_text else "strict",
-                text=True,
-            )
+            with timed(command[0], _redact_http_url_userinfo(shlex.join(command))):
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    check=False,
+                    cwd=self._repo_root,
+                    encoding="utf-8",
+                    errors="replace" if lossy_text else "strict",
+                    text=True,
+                )
         except FileNotFoundError as error:
             raise JjCommandError(missing_tool_message) from error
 
