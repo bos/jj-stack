@@ -414,25 +414,13 @@ def test_github_client_fails_the_whole_stack_listing_on_an_unexpected_payload() 
 
 
 def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
-    request_sizes: list[int] = []
+    queries: list[str] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == "/graphql"
         payload = json.loads(request.content.decode("utf-8"))
         assert payload["variables"] == {"owner": "octo-org", "repo": "stacked-prs"}
-        request_sizes.append(payload["query"].count("pullRequest(number:"))
-        if len(request_sizes) == 1:
-            assert "pr_7: pullRequest(number: 7)" in payload["query"]
-            assert "pr_9: pullRequest(number: 9)" in payload["query"]
-            assert "pr_11: pullRequest(number: 11)" in payload["query"]
-            assert "mergeQueueEntry" in payload["query"]
-            assert "estimatedTimeToMerge" in payload["query"]
-            assert "headCommit" in payload["query"]
-            assert "checkRunCountsByState" in payload["query"]
-            assert (
-                "ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT" in payload["query"]
-            )
-            assert "statusCheckRollup" in payload["query"]
+        queries.append(payload["query"])
         return httpx2.Response(
             200,
             json={
@@ -541,7 +529,17 @@ def test_github_client_batches_pr_lookup_by_number_with_graphql() -> None:
         "passed",
         True,
     )
-    assert request_sizes == [25, 2]
+    first_chunk = next(query for query in queries if "pr_7: pullRequest(number: 7)" in query)
+    assert "pr_9: pullRequest(number: 9)" in first_chunk
+    assert "pr_11: pullRequest(number: 11)" in first_chunk
+    assert "mergeQueueEntry" in first_chunk
+    assert "estimatedTimeToMerge" in first_chunk
+    assert "headCommit" in first_chunk
+    assert "checkRunCountsByState" in first_chunk
+    assert "ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT" in first_chunk
+    assert "statusCheckRollup" in first_chunk
+    assert sum(query.count("pullRequest(number:") for query in queries) == 27
+    assert len(queries) > 1
 
 
 def test_github_client_observes_exact_and_suffix_matched_branch_targets() -> None:

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from email.utils import parsedate_to_datetime
 from itertools import batched
 from math import ceil
@@ -16,6 +16,7 @@ from typing import Literal
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from jj_stack.concurrency import DEFAULT_BOUNDED_CONCURRENCY, wait_for_read_tasks
 from jj_stack.errors import EXIT_GITHUB, SummarizedError
 from jj_stack.github.auth import github_token
 from jj_stack.github.resolution import GithubRepoAddress
@@ -37,7 +38,9 @@ logger = logging.getLogger(__name__)
 GITHUB_API_BASE_URL = "https://api.github.com"
 
 type RateLimitKind = Literal["primary", "secondary"]
-_GRAPHQL_PR_BATCH_SIZE = 25
+# GitHub answers a query in time roughly proportional to its pull request aliases, so
+# lookups split their inputs into small chunks that `_query_chunks` runs together.
+_GRAPHQL_PR_BATCH_SIZE = 8
 # GitHub's largest page.
 PR_PAGE_SIZE = 100
 
@@ -288,7 +291,8 @@ class GithubClient:
 
         ordered = tuple(dict.fromkeys(branches))
         targets: dict[str, CommitId] = {}
-        for chunk in batched(ordered, _GRAPHQL_PR_BATCH_SIZE, strict=False):
+
+        async def query_chunk(chunk: tuple[str, ...]) -> None:
             query, branch_variables = _branch_targets_query(chunk)
             payload = await self._graphql_query(
                 query,
@@ -314,6 +318,8 @@ class GithubClient:
                         "GitHub branch target lookup returned a different branch."
                     )
                 targets[branch] = target
+
+        await _query_chunks(ordered, query_chunk)
         return targets
 
     async def find_branch_targets_by_suffix(
@@ -326,7 +332,8 @@ class GithubClient:
 
         ordered = tuple(dict.fromkeys(suffixes))
         targets: dict[str, CommitId] = {}
-        for chunk in batched(ordered, _GRAPHQL_PR_BATCH_SIZE, strict=False):
+
+        async def query_chunk(chunk: tuple[str, ...]) -> None:
             pending: tuple[tuple[str, str | None], ...] = tuple(
                 (suffix, None) for suffix in chunk
             )
@@ -360,6 +367,8 @@ class GithubClient:
                     if (cursor := connection.page_info.next_cursor) is not None:
                         next_page.append((suffix, cursor))
                 pending = tuple(next_page)
+
+        await _query_chunks(ordered, query_chunk)
         return targets
 
     async def list_stacks(self) -> tuple[GithubStack, ...]:
@@ -443,7 +452,8 @@ class GithubClient:
             return {}
 
         results: dict[int, GithubPR | None] = {}
-        for chunk in batched(numbers, _GRAPHQL_PR_BATCH_SIZE, strict=False):
+
+        async def query_chunk(chunk: tuple[int, ...]) -> None:
             query = _prs_by_number_query(chunk, merge_progress=merge_progress)
             payload = await self._graphql_query(
                 query,
@@ -469,6 +479,8 @@ class GithubClient:
                         f"payload for #{number}"
                     ),
                 )
+
+        await _query_chunks(numbers, query_chunk)
         return results
 
     async def get_open_prs_by_head_refs(
@@ -498,7 +510,8 @@ class GithubClient:
         kind = "base" if base else "head"
         response_name = f"pull request {kind} lookup"
         results: dict[str, tuple[GithubPR, ...]] = {}
-        for chunk in batched(refs, _GRAPHQL_PR_BATCH_SIZE, strict=False):
+
+        async def query_chunk(chunk: tuple[str, ...]) -> None:
             aliases = {f"{kind}_{index}": ref for index, ref in enumerate(chunk)}
             query, ref_variables = _prs_by_ref_query(aliases, base=base)
             payload = await self._graphql_query(
@@ -517,6 +530,8 @@ class GithubClient:
                     expected_head_label=(None if base else f"{self._repo.owner}:{ref}"),
                     response_name=response_name,
                 )
+
+        await _query_chunks(refs, query_chunk)
         return results
 
     async def create_pr(
@@ -596,7 +611,8 @@ class GithubClient:
         revisions_by_pr: dict[int, tuple[GithubPRRevision, ...]] = {
             number: () for number in numbers
         }
-        for chunk in batched(numbers, _GRAPHQL_PR_BATCH_SIZE, strict=False):
+
+        async def query_chunk(chunk: tuple[int, ...]) -> None:
             pending_comments: dict[int, str | None] = (
                 {number: None for number in chunk} if markers else {}
             )
@@ -648,6 +664,8 @@ class GithubClient:
                     if number in pending_revisions:
                         revisions_by_pr[number] = _revisions_from_graphql(history)
                         del pending_revisions[number]
+
+        await _query_chunks(numbers, query_chunk)
         return comments_by_marker, revisions_by_pr
 
     async def get_pr_merge_details(
@@ -656,7 +674,8 @@ class GithubClient:
         """Batch merge evidence and applicable rules for the observed PR heads and bases."""
 
         results: dict[int, GithubPRMergeDetails | None] = {}
-        for chunk in batched(prs, _GRAPHQL_PR_BATCH_SIZE, strict=False):
+
+        async def query_chunk(chunk: tuple[GithubPR, ...]) -> None:
             heads = {pr.number: pr.head.sha for pr in chunk}
             bases = {pr.number: pr.base.ref for pr in chunk}
             merge_commits: dict[int, CommitId | None] = {}
@@ -751,6 +770,8 @@ class GithubClient:
                         checks=prior.checks + checks,
                         merge_checks=prior.merge_checks + merge_checks,
                     )
+
+        await _query_chunks(prs, query_chunk)
         return results
 
     async def create_issue_comment(
@@ -1082,6 +1103,28 @@ def _expect_success(response: httpx2.Response) -> None:
             rate_limit_reset_seconds=reset_seconds,
             status_code=error.response.status_code,
         ) from error
+
+
+async def _query_chunks[ItemT](
+    items: Sequence[ItemT],
+    query_chunk: Callable[[tuple[ItemT, ...]], Awaitable[None]],
+) -> None:
+    """Run `query_chunk` over every chunk of `items` concurrently, stopping at the first failure.
+
+    Several small queries in flight together finish sooner than one large query.
+    """
+
+    semaphore = asyncio.Semaphore(DEFAULT_BOUNDED_CONCURRENCY)
+
+    async def bounded(chunk: tuple[ItemT, ...]) -> None:
+        async with semaphore:
+            await query_chunk(chunk)
+
+    tasks = tuple(
+        asyncio.create_task(bounded(chunk))
+        for chunk in batched(items, _GRAPHQL_PR_BATCH_SIZE, strict=False)
+    )
+    await wait_for_read_tasks(*tasks)
 
 
 _GRAPHQL_OPERATION = re.compile(r"\b(?:query|mutation)\s+(\w+)")
