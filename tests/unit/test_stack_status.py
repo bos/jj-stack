@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from typing import cast
+from unittest.mock import MagicMock
 
 from jj_stack.errors import CliError
 from jj_stack.github.client import GithubClient
 from jj_stack.github.resolution import GithubRepoAddress, GithubTarget
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR
+from jj_stack.models.github_details import GithubPRMergeDetails
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.models.tracking import SubmittedBaseline, TrackedPR, TrackingState
 from jj_stack.stack import status as status_module
@@ -17,6 +19,64 @@ from jj_stack.stack.status import build_status_result, observe_status
 from tests.support.change_helpers import make_change
 from tests.support.contexts import fake_command_context
 from tests.support.tracking import make_pr_identity
+
+
+def test_status_reports_merge_details_for_blocked_prs_across_lookup_batches(monkeypatch) -> None:
+    observations = {}
+    prs_by_branch = {}
+    for number in range(1, status_module._STATUS_BATCH_SIZE + 2):
+        branch = f"feature-{number}"
+        change = make_change(change_id=branch, commit_id=branch, description=branch)
+        prs_by_branch[branch] = GithubPR.model_validate(
+            {
+                "base": {"ref": "main"},
+                "head": {"ref": branch, "sha": change.commit_id},
+                "html_url": f"https://github.test/octo-org/stacked-prs/pull/{number}",
+                "node_id": f"PR_{number}",
+                "number": number,
+                "state": "open",
+                "title": branch,
+                "merge_state_status": "BLOCKED",
+            }
+        )
+        observations[branch] = ChangeObservation(
+            change_id=change.change_id,
+            branch=branch,
+            tracked=TrackedPR(
+                pr_identity=make_pr_identity(head_ref=branch, pr_number=number),
+                submitted_baseline=SubmittedBaseline(commit_id=change.commit_id),
+            ),
+            local=(change,),
+            selected=change,
+        )
+
+    async def open_prs(*, head_refs):
+        return {branch: (prs_by_branch[branch],) for branch in head_refs}
+
+    async def merge_details(*, prs):
+        return {
+            pr.number: GithubPRMergeDetails(required_checks=(f"check-{pr.number}",)) for pr in prs
+        }
+
+    github = MagicMock(spec=GithubClient)
+    github.__aenter__.return_value = github
+    github.get_open_prs_by_head_refs.side_effect = open_prs
+    github.get_pr_merge_details.side_effect = merge_details
+    monkeypatch.setattr("jj_stack.bootstrap.build_github_client", lambda **_kwargs: github)
+
+    result = asyncio.run(
+        status_module.lookup_pr_lookups_async(
+            context=fake_command_context(),
+            github_repo=_github_target().repo,
+            observations=observations,
+        )
+    )
+
+    assert result.keys() == observations.keys()
+    for observation in result.values():
+        assert isinstance(pr := observation.pr, GithubPR)
+        assert isinstance(pr.merge_details, GithubPRMergeDetails)
+        assert pr.merge_details.missing_checks == (f"check-{pr.number}",)
 
 
 def test_shared_github_failure_leaves_untracked_stack_complete(monkeypatch) -> None:

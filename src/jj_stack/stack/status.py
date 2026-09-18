@@ -6,9 +6,11 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from itertools import batched
 
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
+from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.errors import CliError, ErrorMessage, error_message
 from jj_stack.github.client import (
     GithubClient,
@@ -37,6 +39,8 @@ from jj_stack.stack.preparation import PreparedLocalStack
 from jj_stack.stack.reporting import report_change
 
 logger = logging.getLogger(__name__)
+# Keep each status query small so its dependent merge-detail lookup can start promptly.
+_STATUS_BATCH_SIZE = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,40 +184,52 @@ async def lookup_pr_lookups_async(
     observations: Mapping[str, ChangeObservation],
     verbose: bool = False,
 ) -> dict[str, ChangeObservation]:
-    """Look up the saved PR on each branch with a client for this repository."""
+    """Pipeline independent batches of PR lookups and their merge details."""
 
     async with context.open_github_client(repo=github_repo) as github_client:
-        lookups = await discover_pr_lookups(
-            github_client=github_client, observations=observations
-        )
-        prs: dict[int, GithubPR] = {}
-        for observation in lookups.values():
-            pr = observation.pr
-            report = report_change(classify(observation))
-            if (
-                isinstance(pr, GithubPR)
-                and pr.state == "open"
-                and not (pr.is_draft or pr.is_queued or report.divergent)
-                and report.problem is None
-                and (verbose or pr.merge_state_status == "BLOCKED")
-            ):
-                prs[pr.number] = pr
-        if not prs:
+
+        async def inspect_batch(branches: tuple[str, ...]) -> dict[str, ChangeObservation]:
+            lookups = await discover_pr_lookups(
+                github_client=github_client,
+                observations={branch: observations[branch] for branch in branches},
+            )
+            prs: dict[int, GithubPR] = {}
+            for observation in lookups.values():
+                pr = observation.pr
+                report = report_change(classify(observation))
+                if (
+                    isinstance(pr, GithubPR)
+                    and pr.state == "open"
+                    and not (pr.is_draft or pr.is_queued or report.divergent)
+                    and report.problem is None
+                    and (verbose or pr.merge_state_status == "BLOCKED")
+                ):
+                    prs[pr.number] = pr
+            if not prs:
+                return lookups
+            details: Mapping[int, GithubPRMergeDetails | str | None]
+            try:
+                details = await github_client.get_pr_merge_details(prs=tuple(prs.values()))
+            except GithubClientError as error:
+                details = dict.fromkeys(prs, error.user_facing_reason())
+            for branch, observation in lookups.items():
+                if isinstance(pr := observation.pr, GithubPR) and pr.number in prs:
+                    evidence = details.get(pr.number)
+                    if evidence is None:
+                        evidence = "PR head or base changed during inspection; rerun the command"
+                    lookups[branch] = replace(
+                        observation, pr=pr.model_copy(update={"merge_details": evidence})
+                    )
             return lookups
-        details: Mapping[int, GithubPRMergeDetails | str | None]
-        try:
-            details = await github_client.get_pr_merge_details(prs=tuple(prs.values()))
-        except GithubClientError as error:
-            details = dict.fromkeys(prs, error.user_facing_reason())
-        for branch, observation in lookups.items():
-            if isinstance(pr := observation.pr, GithubPR) and pr.number in prs:
-                evidence = details.get(pr.number)
-                if evidence is None:
-                    evidence = "PR head or base changed during inspection; rerun the command"
-                lookups[branch] = replace(
-                    observation, pr=pr.model_copy(update={"merge_details": evidence})
-                )
-        return lookups
+
+        tasks = tuple(
+            asyncio.create_task(inspect_batch(branches))
+            for branches in batched(observations, _STATUS_BATCH_SIZE, strict=False)
+        )
+        await wait_for_read_tasks(*tasks)
+        return {
+            branch: observation for task in tasks for branch, observation in task.result().items()
+        }
 
 
 async def discover_pr_lookups(
