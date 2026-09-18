@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from jj_stack.identifiers import CommitId
-from jj_stack.jj.client import JjClient, quote_revset_symbol
+from jj_stack.jj.client import JjClient, change_ids_revset, quote_revset_symbol
 from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.observation import TRUNK_PATH, observe_stack_commits
 from jj_stack.stack.path import (
@@ -24,19 +24,27 @@ def observe_repo_paths(
 ) -> RepoStackPaths:
     """Read the commits needed to find local stacks in one batch.
 
-    With no descendant_of IDs, inspect the whole repo. Otherwise, inspect descendants of those
-    commits. Callers keep only the stacks containing their requested commit.
+    With no descendant_of IDs, inspect the paths through every tracked change. Otherwise,
+    inspect descendants of those commits. Callers keep only the stacks containing their
+    requested commit.
     """
 
-    visible_scope = "visible()"
     if descendant_of:
         anchors = " | ".join(quote_revset_symbol(commit_id) for commit_id in descendant_of)
         visible_scope = f"(visible() & ({anchors})::)"
-    candidates = f"(({visible_scope}) ~ {TRUNK_PATH})"
+    elif state.prs:
+        # A stack path is a first-parent chain through a tracked change, so only the tracked
+        # changes' descendants and first-parent ancestors can belong to one. `change_id()`
+        # resolves visible commits only, so no `visible()` filter is needed here.
+        tracked = change_ids_revset(tuple(state.prs))
+        visible_scope = f"({tracked}:: | first_ancestors({tracked}))"
+    else:
+        visible_scope = "none()"
+    candidates = f"({visible_scope} ~ {TRUNK_PATH})"
     rows = observe_stack_commits(
         jj_client=jj_client,
         state=state,
-        revset=f"trunk() | ({candidates}) | parents({candidates}) | @",
+        revset=f"trunk() | ancestors({candidates}, 2) | @",
         membership_revsets=("trunk()", candidates, TRUNK_PATH),
     ).rows
     trunks = tuple(commit for commit, flags in rows if flags[0])

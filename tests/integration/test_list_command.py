@@ -271,29 +271,30 @@ def test_list_links_top_pr_below_unsubmitted_local_descendant(
     assert "branch" not in unsubmitted
 
 
-def test_list_keeps_one_stack_when_saved_tracking_is_sparse_in_the_middle(
+def test_list_keeps_untracked_changes_below_and_between_tracked_ones_in_one_stack(
     tmp_path,
     monkeypatch,
     capsys,
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=4)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
 
     stack = selected_stack(repo)
-    bottom, middle, top = stack.changes
-    # Forget the lower prefix, then reattach only its bottom PR. Tracking is sparse while
-    # the jj parent chain still connects all three changes.
-    assert run_main(repo, config_path, "unstack", "--local", middle.change_id) == 0
-    assert run_main(repo, config_path, "relink", "1", bottom.change_id) == 0
-    assert set(TrackingStore.for_repo(repo).load().prs) == {bottom.change_id, top.change_id}
+    bottom, second, third, top = stack.changes
+    # Forget the lower prefix, then reattach only its second PR. The bottom change is
+    # untracked below the lowest tracked one and the third is untracked between tracked
+    # ones, while the jj parent chain still connects all four changes.
+    assert run_main(repo, config_path, "unstack", "--local", third.change_id) == 0
+    assert run_main(repo, config_path, "relink", "2", second.change_id) == 0
+    assert set(TrackingStore.for_repo(repo).load().prs) == {second.change_id, top.change_id}
     capsys.readouterr()
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert captured.out.count("feature 3") == 1
-    assert "3 changes" in captured.out
+    assert captured.out.count("feature 4") == 1
+    assert "4 changes" in captured.out
     assert "1 change" not in captured.out
 
 
