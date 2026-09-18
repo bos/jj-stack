@@ -692,10 +692,11 @@ not segment the path by GitHub resource or infer an omitted submit boundary.
 Both report whether an open PR has a merge-queue entry; position and intermediate queue phases
 are not shown.
 
-Both report GitHub's merge state for an open PR alongside its reviews and checks. GitHub computes
-that state lazily, so an unknown state is not reported or polled. `view --verbose` also reads
-unresolved review threads and check results for open, non-draft, non-queued PRs with no reported
-problem, discarding a PR's details if its head changes during the lookup.
+Both report specific merge warnings alongside reviews and checks, omitting GitHub's generic
+`BLOCKED` label. Blocked PRs receive a batched lookup of applicable rules, review threads, and
+checks; `view --verbose` includes other open PRs. Drafts, queued PRs, and changes with a reported
+problem are excluded. Details are discarded if the PR head or base changes during the lookup.
+GitHub computes merge state lazily, so an unknown state is not reported or polled.
 
 Neither command guesses. A change with no saved PR identity is reported as not submitted,
 even if a PR happens to use the branch name that change would generate. A saved PR is always

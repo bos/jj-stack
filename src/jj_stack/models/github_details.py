@@ -84,5 +84,14 @@ class GithubCheck(BaseModel):
 
 
 class GithubPRMergeDetails(BaseModel):
+    mergeable: str | None = None
+    required_checks: tuple[str, ...] = ()
+    resolve_threads: bool = False
     unresolved_threads: tuple[GithubReviewThread, ...] = ()
     checks: tuple[GithubCheck, ...] = ()
+    merge_checks: tuple[GithubCheck, ...] = ()
+
+    @property
+    def missing_checks(self) -> tuple[str, ...]:
+        reported = {check.name for check in (*self.checks, *self.merge_checks)}
+        return tuple(name for name in self.required_checks if name not in reported)

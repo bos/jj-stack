@@ -27,8 +27,8 @@ def _github_client(handler) -> GithubClient:
     )
 
 
-@pytest.mark.parametrize("head_moved", [False, True])
-def test_merge_details_paginate_without_mixing_pr_heads(head_moved: bool) -> None:
+@pytest.mark.parametrize("changed", [None, "head", "base", "merge"])
+def test_merge_details_paginate_without_mixing_pr_heads_or_bases(changed: str | None) -> None:
     pr = GithubPR(
         base=GithubBranchRef(ref="main"),
         head=GithubPRHead(ref="feature", sha="a" * 40),
@@ -57,6 +57,26 @@ def test_merge_details_paginate_without_mixing_pr_heads(head_moved: bool) -> Non
         if "checks_1" not in variables:
             page = {
                 "headRefOid": pr.head.sha,
+                "baseRefName": "main",
+                "potentialMergeCommit": {
+                    "oid": "c" * 40,
+                    "statusCheckRollup": {
+                        "contexts": connection(
+                            [{"name": "build", "state": "SUCCESS"}] * 100, "merge-next"
+                        )
+                    },
+                },
+                "baseRef": {
+                    "rules": connection(
+                        [
+                            {
+                                "type": "REQUIRED_STATUS_CHECKS",
+                                "parameters": {"requiredStatusChecks": [{"context": "build"}]},
+                            }
+                        ],
+                        "rules-next",
+                    )
+                },
                 "reviewThreads": connection([resolved] * 100, "threads-next"),
                 "statusCheckRollup": {
                     "contexts": connection(
@@ -68,8 +88,31 @@ def test_merge_details_paginate_without_mixing_pr_heads(head_moved: bool) -> Non
         elif "threads_1" in variables:
             assert variables["threads_1"] == "threads-next"
             assert variables["checks_1"] == "checks-next"
+            assert variables["rules_1"] == "rules-next"
+            assert variables["merge_checks_1"] == "merge-next"
             page = {
-                "headRefOid": "b" * 40 if head_moved else pr.head.sha,
+                "headRefOid": "b" * 40 if changed == "head" else pr.head.sha,
+                "baseRefName": "other" if changed == "base" else "main",
+                "potentialMergeCommit": {
+                    "oid": "d" * 40 if changed == "merge" else "c" * 40,
+                    "statusCheckRollup": {
+                        "contexts": connection([{"name": "security", "state": "SUCCESS"}])
+                    },
+                },
+                "baseRef": {
+                    "rules": connection(
+                        [
+                            {
+                                "type": "REQUIRED_STATUS_CHECKS",
+                                "parameters": {"requiredStatusChecks": [{"context": "security"}]},
+                            },
+                            {
+                                "type": "PULL_REQUEST",
+                                "parameters": {"requiredReviewThreadResolution": True},
+                            },
+                        ]
+                    )
+                },
                 "reviewThreads": connection([unresolved]),
                 "statusCheckRollup": {
                     "contexts": connection(
@@ -82,6 +125,8 @@ def test_merge_details_paginate_without_mixing_pr_heads(head_moved: bool) -> Non
             assert variables["checks_1"] == "checks-last"
             page = {
                 "headRefOid": pr.head.sha,
+                "baseRefName": "main",
+                "potentialMergeCommit": {"oid": "c" * 40},
                 "statusCheckRollup": {
                     "contexts": connection(
                         [
@@ -98,10 +143,14 @@ def test_merge_details_paginate_without_mixing_pr_heads(head_moved: bool) -> Non
             return await client.get_pr_merge_details(prs=(pr,))
 
     details = asyncio.run(run_test())[1]
-    if head_moved:
+    if changed:
         assert details is None
     else:
         assert details is not None
+        assert details.required_checks == ("build", "security")
+        assert details.missing_checks == ()
+        assert len(details.merge_checks) == 101
+        assert details.resolve_threads
         assert len(details.unresolved_threads) == 1
         thread = details.unresolved_threads[0]
         assert thread.is_outdated

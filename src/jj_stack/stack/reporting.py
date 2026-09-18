@@ -9,6 +9,7 @@ from typing import Literal
 import jj_stack.ui as ui
 from jj_stack.identifiers import ChangeId
 from jj_stack.models.github import CheckRollupStatus, GithubPR
+from jj_stack.models.github_details import GithubPRMergeDetails
 from jj_stack.stack.change_state import (
     BranchClaimed,
     BranchDisagrees,
@@ -62,7 +63,7 @@ class ChangeReport:
     needs_sync: bool
     needs_submit: bool
     checks: CheckRollupStatus | None
-    merge_status: str | None
+    merge_warnings: tuple[str, ...]
     reason: ui.Message | None
     repair: ui.Message | None
 
@@ -126,10 +127,10 @@ def report_change(state: ChangeState) -> ChangeReport:
             if isinstance(state, WithPR) and state.pr.state == "open"
             else None
         ),
-        merge_status=(
-            state.pr.merge_state_status
+        merge_warnings=(
+            _merge_warnings(state.pr)
             if isinstance(state, WithPR) and state.pr.state == "open"
-            else None
+            else ()
         ),
         reason=state.reason if isinstance(state, Stop) else None,
         repair=state.repair if isinstance(state, Stop) else None,
@@ -174,7 +175,7 @@ _STATUS_LABELS: dict[ReportStatus, tuple[str, str, str | None]] = {
     "draft": ("draft", "drafts", "hint"),
     "approved": ("approved", "approved", "hint"),
     "changes_requested": ("changes requested", "changes requested", "warning"),
-    "review_required": ("review required", "need review", "hint"),
+    "review_required": ("needs review", "need review", "hint"),
     "merged": ("sync needed", "merged, sync needed", "warning"),
     "closed": ("closed", "closed", "warning"),
     "missing": ("missing PR", "missing PRs", "warning"),
@@ -192,12 +193,26 @@ def status_label(status: ReportStatus, *, count: int = 1) -> ui.Message:
     return label if severity is None else ui.semantic_text(label, severity, "heading")
 
 
-def merge_status_label(status: str | None) -> ui.Message | None:
-    """Show GitHub's merge warnings without interpreting repo policy or promising readiness."""
+def _merge_warnings(pr: GithubPR) -> tuple[str, ...]:
+    """Report observed reasons; GitHub's generic BLOCKED value is not itself a reason."""
 
-    label = {
-        "BLOCKED": "merge blocked",
-        "DIRTY": "merge conflicts",
-        "BEHIND": "behind base",
-    }.get(status or "")
-    return ui.semantic_text(label, "warning", "heading") if label is not None else None
+    warnings: list[str] = []
+    details = pr.merge_details
+    if pr.merge_state_status == "DIRTY" or (
+        isinstance(details, GithubPRMergeDetails) and details.mergeable == "CONFLICTING"
+    ):
+        warnings.append("merge conflicts")
+    if pr.merge_state_status == "BEHIND":
+        warnings.append("behind base")
+    if isinstance(details, str):
+        warnings.append("merge details unavailable")
+    elif details is not None:
+        if details.resolve_threads and details.unresolved_threads:
+            warnings.append("unresolved review threads")
+        warnings.extend(f"missing required check: {name}" for name in details.missing_checks)
+        for check in details.merge_checks:
+            if check.state not in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                warnings.append(
+                    f"merge check {check.state.lower().replace('_', ' ')}: {check.name}"
+                )
+    return tuple(warnings)

@@ -103,22 +103,65 @@ def _render_lines(*lines: ui_module.Renderable) -> tuple[str, ...]:
     return tuple(stdout.getvalue().splitlines())
 
 
-def test_reporting_preserves_required_review_and_offers_details() -> None:
+@pytest.mark.parametrize(
+    ("merge_status", "merge_warning"), (("BLOCKED", None), ("DIRTY", "merge conflicts"))
+)
+def test_reporting_prefers_required_review_but_preserves_specific_merge_warnings(
+    merge_status: str, merge_warning: str | None
+) -> None:
     change = _status_change(
         change_id="abcdefghijkl",
         pr_identity=make_pr_identity(head_ref="jj-stack/feature", pr_number=5),
-        pr=_pr(number=5, state="open").model_copy(update={"review_decision": "review_required"}),
+        pr=_pr(number=5, state="open").model_copy(
+            update={"review_decision": "review_required", "merge_state_status": merge_status}
+        ),
     )
-    assert stack_change_json(change)["status"] == "review_required"
-    summary = ui_module.plain_text(
+    payload = stack_change_json(change)
+    assert payload["status"] == "review_required"
+    pr = payload["pr"]
+    assert isinstance(pr, dict)
+    assert pr["merge_state_status"] == merge_status
+    for rendered in (
         list_module._status_fragments(
             github_error=None, remote_error=None, states=(change.state,)
-        )
-    )
-    assert "review required" in summary
+        ),
+        view_module._format_status_summary(change, repo=None),
+    ):
+        summary = ui_module.plain_text(rendered)
+        assert "needs review" in summary
+        assert "merge blocked" not in summary
+        if merge_warning is not None:
+            assert merge_warning in summary
     hint = merge_details_hint(_status_result(changes=(change,)))
     assert hint is not None
     assert "jj-stack view --verbose abcdefgh" in ui_module.plain_text(hint)
+
+
+@pytest.mark.parametrize("other_needs_review", (True, False))
+def test_list_keeps_review_counts_without_generic_merge_warning(other_needs_review: bool) -> None:
+    changes = tuple(
+        _status_change(
+            change_id=change_id,
+            pr_identity=make_pr_identity(head_ref="jj-stack/feature", pr_number=number),
+            pr=_pr(number=number, state="open").model_copy(
+                update={
+                    "review_decision": "review_required" if needs_review else None,
+                    "merge_state_status": "BLOCKED",
+                }
+            ),
+        )
+        for number, change_id, needs_review in (
+            (1, "abcdefghijkl", True),
+            (2, "bcdefghijklm", other_needs_review),
+        )
+    )
+    summary = ui_module.plain_text(
+        list_module._status_fragments(
+            github_error=None, remote_error=None, states=tuple(change.state for change in changes)
+        )
+    )
+    assert ("2 need review" if other_needs_review else "needs review") in summary
+    assert "merge blocked" not in summary
 
 
 def test_reporting_advises_sync_for_merged_divergent_copies() -> None:

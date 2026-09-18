@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import re
+
+import httpx2
+import pytest
 
 from jj_stack.errors import EXIT_INCOMPLETE
 from jj_stack.jj.client import JjClient
+from jj_stack.models.github_details import GithubReviewThread
 from jj_stack.state.store import TrackingStore
 
-from ..support.fake_github import FakeGithubState, create_app
+from ..support.fake_github import FakeGithubState, FakeMergeRequirements, create_app
 from ..support.integration_helpers import (
     OfflineGithubClient,
     commit_file,
@@ -26,54 +31,91 @@ from .submit_command_helpers import (
 )
 
 
-def test_status_shows_merge_blocked_despite_approval_and_passing_checks(
-    tmp_path,
-    monkeypatch,
-    capsys,
+@pytest.mark.parametrize("ruleset", (False, True))
+def test_status_explains_hidden_blockers_with_one_batched_followup(
+    tmp_path, monkeypatch, capsys, ruleset: bool
 ) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    # Real GitHub PRs #382-385 in voxel-ai/jj-stack-native-stacks-test establish that
+    # review-only, missing-check, and unresolved-thread cases share BLOCKED/SUCCESS.
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    change_id = selected_stack(repo).head.change_id
-    fake_repo.prs[1].check_rollup_state = "SUCCESS"
-    fake_repo.prs[1].merge_state_status = "BLOCKED"
-    fake_repo.create_pr_review(pr_number=1, reviewer_login="alice", state="APPROVED")
+    requirements = fake_repo.branch_rules if ruleset else fake_repo.branch_protection
+    for number, pr in fake_repo.prs.items():
+        pr.checks["build"] = "SUCCESS"
+        requirements[pr.base_ref] = FakeMergeRequirements(
+            checks=("build", "deploy") if number == 1 else ("build",),
+            reviews=1,
+            resolve_threads=True,
+        )
+    thread = GithubReviewThread.model_validate(
+        {"isResolved": False, "isOutdated": False, "path": "feature.txt", "line": 1}
+    )
+    fake_repo.prs[2].review_threads.append(thread)
+    batches: list[tuple[int, ...]] = []
+    original = httpx2.ASGITransport.handle_async_request
 
-    exit_code = run_main(repo, config_path, "list", "--json")
-    captured = capsys.readouterr()
+    async def observe_request(self, request):
+        if request.url.path == "/graphql":
+            query = json.loads(request.content)["query"]
+            if "PullRequestMergeDetails" in query:
+                batches.append(
+                    tuple(
+                        sorted(
+                            int(number)
+                            for number in re.findall(r"pullRequest\(number:\s*(\d+)\)", query)
+                        )
+                    )
+                )
+        return await original(self, request)
 
-    assert exit_code == 0
-    payload = json.loads(captured.out)
+    monkeypatch.setattr(httpx2.ASGITransport, "handle_async_request", observe_request)
+    assert run_main(repo, config_path, "list", "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
     assert_json_output_matches_schema(payload, "list")
-
     row = payload["rows"][0]
-    assert row["type"] == "stack"
-    assert row["status"] == "approved, checks passed, merge blocked"
-    assert row["subject"] == "feature 1"
-    assert len(row["changes"]) == 1
+    assert batches == [(1, 2)]
+    assert "2 need review" in row["status"]
+    assert "missing required check: deploy" in row["status"]
+    assert "unresolved review threads" in row["status"]
+    assert "merge blocked" not in row["status"]
+    assert all(change["pr"]["checks"] == "passed" for change in row["changes"])
+    assert all(change["pr"]["merge_state_status"] == "BLOCKED" for change in row["changes"])
 
-    change = row["changes"][0]
-    assert change["change_id"] == change_id
-    assert change["branch"].startswith("jj-stack/feature-1-")
-    assert change["pr"]["number"] == 1
-    assert change["pr"]["checks"] == "passed"
-    assert change["pr"]["merge_state_status"] == "BLOCKED"
-    assert change["status"] == "approved"
-
-    assert run_main(repo, config_path, "view") == 0
+    assert run_main(repo, config_path, "view", "--verbose") == 0
+    assert batches == [(1, 2), (1, 2)]
     assert_output_contains(
         capsys.readouterr().out,
-        "approved, checks passed, merge blocked",
-        "jj-stack view --verbose",
+        "needs review",
+        "missing required check: deploy",
+        "unresolved review threads",
+        "feature.txt:1",
     )
 
-    run_command(["jj", "describe", "-r", change_id, "-m", "feature \x1bc"], repo)
-    assert run_main(repo, config_path, "list", "--color=always") == 0
-    terminal_output = capsys.readouterr().out
-    assert "\x1bc" not in terminal_output
-    assert "feature c" in terminal_output
-    assert "PR 1" in terminal_output
-    assert "merge blocked" in terminal_output
-    assert "https://github.test/octo-org/stacked-prs/pull/1" in terminal_output
+    # Approval alone leaves the independent requirements blocking, just as on GitHub.
+    for number in fake_repo.prs:
+        fake_repo.create_pr_review(pr_number=number, reviewer_login="alice", state="APPROVED")
+    assert all(fake_repo.merge_blocked(pr) for pr in fake_repo.prs.values())
+    # A required check can report on the test merge commit instead of the PR head.
+    fake_repo.prs[1].merge_checks.update(deploy="SUCCESS", build="FAILURE")
+    assert run_main(repo, config_path, "list", "--json") == 0
+    row = json.loads(capsys.readouterr().out)["rows"][0]
+    assert "missing required check" not in row["status"]
+    assert "merge check failure: build" in row["status"]
+    assert all(change["pr"]["checks"] == "passed" for change in row["changes"])
+    assert batches == [(1, 2), (1, 2), (1, 2)]
+
+    # Live PR #386 confirms required checks can be split across head and test merge commits.
+    del fake_repo.prs[1].merge_checks["build"]
+    thread.is_resolved = True
+    assert run_main(repo, config_path, "list", "--json") == 0
+    row = json.loads(capsys.readouterr().out)["rows"][0]
+    assert batches == [(1, 2), (1, 2), (1, 2)]
+    assert [change["pr"]["merge_state_status"] for change in row["changes"]] == [
+        "UNSTABLE",
+        "CLEAN",
+    ]
+    assert "missing required check" not in row["status"]
+    assert "unresolved review threads" not in row["status"]
 
 
 def test_list_surfaces_orphaned_pr_after_change_is_abandoned(
@@ -319,8 +361,8 @@ def test_list_reports_partial_approval_for_ready_prefix_only(
         reviewer_login="reviewer-1",
         state="APPROVED",
     )
-    fake_repo.prs[1].check_rollup_state = "SUCCESS"
-    fake_repo.prs[2].check_rollup_state = "FAILURE"
+    fake_repo.prs[1].checks["build"] = "SUCCESS"
+    fake_repo.prs[2].checks["build"] = "TIMED_OUT"
 
     exit_code = run_main(repo, config_path, "list")
     captured = capsys.readouterr()

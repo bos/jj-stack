@@ -125,24 +125,26 @@ the bottom, matching the text display. `head_change_id` identifies the head, whi
 `selector` is present only when the stack came from an explicit selector such as a
 revset argument or `--pull-request`.
 
-### Verbose merge details
+### Merge details
 
-`view --verbose --json` adds `pr.merge_details` for inspected open PRs. Drafts, queued PRs,
-divergent changes, and PRs with lookup or saved-link problems omit it. The object contains:
+`view --json` and `list --json` add `pr.merge_details` for blocked PRs; `view --verbose --json`
+also inspects other open PRs. Drafts, queued PRs, divergent changes, and PRs with lookup or
+saved-link problems omit it. The object contains:
 
+- `mergeable`: GitHub's conflict assessment, or null.
+- `required_checks`: required check names; `resolve_threads`: whether threads must be resolved.
 - `unresolved_threads`: all unresolved review threads, including outdated ones. Each has `path`,
   nullable `line`, `is_outdated`, the first comment's plain-text `body`, and nullable `url`.
-- `checks`: all check runs and commit statuses GitHub has received. Each has `name`, `state`,
-  and nullable `url`. `state` is GitHub's check conclusion, or its current status when no
-  conclusion exists.
+- `checks` and `merge_checks`: check runs and commit statuses for the PR head and test merge
+  commit, respectively. Each has `name`, `state`, and nullable `url`. `state` is GitHub's check
+  conclusion, or its current status when no conclusion exists.
 
-Both arrays include all available pages. Unlike the text display, JSON includes successful
-checks and does not shorten comment bodies. These results do not identify which repo rules are
-required or establish merge readiness.
+All arrays include all available pages. Unlike the text display, JSON includes successful
+checks and does not shorten comment bodies.
 
-If details cannot be read, or the PR head changes during inspection, the PR instead contains a
-plain-text `merge_details_error`. The basic summary remains available and the command exits 10.
-Rerun `jj-stack view --verbose --json` to refresh the report.
+If details cannot be read, or the PR head or base changes during inspection, the PR instead
+contains a plain-text `merge_details_error`. The basic summary remains available and the command
+exits 10. Rerun the command to refresh the report.
 
 ## `list --json`
 

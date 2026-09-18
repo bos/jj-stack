@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from jj_stack.models.github_details import GithubPRMergeDetails
 from jj_stack.models.tracking import PRIdentity
 from jj_stack.stack.reporting import report_change
 from jj_stack.stack.status import StackStatusChange
@@ -13,7 +12,6 @@ def stack_change_json(
     change: StackStatusChange,
     *,
     current: bool = False,
-    merge_details: GithubPRMergeDetails | str | None = None,
 ) -> dict[str, object]:
     """Return the public JSON shape for one stack change."""
 
@@ -35,10 +33,6 @@ def stack_change_json(
         payload["current"] = True
     pr = pr_json(change)
     if pr is not None:
-        if isinstance(merge_details, str):
-            pr["merge_details_error"] = merge_details
-        elif merge_details is not None:
-            pr["merge_details"] = merge_details.model_dump(mode="json")
         payload["pr"] = pr
     return payload
 
@@ -54,6 +48,10 @@ def pr_json(
             "number": pr.number,
             "url": pr.html_url,
         }
+        if isinstance(pr.merge_details, str):
+            values["merge_details_error"] = pr.merge_details
+        elif pr.merge_details is not None:
+            values["merge_details"] = pr.merge_details.model_dump(mode="json")
         return {key: value for key, value in values.items() if value is not None}
     return saved_pr_json(change.tracked.pr_identity) if change.tracked is not None else None
 

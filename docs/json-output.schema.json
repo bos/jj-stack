@@ -249,6 +249,24 @@
               }
             }
           }
+        },
+        "mergeable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "merge_checks": {
+          "$ref": "#/$defs/mergeDetails/properties/checks"
+        },
+        "required_checks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolve_threads": {
+          "type": "boolean"
         }
       }
     },

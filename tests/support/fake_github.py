@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -15,6 +16,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from jj_stack.models.github import GithubStack
+from jj_stack.models.github_details import GithubReviewThread
 
 _FAKE_GITHUB_GIT_ENV = {
     "GIT_AUTHOR_EMAIL": "fake-github@example.com",
@@ -24,6 +26,44 @@ _FAKE_GITHUB_GIT_ENV = {
 }
 _GRAPHQL_VARIABLE_PATTERN = r"\$[_A-Za-z][_0-9A-Za-z]*"
 _WEB_ORIGIN = "https://github.test"
+
+
+def _check_rollup(checks: dict[str, str]) -> dict[str, object] | None:
+    # Missing required checks and test-merge checks do not participate in the head rollup.
+    # Observed on real PR #384 in voxel-ai/jj-stack-native-stacks-test.
+    states = set(checks.values())
+    if not states:
+        return None
+    state = (
+        "FAILURE"
+        if states
+        & {
+            "FAILURE",
+            "ERROR",
+            "ACTION_REQUIRED",
+            "CANCELLED",
+            "TIMED_OUT",
+            "STALE",
+            "STARTUP_FAILURE",
+        }
+        else "SUCCESS"
+        if states <= {"SUCCESS", "NEUTRAL", "SKIPPED"}
+        else "PENDING"
+    )
+    return {
+        "state": state,
+        "contexts": {
+            "nodes": [{"name": name, "state": state} for name, state in checks.items()],
+            "pageInfo": {"hasNextPage": False},
+        },
+    }
+
+
+@dataclass(slots=True)
+class FakeMergeRequirements:
+    checks: tuple[str, ...] = ()
+    reviews: int = 0
+    resolve_threads: bool = False
 
 
 @dataclass(slots=True)
@@ -42,7 +82,9 @@ class FakeGithubPR:
     number: int
     title: str
     auto_merge_enabled: bool = False
-    check_rollup_state: str | None = None
+    checks: dict[str, str] = field(default_factory=dict)
+    merge_checks: dict[str, str] = field(default_factory=dict)
+    review_threads: list[GithubReviewThread] = field(default_factory=list)
     merge_state_status: str | None = None
     labels: list[str] = field(default_factory=list)
     requested_reviewers: list[str] = field(default_factory=list)
@@ -92,11 +134,19 @@ class FakeGithubPR:
             ),
             "mergedAt": self.merged_at,
             "mergeStateStatus": self.merge_state_status,
+            "mergeable": "MERGEABLE",
             "number": self.number,
             "state": self.graphql_state.upper(),
-            "statusCheckRollup": (
-                None if self.check_rollup_state is None else {"state": self.check_rollup_state}
-            ),
+            "statusCheckRollup": _check_rollup(self.checks),
+            "potentialMergeCommit": None
+            if not self.merge_checks
+            else {
+                # Stable synthetic identity; the fake does not write a test merge commit.
+                "oid": hashlib.sha256(
+                    f"{self.head_sha}:{repo.ref_target(self.base_ref)}".encode()
+                ).hexdigest()[:40],
+                "statusCheckRollup": _check_rollup(self.merge_checks),
+            },
             "title": self.title,
             "url": f"{_WEB_ORIGIN}/{repo.full_name}/pull/{self.number}",
         }
@@ -251,12 +301,35 @@ class FakeGithubRepo:
     pr_force_pushes: dict[int, list[tuple[str, str]]] = field(default_factory=dict)
     prs: dict[int, FakeGithubPR] = field(default_factory=dict)
     pr_reviews: dict[int, list[FakeGithubPRReview]] = field(default_factory=dict)
+    branch_protection: dict[str, FakeMergeRequirements] = field(default_factory=dict)
+    branch_rules: dict[str, FakeMergeRequirements] = field(default_factory=dict)
     # GitHub rejection messages for checks, conflicts, or branch protection.
     merge_rejections: dict[int, str] = field(default_factory=dict)
 
     @property
     def full_name(self) -> str:
         return f"{self.owner}/{self.name}"
+
+    def requirements(self, pr: FakeGithubPR) -> tuple[FakeMergeRequirements, ...]:
+        return tuple(
+            rules
+            for source in (self.branch_protection, self.branch_rules)
+            if (rules := source.get(pr.base_ref)) is not None
+        )
+
+    def merge_blocked(self, pr: FakeGithubPR) -> bool:
+        checks = pr.checks | pr.merge_checks
+        return any(
+            (rules.reviews > 0 and _graphql_review_decision(self, pr.number) != "APPROVED")
+            or any(
+                checks.get(name) not in {"SUCCESS", "NEUTRAL", "SKIPPED"} for name in rules.checks
+            )
+            or (
+                rules.resolve_threads
+                and any(not thread.is_resolved for thread in pr.review_threads)
+            )
+            for rules in self.requirements(pr)
+        )
 
     def queue_entry(self, pr_number: int) -> FakeQueueEntry | None:
         """The visible queue entry for a PR; entries that are leaving no longer show."""
@@ -1658,7 +1731,10 @@ def _complete_stack_merge(
         remaining_pr_numbers = stack.active_pr_numbers[len(candidate_numbers) :]
     candidates = tuple(repo.prs[number] for number in candidate_numbers)
     if any(
-        pr.state != "open" or pr.is_draft or pr.number in repo.merge_rejections
+        pr.state != "open"
+        or pr.is_draft
+        or pr.number in repo.merge_rejections
+        or repo.merge_blocked(pr)
         for pr in candidates
     ):
         operation.status = "failed"
@@ -1971,6 +2047,58 @@ def _graphql_branch_targets_by_suffix(
 def _graphql_pr_payload(*, pr: FakeGithubPR, repo: FakeGithubRepo) -> dict[str, object]:
     payload = pr.to_graphql_payload(repo)
     payload["reviewDecision"] = _graphql_review_decision(repo, pr.number)
+    if pr.merge_state_status is None and repo.requirements(pr):
+        payload["mergeStateStatus"] = "BLOCKED" if repo.merge_blocked(pr) else "CLEAN"
+        # A test-merge result can satisfy a required check absent from the head. GitHub then
+        # reports UNSTABLE, becoming CLEAN when the head also reports success (live PR #384).
+        if payload["mergeStateStatus"] == "CLEAN" and any(
+            pr.checks.get(name) not in {"SUCCESS", "NEUTRAL", "SKIPPED"}
+            for rules in repo.requirements(pr)
+            for name in rules.checks
+        ):
+            payload["mergeStateStatus"] = "UNSTABLE"
+    classic = repo.branch_protection.get(pr.base_ref)
+    rules = repo.branch_rules.get(pr.base_ref)
+    payload["baseRef"] = {
+        "refUpdateRule": None
+        if classic is None
+        else {
+            "requiredStatusCheckContexts": classic.checks,
+            "requiresConversationResolution": classic.resolve_threads,
+        },
+        "rules": {
+            "nodes": []
+            if rules is None
+            else [
+                {
+                    "type": "REQUIRED_STATUS_CHECKS",
+                    "parameters": {
+                        "requiredStatusChecks": [{"context": name} for name in rules.checks],
+                    },
+                },
+                {
+                    "type": "PULL_REQUEST",
+                    "parameters": {
+                        "requiredReviewThreadResolution": rules.resolve_threads,
+                    },
+                },
+            ],
+            "pageInfo": {"hasNextPage": False},
+        },
+    }
+    payload["reviewThreads"] = {
+        "nodes": [
+            {
+                "isResolved": thread.is_resolved,
+                "isOutdated": thread.is_outdated,
+                "path": thread.path,
+                "line": thread.line,
+                "comments": {"nodes": [{"bodyText": thread.body, "url": thread.url}]},
+            }
+            for thread in pr.review_threads
+        ],
+        "pageInfo": {"hasNextPage": False},
+    }
     return payload
 
 
@@ -1978,12 +2106,15 @@ def _graphql_review_decision(
     repo: FakeGithubRepo,
     pr_number: int,
 ) -> str | None:
-    review_states = {
+    review_states = [
         str(raw_review["state"]).upper()
         for raw_review in _latest_opinionated_review_payloads(repo, pr_number)
-    }
+    ]
     if "CHANGES_REQUESTED" in review_states:
         return "CHANGES_REQUESTED"
+    required = max((rules.reviews for rules in repo.requirements(repo.prs[pr_number])), default=0)
+    if review_states.count("APPROVED") < required:
+        return "REVIEW_REQUIRED"
     if "APPROVED" in review_states:
         return "APPROVED"
     return None

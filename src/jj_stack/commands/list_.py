@@ -53,7 +53,6 @@ from jj_stack.stack.pr_branches import duplicate_pr_branch_claims
 from jj_stack.stack.preparation import PreparedLocalStack
 from jj_stack.stack.repo import observe_repo_paths
 from jj_stack.stack.reporting import (
-    merge_status_label,
     report_change,
     status_label,
     submittable_edits,
@@ -424,12 +423,13 @@ def _status_fragments(
         if rollup_status in check_statuses:
             fragments.append(ui.semantic_text(f"checks {rollup_status}", *labels))
             break
-    for status in dict.fromkeys(
-        report.merge_status for report in reports if report.problem is None
+    for warning in dict.fromkeys(
+        warning
+        for report in reports
+        if report.problem is None
+        for warning in report.merge_warnings
     ):
-        label = merge_status_label(status)
-        if label is not None:
-            fragments.append(label)
+        fragments.append(ui.semantic_text(warning, "warning", "heading"))
     return tuple(fragments)
 
 

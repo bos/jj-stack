@@ -171,8 +171,41 @@ class _GraphqlCheckDetails(BaseModel):
     contexts: _GraphqlConnection[GithubCheck]
 
 
+class _GraphqlRequiredCheck(BaseModel):
+    context: str
+
+
+class _GraphqlRuleParameters(BaseModel):
+    checks: tuple[_GraphqlRequiredCheck, ...] = Field(default=(), alias="requiredStatusChecks")
+    resolve_threads: bool = Field(default=False, alias="requiredReviewThreadResolution")
+
+
+class _GraphqlMergeRule(BaseModel):
+    type: str
+    parameters: _GraphqlRuleParameters | None = None
+
+
+class _GraphqlLegacyRequirements(BaseModel):
+    checks: tuple[str, ...] | None = Field(default=(), alias="requiredStatusCheckContexts")
+    resolve_threads: bool = Field(default=False, alias="requiresConversationResolution")
+
+
+class _GraphqlMergeBase(BaseModel):
+    protection: _GraphqlLegacyRequirements | None = Field(default=None, alias="refUpdateRule")
+    rules: _GraphqlConnection[_GraphqlMergeRule] | None = None
+
+
+class _GraphqlTestMerge(BaseModel):
+    oid: CommitId
+    checks: _GraphqlCheckDetails | None = Field(default=None, alias="statusCheckRollup")
+
+
 class _GraphqlPRMergeDetails(BaseModel):
     head: CommitId = Field(alias="headRefOid")
+    base_name: str = Field(alias="baseRefName")
+    base: _GraphqlMergeBase | None = Field(default=None, alias="baseRef")
+    mergeable: str | None = None
+    test_merge: _GraphqlTestMerge | None = Field(default=None, alias="potentialMergeCommit")
     threads: _GraphqlConnection[GithubReviewThread] | None = Field(
         default=None, alias="reviewThreads"
     )
@@ -618,16 +651,23 @@ class GithubClient:
     async def get_pr_merge_details(
         self, *, prs: Sequence[GithubPR]
     ) -> dict[int, GithubPRMergeDetails | None]:
-        """Batch and paginate review threads and check results at the observed PR heads."""
+        """Batch merge evidence and applicable rules for the observed PR heads and bases."""
 
         results: dict[int, GithubPRMergeDetails | None] = {}
         for chunk in batched(prs, _GRAPHQL_PR_BATCH_SIZE, strict=False):
             heads = {pr.number: pr.head.sha for pr in chunk}
+            bases = {pr.number: pr.base.ref for pr in chunk}
+            merge_commits: dict[int, CommitId | None] = {}
             pending_threads: dict[int, str | None] = dict.fromkeys(heads)
             pending_checks: dict[int, str | None] = dict.fromkeys(heads)
-            while pending_threads or pending_checks:
-                numbers = sorted(pending_threads.keys() | pending_checks.keys())
-                query, variables = _pr_merge_details_query(pending_threads, pending_checks)
+            pending_merge_checks: dict[int, str | None] = dict.fromkeys(heads)
+            pending_rules: dict[int, str | None] = dict.fromkeys(heads)
+            cursors = (pending_threads, pending_checks, pending_merge_checks, pending_rules)
+            while any(cursors):
+                numbers = sorted(set().union(*cursors))
+                query, variables = _pr_merge_details_query(
+                    pending_threads, pending_checks, pending_merge_checks, pending_rules
+                )
                 payload = await self._graphql_query(
                     query,
                     response_name="merge details lookup",
@@ -646,11 +686,18 @@ class GithubClient:
                         if raw is not None
                         else None
                     )
-                    if page is None or page.head != heads[number]:
+                    merge_commit = page.test_merge.oid if page and page.test_merge else None
+                    if (
+                        page is None
+                        or page.head != heads[number]
+                        or page.base_name != bases[number]
+                        or merge_commits.get(number, merge_commit) != merge_commit
+                    ):
                         results[number] = None
-                        pending_threads.pop(number, None)
-                        pending_checks.pop(number, None)
+                        for pending in cursors:
+                            pending.pop(number, None)
                         continue
+                    merge_commits[number] = merge_commit
                     prior = results.get(number) or GithubPRMergeDetails()
                     threads = _consume_merge_details_page(number, page.threads, pending_threads)
                     checks = _consume_merge_details_page(
@@ -659,10 +706,48 @@ class GithubClient:
                         pending_checks,
                         absent_ok=True,
                     )
+                    merge_rollup = page.test_merge.checks if page.test_merge else None
+                    merge_checks = _consume_merge_details_page(
+                        number,
+                        merge_rollup.contexts if merge_rollup else None,
+                        pending_merge_checks,
+                        absent_ok=True,
+                    )
+                    rules = _consume_merge_details_page(
+                        number,
+                        page.base.rules if page.base else None,
+                        pending_rules,
+                        absent_ok=True,
+                    )
+                    protection = page.base.protection if page.base else None
+                    parameters = tuple(rule.parameters for rule in rules if rule.parameters)
                     results[number] = GithubPRMergeDetails(
+                        mergeable=page.mergeable,
+                        required_checks=tuple(
+                            dict.fromkeys(
+                                (
+                                    *prior.required_checks,
+                                    *((protection.checks or ()) if protection else ()),
+                                    *(
+                                        check.context
+                                        for params in parameters
+                                        for check in params.checks
+                                    ),
+                                )
+                            )
+                        ),
+                        resolve_threads=(
+                            prior.resolve_threads
+                            or bool(protection and protection.resolve_threads)
+                            or any(params.resolve_threads for params in parameters)
+                            or any(
+                                rule.type == "REQUIRED_REVIEW_THREAD_RESOLUTION" for rule in rules
+                            )
+                        ),
                         unresolved_threads=prior.unresolved_threads
                         + tuple(thread for thread in threads if not thread.is_resolved),
                         checks=prior.checks + checks,
+                        merge_checks=prior.merge_checks + merge_checks,
                     )
         return results
 
@@ -1322,13 +1407,22 @@ def _consume_merge_details_page[NodeT](
 
 
 def _pr_merge_details_query(
-    threads_cursors: dict[int, str | None], checks_cursors: dict[int, str | None]
+    threads_cursors: dict[int, str | None],
+    checks_cursors: dict[int, str | None],
+    merge_checks_cursors: dict[int, str | None],
+    rules_cursors: dict[int, str | None],
 ) -> tuple[str, dict[str, str]]:
     variables: dict[str, str] = {}
     selections: list[str] = []
-    for number in sorted(threads_cursors.keys() | checks_cursors.keys()):
-        fields = ["headRefOid"]
-        for kind, cursors in (("threads", threads_cursors), ("checks", checks_cursors)):
+    connections = (
+        ("threads", threads_cursors),
+        ("checks", checks_cursors),
+        ("merge_checks", merge_checks_cursors),
+        ("rules", rules_cursors),
+    )
+    for number in sorted(set().union(*(cursors for _, cursors in connections))):
+        fields = ["headRefOid baseRefName mergeable potentialMergeCommit { oid }"]
+        for kind, cursors in connections:
             if number not in cursors:
                 continue
             after = ""
@@ -1347,14 +1441,32 @@ def _pr_merge_details_query(
                       {page_info}
                     }}"""
                 )
-            else:
-                fields.append(
-                    f"""statusCheckRollup {{
+            elif kind in {"checks", "merge_checks"}:
+                rollup = f"""statusCheckRollup {{
                       contexts(first: {PR_PAGE_SIZE}{after}) {{
                         nodes {{
                           ... on CheckRun {{ name status conclusion url: detailsUrl }}
                           ... on StatusContext {{ name: context state url: targetUrl }}
                         }}
+                        {page_info}
+                      }}
+                    }}"""
+                fields.append(
+                    f"potentialMergeCommit {{ {rollup} }}" if kind == "merge_checks" else rollup
+                )
+            else:
+                fields.append(
+                    f"""baseRef {{
+                      refUpdateRule {{
+                        requiredStatusCheckContexts requiresConversationResolution
+                      }}
+                      rules(first: {PR_PAGE_SIZE}{after}) {{
+                        nodes {{ type parameters {{
+                          ... on RequiredStatusChecksParameters {{
+                            requiredStatusChecks {{ context }}
+                          }}
+                          ... on PullRequestParameters {{ requiredReviewThreadResolution }}
+                        }} }}
                         {page_info}
                       }}
                     }}"""

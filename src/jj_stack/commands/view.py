@@ -36,9 +36,7 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, bootstrap_context
 from jj_stack.commands._json_status import stack_change_json
 from jj_stack.commands.view_details import (
-    MergeDetails,
     merge_details_hint,
-    observe_merge_details,
     render_merge_details,
 )
 from jj_stack.errors import EXIT_INCOMPLETE, CliError, UnsupportedStackError, error_message
@@ -58,7 +56,6 @@ from jj_stack.jj.client import (
 from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.preparation import PreparedLocalStack, prepare_local_stack
 from jj_stack.stack.reporting import (
-    merge_status_label,
     report_change,
     status_label,
     submittable_edits,
@@ -128,6 +125,7 @@ def _run_status(
     with console.spinner(description="Inspecting GitHub"):
         pr_lookups = observe_status(
             context=context,
+            verbose=verbose,
             prepared=tuple(
                 prepared
                 for _, prepared, _ in selections
@@ -139,16 +137,14 @@ def _run_status(
         for index, (_, prepared, _) in enumerate(selections)
         if isinstance(prepared, PreparedLocalStack)
     }
-    details: MergeDetails = {}
-    if verbose:
-        with console.spinner(description="Inspecting review threads and checks"):
-            details = observe_merge_details(context, tuple(results.values()))
-    details_failed = any(isinstance(value, str) for value in details.values())
-    exit_code = EXIT_INCOMPLETE if details_failed else 0
+    exit_code = 0
     if as_json:
-        for number, evidence in details.items():
-            if isinstance(evidence, str):
-                console.warning(t"Could not inspect merge details for PR #{number}: {evidence}")
+        for result in results.values():
+            for change in result.changes:
+                if (pr := change.pr) is not None and isinstance(pr.merge_details, str):
+                    console.warning(
+                        t"Could not inspect merge details for PR #{pr.number}: {pr.merge_details}"
+                    )
     multi_selector = len(selectors) > 1
     json_stacks: list[dict[str, object]] = []
     for index, (selector, prepared_status, notes) in enumerate(selections):
@@ -176,7 +172,6 @@ def _run_status(
                     prepared_status=prepared_status,
                     result=result,
                     selector=selector,
-                    details=details,
                 )
             )
             continue
@@ -189,7 +184,7 @@ def _run_status(
             verbose=verbose,
         )
         if verbose:
-            _emit_lines(render_merge_details(result, details))
+            _emit_lines(render_merge_details(result))
         elif (hint := merge_details_hint(result)) is not None:
             console.note(hint)
     if as_json:
@@ -351,7 +346,6 @@ def _json_status_result(
     prepared_status: PreparedLocalStack,
     result: StatusResult,
     selector: ViewSelector | None,
-    details: MergeDetails,
 ) -> dict[str, object]:
     stack_model = prepared_status.stack
     current_change_ids = {
@@ -363,7 +357,6 @@ def _json_status_result(
             stack_change_json(
                 change,
                 current=change.change_id in current_change_ids,
-                merge_details=details.get(change.pr.number) if change.pr is not None else None,
             )
             for change in result.changes
         ],
@@ -754,9 +747,8 @@ def _format_status_summary(
             summary = t"{pr_label} {status_label(report.lifecycle)}"
         if report.checks is not None:
             summary = t"{summary}, checks {report.checks}"
-        merge_label = merge_status_label(report.merge_status)
-        if merge_label is not None:
-            summary = t"{summary}, {merge_label}"
+        for warning in report.merge_warnings:
+            summary = t"{summary}, {ui.semantic_text(warning, 'warning', 'heading')}"
     elif change.tracked is not None:
         summary = format_pr_label(
             change.tracked.pr_identity.pr_number, prefix="saved ", repo=repo

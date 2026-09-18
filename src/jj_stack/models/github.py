@@ -6,7 +6,7 @@ from typing import Literal, Self
 from pydantic import AliasPath, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from jj_stack.identifiers import CommitId
-from jj_stack.models.github_details import GithubMergeQueueEntry
+from jj_stack.models.github_details import GithubMergeQueueEntry, GithubPRMergeDetails
 
 CheckRollupStatus = Literal["failed", "passed", "pending"]
 PRState = Literal["open", "closed", "merged"]
@@ -150,6 +150,7 @@ class GithubPR(BaseModel):
     )
     merge_commit_sha: CommitId | None = None
     merge_state_status: str | None = None
+    merge_details: GithubPRMergeDetails | str | None = None
     merged_at: str | None = None
     node_id: str
     number: int

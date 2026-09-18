@@ -38,7 +38,7 @@ def test_verbose_view_keeps_summary_on_detail_failure_and_shows_evidence_on_retr
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.prs[1].merge_state_status = "BLOCKED"
-    fake_repo.prs[1].check_rollup_state = "PENDING"
+    fake_repo.prs[1].checks["build"] = "PENDING"
     fake_repo.create_pr_review(pr_number=1, reviewer_login="alice", state="APPROVED")
     thread_url = "https://github.test/octo-org/stacked-prs/pull/1#discussion_r4010947684"
     evidence = GithubPRMergeDetails(
@@ -69,9 +69,9 @@ def test_verbose_view_keeps_summary_on_detail_failure_and_shows_evidence_on_retr
 
     monkeypatch.setattr(GithubClient, "get_pr_merge_details", get_details)
 
-    # Summary inspection does not depend on the additional detail request.
-    assert run_main(repo, config_path, "view") == 0
-    assert "approved, checks pending, merge blocked" in capsys.readouterr().out
+    # A failed follow-up keeps the known summary and reports incomplete evidence.
+    assert run_main(repo, config_path, "view") == EXIT_INCOMPLETE
+    assert "approved, checks pending, merge details unavailable" in capsys.readouterr().out
 
     assert run_main(repo, config_path, "view", "--verbose", "--json") == EXIT_INCOMPLETE
     captured = capsys.readouterr()
@@ -94,7 +94,6 @@ def test_verbose_view_keeps_summary_on_detail_failure_and_shows_evidence_on_retr
         "https://check.test/build",
         "deploy: pending",
         "/pull/1/checks",
-        "other repo rules can still block merging",
     )
     assert run_main(repo, config_path, "view", "--verbose", "--json") == 0
     payload = json.loads(capsys.readouterr().out)
@@ -106,11 +105,7 @@ def test_verbose_view_keeps_summary_on_detail_failure_and_shows_evidence_on_retr
     # Resolving threads and completing checks may leave an unrelated GitHub rule unmet.
     evidence = GithubPRMergeDetails(checks=(GithubCheck(name="build", state="SUCCESS"),))
     assert run_main(repo, config_path, "view", "--verbose") == 0
-    assert_output_contains(
-        capsys.readouterr().out,
-        "GitHub did not expose a specific blocking requirement",
-        "https://github.test/octo-org/stacked-prs/pull/1",
-    )
+    assert "merge blocked" not in capsys.readouterr().out
 
 
 def test_view_json_reports_public_stack_status(
@@ -122,7 +117,7 @@ def test_view_json_reports_public_stack_status(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     local_stack = selected_stack(repo)
     change_id = local_stack.head.change_id
-    fake_repo.prs[1].check_rollup_state = "SUCCESS"
+    fake_repo.prs[1].checks["build"] = "SUCCESS"
     fake_repo.prs[1].state = "closed"
     fake_repo.prs[1].merged_at = "2026-03-16T12:00:00Z"
 

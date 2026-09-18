@@ -21,6 +21,7 @@ from jj_stack.github.resolution import (
 from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubPR
+from jj_stack.models.github_details import GithubPRMergeDetails
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR
 from jj_stack.stack.change_state import (
@@ -33,6 +34,7 @@ from jj_stack.stack.change_state import (
     report_incomplete,
 )
 from jj_stack.stack.preparation import PreparedLocalStack
+from jj_stack.stack.reporting import report_change
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,7 @@ def observe_status(
     context: CommandContext,
     prepared: tuple[PreparedLocalStack, ...],
     exclude_branches: frozenset[str] = frozenset(),
+    verbose: bool = False,
 ) -> dict[str, ChangeObservation] | CliError:
     """Observe the saved PRs of selected stacks in one repository."""
 
@@ -103,7 +106,10 @@ def observe_status(
     try:
         return asyncio.run(
             lookup_pr_lookups_async(
-                context=context, github_repo=target.repo, observations=observations
+                context=context,
+                github_repo=target.repo,
+                observations=observations,
+                verbose=verbose,
             )
         )
     except CliError as error:
@@ -142,7 +148,11 @@ def build_status_result(
     return StatusResult(
         github_error=github_error,
         github_repo=github_repo,
-        incomplete=any(report_incomplete(change.state) for change in changes),
+        incomplete=any(
+            report_incomplete(change.state)
+            or (change.pr is not None and isinstance(change.pr.merge_details, str))
+            for change in changes
+        ),
         remote=target.remote,
         remote_error=target.remote_error,
         changes=tuple(changes),
@@ -168,11 +178,42 @@ async def lookup_pr_lookups_async(
     context: CommandContext,
     github_repo: GithubRepoAddress,
     observations: Mapping[str, ChangeObservation],
+    verbose: bool = False,
 ) -> dict[str, ChangeObservation]:
     """Look up the saved PR on each branch with a client for this repository."""
 
     async with context.open_github_client(repo=github_repo) as github_client:
-        return await discover_pr_lookups(github_client=github_client, observations=observations)
+        lookups = await discover_pr_lookups(
+            github_client=github_client, observations=observations
+        )
+        prs: dict[int, GithubPR] = {}
+        for observation in lookups.values():
+            pr = observation.pr
+            report = report_change(classify(observation))
+            if (
+                isinstance(pr, GithubPR)
+                and pr.state == "open"
+                and not (pr.is_draft or pr.is_queued or report.divergent)
+                and report.problem is None
+                and (verbose or pr.merge_state_status == "BLOCKED")
+            ):
+                prs[pr.number] = pr
+        if not prs:
+            return lookups
+        details: Mapping[int, GithubPRMergeDetails | str | None]
+        try:
+            details = await github_client.get_pr_merge_details(prs=tuple(prs.values()))
+        except GithubClientError as error:
+            details = dict.fromkeys(prs, error.user_facing_reason())
+        for branch, observation in lookups.items():
+            if isinstance(pr := observation.pr, GithubPR) and pr.number in prs:
+                evidence = details.get(pr.number)
+                if evidence is None:
+                    evidence = "PR head or base changed during inspection; rerun the command"
+                lookups[branch] = replace(
+                    observation, pr=pr.model_copy(update={"merge_details": evidence})
+                )
+        return lookups
 
 
 async def discover_pr_lookups(
