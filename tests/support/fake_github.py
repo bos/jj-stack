@@ -226,6 +226,9 @@ class FakeGithubRepo:
     allow_merge_commit: bool = False
     allow_rebase_merge: bool = False
     allow_squash_merge: bool = True
+    # GitHub's "Automatically delete head branches" setting: a merged PR's branch goes away
+    # once the open PRs based on it have moved to the merged PR's base.
+    delete_branch_on_merge: bool = False
     merge_queue_enabled: bool = False
     merge_queue: list[FakeQueueEntry] = field(default_factory=list)
     # The latest queue timeline event per PR, as the merge-progress query selects it.
@@ -417,6 +420,7 @@ class FakeGithubRepo:
             "allow_rebase_merge": self.allow_rebase_merge,
             "allow_squash_merge": self.allow_squash_merge,
             "default_branch": self.default_branch,
+            "delete_branch_on_merge": self.delete_branch_on_merge,
             "full_name": self.full_name,
             "permissions": {"push": self.push_permission},
         }
@@ -540,6 +544,23 @@ class FakeGithubRepo:
     def ref_target(self, branch: str) -> str | None:
         return self.branch_heads().get(branch)
 
+    def _record_merge(self, pr: FakeGithubPR, merge_commit: str) -> None:
+        """Mark the PR merged; a repo that deletes head branches also drops its branch.
+
+        GitHub first retargets open PRs based on that branch to the merged PR's base, so no
+        open PR is left pointing at a missing base.
+        """
+
+        pr.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        pr.merge_commit_sha = merge_commit
+        self.update_pr_state(pr, state="closed")
+        if not self.delete_branch_on_merge:
+            return
+        for dependent in self.prs.values():
+            if dependent.state == "open" and dependent.base_ref == pr.head_ref:
+                self.update_pr_base(dependent, base_ref=pr.base_ref)
+        self._run_backing_git("update-ref", "-d", f"refs/heads/{pr.head_ref}")
+
     def apply_squash_merge(self, pr: FakeGithubPR) -> str:
         """Squash-merge the PR's head into its base on the backing Git repo.
 
@@ -568,12 +589,7 @@ class FakeGithubRepo:
             f"refs/heads/{pr.base_ref}",
             squash_commit,
         )
-        pr.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        pr.merge_commit_sha = squash_commit
-        self.update_pr_state(
-            pr,
-            state="closed",
-        )
+        self._record_merge(pr, squash_commit)
         return squash_commit
 
     def apply_pr_merge(
@@ -606,12 +622,7 @@ class FakeGithubRepo:
             f"refs/heads/{pr.base_ref}",
             rebase_commit,
         )
-        pr.merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        pr.merge_commit_sha = rebase_commit
-        self.update_pr_state(
-            pr,
-            state="closed",
-        )
+        self._record_merge(pr, rebase_commit)
         return rebase_commit
 
     def apply_merge_commit(
@@ -645,14 +656,8 @@ class FakeGithubRepo:
             f"refs/heads/{base_ref}",
             merge_commit,
         )
-        merged_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         for pr in prs:
-            pr.merged_at = merged_at
-            pr.merge_commit_sha = merge_commit
-            self.update_pr_state(
-                pr,
-                state="closed",
-            )
+            self._record_merge(pr, merge_commit)
         return merge_commit
 
     def rewrite_pr_onto_base(
