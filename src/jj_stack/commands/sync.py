@@ -54,7 +54,7 @@ from jj_stack.github.resolution import (
     GithubTarget,
     resolve_github_target,
 )
-from jj_stack.identifiers import ChangeId, CommitId
+from jj_stack.identifiers import ChangeId, CommitId, is_change_id_prefix
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import quote_revset_symbol
 from jj_stack.models.github import GithubRepo
@@ -80,7 +80,6 @@ from jj_stack.stack.preparation import (
     PreparedLocalStack,
     prepare_local_stack,
 )
-from jj_stack.stack.selected import is_change_id_prefix
 from jj_stack.stack.selection import resolve_linked_change_for_pr
 from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock

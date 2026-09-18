@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import jj_stack.ui as ui
 from jj_stack.errors import UnsupportedStackError
-from jj_stack.identifiers import CommitId, short_change_id
+from jj_stack.identifiers import CommitId, is_full_change_id, short_change_id
 from jj_stack.jj.client import (
     JjClient,
     JjCommandError,
@@ -51,7 +51,7 @@ def select_stack_path(
         selector = "@ | @-"
         selected_revset = "@"
         select_mutable_copy = False
-    elif len(revset) == 32 and is_change_id_prefix(revset):
+    elif is_full_change_id(revset):
         selector = _change_id_revset(revset)
         selected_revset = revset
         select_mutable_copy = True
@@ -378,11 +378,3 @@ def _replace_selected_revset(
 
 def _change_id_revset(change_id: str) -> str:
     return f"change_id({quote_revset_symbol(change_id)})"
-
-
-def is_change_id_prefix(value: str | None) -> bool:
-    """Return whether a bare selector has jj change-ID syntax."""
-
-    return (
-        value is not None and bool(value) and all("k" <= character <= "z" for character in value)
-    )

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from string.templatelib import Interpolation, Template, convert
 from typing import Literal
 
-from jj_stack.identifiers import short_change_id, short_commit_id
+from jj_stack.identifiers import is_full_change_id, short_change_id, short_commit_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,8 +109,10 @@ def commit_id(name: str) -> SemanticText:
 
 
 def revset(text: str) -> SemanticText:
-    """Wrap jj revset syntax for semantic rendering."""
+    """Wrap jj revset syntax for semantic rendering; a full change ID is shortened for display."""
 
+    if is_full_change_id(text):
+        text = short_change_id(text)
     return semantic_text(text, "revset")
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from jj_stack.errors import EXIT_AMBIGUOUS, EXIT_FAILURE, EXIT_INCOMPLETE, EXIT_NO_STACK
 from jj_stack.github.client import GithubClient, GithubClientError
+from jj_stack.identifiers import short_change_id
 from jj_stack.jj.client import JjClient
 from jj_stack.models.github_details import GithubCheck, GithubPRMergeDetails, GithubReviewThread
 from jj_stack.state.store import TrackingStore, resolve_state_path
@@ -389,7 +390,9 @@ def test_view_refuses_an_abandoned_change_by_either_selector_form(
     # The change-ID form stops earlier, in selector resolution, but reports the same
     # category and the same sentence.
     assert change_id_exit == EXIT_NO_STACK
-    assert "did not resolve to a visible commit" in change_id_captured.err
+    rendered = " ".join(change_id_captured.err.split())
+    assert f"Revset {short_change_id(change.change_id)} did not resolve" in rendered
+    assert change.change_id not in rendered
 
 
 def test_view_reports_unresolvable_trunk_in_empty_repo(

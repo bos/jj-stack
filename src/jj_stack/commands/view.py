@@ -49,7 +49,7 @@ from jj_stack.formatting import (
 )
 from jj_stack.github.error_messages import remote_and_github_unavailable_messages
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.identifiers import CommitId, short_change_id
+from jj_stack.identifiers import CommitId, is_change_id_prefix, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.client import (
     JjCommandError,
@@ -63,7 +63,6 @@ from jj_stack.stack.reporting import (
     status_label,
     submittable_edits,
 )
-from jj_stack.stack.selected import is_change_id_prefix
 from jj_stack.stack.selection import resolve_linked_change_for_pr
 from jj_stack.stack.status import (
     StackStatusChange,
