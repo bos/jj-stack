@@ -26,7 +26,7 @@ from jj_stack.errors import (
     ErrorMessage,
     UsageError,
 )
-from jj_stack.identifiers import ChangeId, CommitId
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.jj.cli_args import JjCliArgs
 from jj_stack.jj.colors import JjColorWhen
 from jj_stack.jj.settings import JjSettings
@@ -451,7 +451,10 @@ class JjClient:
         *,
         color_when: JjColorWhen,
     ) -> dict[ChangeId, str]:
-        """Render shortest visible change IDs for the supplied logical change IDs."""
+        """Render the shortest unique prefix of each change ID, in jj's own colors.
+
+        A change with no visible commit renders as its ordinary short prefix.
+        """
 
         ordered_change_ids = tuple(dict.fromkeys(change_ids))
         if not ordered_change_ids:
@@ -480,7 +483,10 @@ class JjClient:
                 raw_change_id, rendered_change_id = stripped.split("\t", maxsplit=1)
                 change_id = json.loads(raw_change_id)
                 rendered.setdefault(change_id, rendered_change_id)
-        return rendered
+        return {
+            change_id: rendered.get(change_id, short_change_id(change_id))
+            for change_id in ordered_change_ids
+        }
 
     def find_private_commits(
         self,

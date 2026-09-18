@@ -475,19 +475,7 @@ def _stack_table(
 ) -> ui.DataTable:
     stack_table_rows = [
         (
-            (
-                f"@ {
-                    rendered_change_ids.get(
-                        row.head_change_id,
-                        short_change_id(row.head_change_id),
-                    )
-                }"
-                if row.current
-                else rendered_change_ids.get(
-                    row.head_change_id,
-                    short_change_id(row.head_change_id),
-                )
-            ),
+            f"{'@ ' if row.current else ''}{rendered_change_ids[row.head_change_id]}",
             f"{row.size} {'change' if row.size == 1 else 'changes'}",
             row.prs,
             row.state,
@@ -498,7 +486,7 @@ def _stack_table(
     for orphan in orphan_rows:
         stack_table_rows.append(
             (
-                rendered_change_ids.get(orphan.change_id, short_change_id(orphan.change_id)),
+                rendered_change_ids[orphan.change_id],
                 "orphan",
                 orphan.pr_label,
                 orphan.state,
