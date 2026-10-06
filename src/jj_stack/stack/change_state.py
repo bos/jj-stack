@@ -581,10 +581,11 @@ def _classify_open(
     baseline = with_pr["tracked"].submitted_baseline.commit_id
     head = pr.head.sha
     remote = o.remote_target
-    if head != baseline and head not in _local_commit_ids(o):
-        return PRHeadMoved(**with_pr)
+    # GitHub moves a PR branch before it reports the new head, so a disagreement comes first.
     if not isinstance(remote, Unobserved) and remote != head:
         return BranchDisagrees(**with_pr)
+    if head != baseline and head not in _local_commit_ids(o):
+        return PRHeadMoved(**with_pr)
     # A queued pull request whose head and branch still agree with what was submitted waits
     # for GitHub; one that no longer agrees is reported as moved first.
     if pr.is_queued:
