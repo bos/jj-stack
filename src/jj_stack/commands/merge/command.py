@@ -177,7 +177,8 @@ async def _run_merge(
         except OperationLockBusyError as error:
             _warn_incomplete_post_merge_sync(prepared_merge.sync_head, has_recovery_hint=True)
             error.hint = (
-                t"After it finishes, run {ui.cmd(f'jj-stack sync {prepared_merge.sync_head}')}."
+                t"After it finishes, run {ui.cmd(f'jj-stack sync {prepared_merge.sync_head}')}. "
+                t"If that command already synced this stack, nothing is left to do."
             )
             raise
         except BaseException as error:

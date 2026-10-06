@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
+from jj_stack.commands.merge.github_stack import PendingMerge
 from jj_stack.errors import EXIT_GITHUB, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.overview_comments import STACK_OVERVIEW_COMMENT_MARKER
@@ -420,14 +422,14 @@ def test_stack_rewriting_merge_removes_pre_merge_copies_and_keeps_working_copy_e
         assert all(not changes for changes in copies.values())
 
 
-def test_merge_finishes_with_cleanup_when_the_fetch_removes_the_merged_changes(
+def test_merge_finishes_when_another_sync_already_cleaned_up_the_stack(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     # A clone that fetches the PR branch namespace shows the PR branches as bookmarks. When
-    # GitHub deletes those branches after the merge, jj abandons their commits during the
-    # follow-up fetch, so nothing is left for sync to remove.
+    # GitHub deletes those branches after the merge, jj abandons their commits during the next
+    # fetch, so only the saved links are left to clean up.
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     fake_repo.delete_branch_on_merge = True
@@ -435,10 +437,23 @@ def test_merge_finishes_with_cleanup_when_the_fetch_removes_the_merged_changes(
     expose_pr_branch_namespace(repo)
     state_store = TrackingStore.for_repo(repo)
     stack = selected_stack(repo)
+    head_change_id = stack.head.change_id
+    wait = PendingMerge.wait
+    sync_exit_codes: list[int] = []
 
+    # Another terminal syncs as soon as GitHub reports the merge, before merge's own update.
+    async def wait_then_sync_elsewhere(self, github):
+        result = await wait(self, github)
+        sync_exit_codes.append(
+            await asyncio.to_thread(run_main, repo, config_path, "sync", head_change_id)
+        )
+        return result
+
+    monkeypatch.setattr(PendingMerge, "wait", wait_then_sync_elsewhere)
     exit_code = run_main(repo, config_path, "merge")
     captured = capsys.readouterr()
 
+    assert sync_exit_codes == [0]
     assert exit_code == 0, (captured.out, captured.err)
     assert "Do not run" not in captured.err
     assert read_remote_ref(fake_repo.git_dir, "main") == fake_repo.prs[2].merge_commit_sha

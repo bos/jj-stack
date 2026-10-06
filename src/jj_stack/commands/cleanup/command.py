@@ -219,7 +219,14 @@ async def cleanup_stack_without_local_copies(run: GithubRun, *, change_id: Chang
     """
 
     state = run.context.state_store.load()
-    pr_number = state.prs[change_id].pr_identity.pr_number
+    tracked = state.prs.get(change_id)
+    if tracked is None:
+        # Another command, such as a sync run while merge waited, already finished the cleanup.
+        console.output(
+            t"Nothing left to clean up: {ui.change_id(change_id)} no longer has a saved link."
+        )
+        return 0
+    pr_number = tracked.pr_identity.pr_number
     console.output(
         t"Change {ui.change_id(change_id)} has no visible commit, so there is no local stack to "
         t"update; cleaning up its merged pull requests."
