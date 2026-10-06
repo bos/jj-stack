@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from jj_stack.cli import main
+from jj_stack.errors import CliError
 from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.client import JjClient, JjCommandError, PRRefUpdate
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, TrackingState
@@ -105,6 +106,23 @@ def test_diffstats_batch_preserves_each_commits_files_and_jj_formatting(
     assert diffstats == expected
     # Batching removes per-change process startup without replacing jj's diff formatter.
     assert len(calls) == 1
+
+
+def test_jj_messages_parse_under_colored_quiet_user_settings(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    commit_file(repo, "first", "first.txt")
+    run_command(["jj", "config", "set", "--repo", "ui.color", "always"], repo)
+    run_command(["jj", "config", "set", "--repo", "ui.quiet", "true"], repo)
+    client = JjClient(repo)
+
+    with pytest.raises(CliError, match="Invalid revset"):
+        client.resolve_commit("(")
+    first = client.resolve_commit("@-")
+    operation_id = client.prepare_rebase_changes(
+        change_ids=(first.change_id,), destination=client.resolve_commit("root()").commit_id
+    )
+
+    assert operation_id
 
 
 def test_list_git_remotes_preserves_distinct_fetch_and_push_urls(tmp_path: Path) -> None:

@@ -177,6 +177,8 @@ class RenderableCommit(Protocol):
 
 
 _NO_CLI_ARGS = JjCliArgs()
+# User settings that would otherwise change the text jj-stack parses.
+_PINNED_OUTPUT_CONFIG = ("--config", "ui.quiet=false", "--config", "ui.log-word-wrap=false")
 
 
 class JjClient:
@@ -396,16 +398,8 @@ class JjClient:
         """Render one change with the user's `jj log` formatting."""
 
         stdout = self._run_jj(
-            (
-                "--no-pager",
-                "--color",
-                color_when,
-                "log",
-                "-r",
-                quote_revset_symbol(change.commit_id),
-                "--limit",
-                "1",
-            )
+            ("--no-pager", "log", "-r", quote_revset_symbol(change.commit_id), "--limit", "1"),
+            color=color_when,
         )
         return tuple(line for line in stdout.rstrip("\n").splitlines() if line.strip() != "~")
 
@@ -457,15 +451,14 @@ class JjClient:
             stdout = self._run_jj(
                 (
                     "--no-pager",
-                    "--color",
-                    color_when,
                     "log",
                     "--no-graph",
                     "-r",
                     revset,
                     "-T",
                     _SHORT_CHANGE_ID_TEMPLATE,
-                )
+                ),
+                color=color_when,
             )
             for line in stdout.splitlines():
                 stripped = line.strip()
@@ -972,11 +965,7 @@ class JjClient:
         command = ["log", "--no-graph", "-r", revset, "-T", template]
         if limit is not None:
             command.extend(["--limit", str(limit)])
-        # JSON records must remain whole even when the user's display log wraps lines.
-        stdout = self._run_jj(
-            command,
-            cli_args=JjCliArgs((*cli_args.argv, "--config", "ui.log-word-wrap=false")),
-        )
+        stdout = self._run_jj(command, cli_args=cli_args)
         return [stripped for line in stdout.splitlines() if (stripped := line.strip())]
 
     def _run_jj(
@@ -986,9 +975,13 @@ class JjClient:
         manage_working_copy: bool = False,
         ignore_immutable: bool = False,
         return_stderr: bool = False,
+        color: JjColorWhen = "never",
         cli_args: JjCliArgs = _NO_CLI_ARGS,
     ) -> str:
         """Run jj without touching the working copy unless the caller explicitly requires it.
+
+        Output settings are pinned after the user's own overrides; only output shown to the
+        user asks for color.
 
         Planned rewrites pass ignore_immutable instead of an immutability revset: the caller has
         already checked that every commit it rewrites is mutable, and a revset that names a PR
@@ -997,7 +990,7 @@ class JjClient:
 
         use_working_copy = manage_working_copy or self._initial_working_copy_snapshot_pending
         self._initial_working_copy_snapshot_pending = False
-        extra_args: list[str] = []
+        extra_args = ["--color", color, *_PINNED_OUTPUT_CONFIG]
         if not use_working_copy:
             extra_args.append("--ignore-working-copy")
         if ignore_immutable:

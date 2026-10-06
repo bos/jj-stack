@@ -19,6 +19,7 @@ from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.jj.client import (
     _BOOKMARK_TEMPLATE,
     _COMMIT_TEMPLATE,
+    _PINNED_OUTPUT_CONFIG,
     JjClient,
     JjCommandError,
     PRRefUpdate,
@@ -30,6 +31,16 @@ from tests.support.change_helpers import make_change
 
 _REPO_GIT_DIR = str(Path("/repo/.git"))
 _PUSH_REMOTE = f"jj-stack-push-{UUID(int=0).hex}"
+_PINNED_ARGS = ("--color", "never", *_PINNED_OUTPUT_CONFIG)
+
+
+def _unpinned(command: Sequence[str]) -> tuple[str, ...]:
+    """Drop the output settings every jj call pins, so tests can match the jj command itself."""
+
+    key = tuple(command)
+    if key[1 : 1 + len(_PINNED_ARGS)] == _PINNED_ARGS:
+        return (key[0], *key[1 + len(_PINNED_ARGS) :])
+    return key
 
 
 class _AmbiguousRevsetClient(JjClient):
@@ -196,7 +207,7 @@ def test_remote_failure_redacts_http_userinfo_without_changing_subprocess_argv(
 
     def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         assert Path(kwargs["cwd"]) == Path("/repo")
-        invocation = tuple(command)
+        invocation = _unpinned(command)
         seen_commands.append(invocation)
         if invocation == ("jj", "--ignore-working-copy", "git", "remote", "list"):
             return subprocess.CompletedProcess(
@@ -267,7 +278,7 @@ def test_missing_pr_branch_fetch_isolation_is_a_shared_dry_run_terminal(
 
     def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         assert Path(kwargs["cwd"]) == Path("/repo")
-        invocation = tuple(command)
+        invocation = _unpinned(command)
         seen_commands.append(invocation)
         if invocation[:4] == ("jj", "--ignore-working-copy", "config", "list"):
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
@@ -304,7 +315,7 @@ def test_pr_branch_fetch_isolation_reports_the_effective_override_origin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
-        invocation = tuple(command)
+        invocation = _unpinned(command)
         assert invocation[:4] == ("jj", "--ignore-working-copy", "config", "list")
         return subprocess.CompletedProcess(
             command,
@@ -414,7 +425,7 @@ def test_remote_pr_branch_ref_mutation_uses_one_atomic_exact_lease_push(
 
     def runner(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
         assert Path(kwargs["cwd"]) == Path("/repo")
-        invocation = tuple(command)
+        invocation = _unpinned(command)
         seen_commands.append(invocation)
         if invocation == ("jj", "--ignore-working-copy", "git", "root"):
             return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
@@ -476,7 +487,7 @@ def test_remote_change_id_inspection_fetches_an_object_without_creating_a_ref(
 
     def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
         nonlocal cat_file_calls
-        invocation = tuple(command)
+        invocation = _unpinned(command)
         seen_commands.append(invocation)
         if invocation == ("jj", "--ignore-working-copy", "git", "root"):
             return subprocess.CompletedProcess(command, 0, stdout="/repo/.git\n", stderr="")
@@ -537,7 +548,7 @@ def test_temp_ref_cleanup_removes_raw_ref_when_forgetting_bookmark_fails(
 
     def runner(command: Sequence[str], **_kwargs) -> subprocess.CompletedProcess[str]:
         nonlocal raw_ref_present
-        invocation = tuple(command)
+        invocation = _unpinned(command)
         seen_commands.append(invocation)
         if invocation[:5] == (
             "jj",
@@ -597,9 +608,7 @@ def test_temp_ref_cleanup_removes_raw_ref_when_forgetting_bookmark_fails(
 
 def _runner(responses: dict[tuple[str, ...], str]):
     def run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
-        key = tuple(command)
-        if key[1:3] == ("--config", "ui.log-word-wrap=false"):
-            key = (key[0], *key[3:])
+        key = _unpinned(command)
         response_key = (
             (key[0], *key[2:]) if len(key) > 1 and key[1] == "--ignore-working-copy" else key
         )
