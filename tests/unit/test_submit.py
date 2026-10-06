@@ -61,6 +61,7 @@ def test_overview_comment_move_keeps_source_when_head_creation_fails() -> None:
                 comments_by_pr_number={1: source_comment, 2: None},
                 overview_body=source_comment.body,
                 github_client=client,
+                orphaned_pr_numbers=(),
                 pr_numbers=(1, 2),
             )
         )

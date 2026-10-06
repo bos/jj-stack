@@ -23,13 +23,14 @@ async def sync_stack_overview_comments(
     comments_by_pr_number: dict[int, GithubIssueComment | None],
     overview_body: str | None,
     github_client: GithubClient,
+    orphaned_pr_numbers: tuple[int, ...],
     pr_numbers: tuple[int, ...],
 ) -> None:
     """Write the planned overview to the head before removing its old copies."""
     head_pr_number = pr_numbers[-1]
     with console.progress(
         description="Syncing stack overview comments",
-        total=len(pr_numbers),
+        total=len(pr_numbers) + len(orphaned_pr_numbers),
     ) as progress:
         await _sync_overview_comment(
             comment_body=overview_body,
@@ -39,7 +40,7 @@ async def sync_stack_overview_comments(
         )
         progress.advance()
         await run_bounded_tasks(
-            items=pr_numbers[:-1],
+            items=(*pr_numbers[:-1], *orphaned_pr_numbers),
             run_item=lambda pr_number: _sync_overview_comment(
                 comment_body=None,
                 existing_comment=comments_by_pr_number.get(pr_number),
@@ -55,8 +56,9 @@ def plan_stack_overview(
     comments: tuple[GithubIssueComment | None, ...],
     generated_stack_description: GeneratedDescription | None,
     is_lone_pr: bool,
+    orphaned_comments: tuple[GithubIssueComment | None, ...],
 ) -> str | None:
-    """Choose the overview from comments ordered bottom to head, including new PRs."""
+    """Choose the overview from comments ordered bottom to head, then from orphaned PRs."""
 
     if is_lone_pr:
         return None
@@ -72,10 +74,12 @@ def plan_stack_overview(
     if head_comment is not None:
         return head_comment.body
 
-    existing_bodies = {comment.body for comment in comments if comment is not None}
+    existing_bodies = {
+        comment.body for comment in (*comments, *orphaned_comments) if comment is not None
+    }
     if len(existing_bodies) > 1:
         raise CliError(
-            "Could not preserve the stack overview because the selected pull requests "
+            "Could not preserve the stack overview because pull requests in the stack "
             "have different managed comments.",
             hint=t"Write the combined stack overview to a file and add "
             t"{ui.cmd('--describe stack=FILE')} when retrying, replacing {ui.code('FILE')} "

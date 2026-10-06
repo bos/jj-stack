@@ -49,7 +49,9 @@ jj-stack submit --describe stack=overview.md
 ```
 
 Later submits preserve the overview, including edits made on GitHub, until you supply another
-stack description. If the stack grows, jj-stack moves the overview to the new head PR.
+stack description. If the stack grows, jj-stack moves the overview to the new head PR. If you
+abandon or squash away the head change and at least two changes remain, the next submit also
+moves the overview to the new head PR.
 
 Relative paths resolve from the directory in which you invoke jj-stack.
 

@@ -581,8 +581,9 @@ baseline this repo never held leaves nothing to compare, so the description foll
 See [pull request descriptions](../reference/descriptions.md).
 
 When a submit supplies no stack overview, the existing overview text is preserved and moves to
-the current head PR if the stack grows. An explicitly supplied overview replaces it. A lone PR has
-no overview comment. New PRs are created in the requested draft state.
+the current head PR, including from an orphaned PR that was in the same GitHub stack. An
+explicitly supplied overview replaces it. A lone PR has no overview comment. New PRs are created
+in the requested draft state.
 
 Submit maintains a per-PR revision-history comment with the most recent versions available from
 GitHub's force-push timeline. It shows readers how the PR evolved, remains after cleanup, and

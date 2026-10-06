@@ -125,19 +125,16 @@ async def publish_prepared(
     desired_pr_numbers = tuple(
         plan.prepared.pr.number if plan.prepared.pr is not None else None for plan in pr_plans
     )
-    omitted_stack_prs = (
-        omitted_active_stack_prs(
+    orphaned_pr_snapshots = confirm_orphaned_pr_snapshots(
+        candidates=omitted_active_stack_prs(
             desired=desired_pr_numbers,
             observed_stacks=observed_stacks,
-        )
-        if not prepared_inputs.is_maximal_path
-        else ()
-    )
-    orphaned_pr_snapshots = confirm_orphaned_pr_snapshots(
-        candidates=omitted_stack_prs,
+        ),
         jj_client=client,
         state=state,
     )
+    # An orphaned PR left the stack, so its overview belongs to the new head.
+    orphaned_pr_numbers = tuple(sorted(number for number, _, _ in orphaned_pr_snapshots))
     github_stack_plan = plan_github_stack(
         desired=desired_pr_numbers,
         is_maximal_path=prepared_inputs.is_maximal_path,
@@ -173,7 +170,10 @@ async def publish_prepared(
                     STACK_OVERVIEW_COMMENT_MARKER,
                     REVISION_HISTORY_COMMENT_MARKER,
                 ),
-                pr_numbers=tuple(number for number in desired_pr_numbers if number is not None),
+                pr_numbers=(
+                    *(number for number in desired_pr_numbers if number is not None),
+                    *orphaned_pr_numbers,
+                ),
                 revision_limit=REVISION_HISTORY_VERSION_LIMIT,
             )
         except GithubClientError as error:
@@ -185,6 +185,7 @@ async def publish_prepared(
                 overview_comments.get(number) if number is not None else None
                 for number in desired_pr_numbers
             ),
+            orphaned_comments=tuple(overview_comments[number] for number in orphaned_pr_numbers),
             generated_stack_description=prepared_inputs.generated_stack_description,
             # A single selected PR based on another PR is still part of a larger stack.
             is_lone_pr=len(pr_plans) == 1 and pr_plans[0].base_branch == trunk.branch,
@@ -238,15 +239,18 @@ async def publish_prepared(
         and (expected_target := plan.prepared.expected_remote_target) is not None
     }
     try:
-        grouped = await apply_github_stack_plan(
-            github_client=github_client,
-            plan=github_stack_plan,
-            pr_numbers=pr_numbers,
-        )
+        # Move the overview first: a failed stack update leaves no stack to find orphans in.
         await sync_stack_overview_comments(
             comments_by_pr_number=overview_comments,
             overview_body=overview_body,
             github_client=github_client,
+            # Without a head overview to hold it, an orphan keeps its copy.
+            orphaned_pr_numbers=orphaned_pr_numbers if overview_body is not None else (),
+            pr_numbers=pr_numbers,
+        )
+        grouped = await apply_github_stack_plan(
+            github_client=github_client,
+            plan=github_stack_plan,
             pr_numbers=pr_numbers,
         )
         await sync_revision_history_comments(

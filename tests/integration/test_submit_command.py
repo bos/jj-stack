@@ -1368,23 +1368,30 @@ def test_submit_describe_reads_files_and_preserves_stack_overview(
     assert "Replacement stack overview" in replacement
     assert "edited on GitHub" not in replacement
 
+    # Abandoning the head orphans its PR, so the overview moves down to the new head.
+    run_command(["jj", "abandon", refreshed_stack.head.change_id], repo)
+    assert run_main(repo, config_path, "submit") == 0
+    capsys.readouterr()
+
+    assert _overview_comments(fake_repo, top_pr_number) == []
+    assert [comment.body for comment in _overview_comments(fake_repo, 2)] == [replacement]
+
     # A one-change --base refresh of the stack head still selects a stacked PR, so the
     # overview it owns must survive.
-    parent_change_id = refreshed_stack.changes[-2].change_id
     assert (
         run_main(
             repo,
             config_path,
             "submit",
             "--base",
-            parent_change_id,
-            refreshed_stack.head.change_id,
+            refreshed_stack.changes[0].change_id,
+            refreshed_stack.changes[1].change_id,
         )
         == 0
     )
     capsys.readouterr()
 
-    preserved = _overview_comments(fake_repo, top_pr_number)
+    preserved = _overview_comments(fake_repo, 2)
     assert len(preserved) == 1, "the stack overview comment was deleted"
     assert preserved[0].body == replacement
 
