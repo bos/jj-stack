@@ -409,7 +409,10 @@ def _checked_out_workspace_hint(
             t"For {ui.code(name)} at {ui.code(root)}{shell}:\n  "
             t"{ui.cmd(_workspace_move_command(root=root, platform=sys.platform))}\n"
         )
-        disposable.append((name, root))
+        # The workspace that holds the repo store cannot be trashed without losing every
+        # workspace's history.
+        if not (workspace.root / ".jj" / "repo").is_dir():
+            disposable.append((name, root))
     if disposable:
         hint.append(
             "Alternatively, forget and move to the trash any workspace that is no longer "

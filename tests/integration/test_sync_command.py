@@ -169,10 +169,12 @@ def test_sync_recovers_an_unrecorded_fork_after_its_parent_stack_merged(
     assert fake_repo.github_stacks == {7: (1, 2)}
 
 
+@pytest.mark.parametrize("other_workspace", [False, True])
 def test_sync_recovers_a_clean_single_pr_rebase_merge(
     tmp_path: Path,
     monkeypatch,
     capsys,
+    other_workspace: bool,
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -182,8 +184,11 @@ def test_sync_recovers_a_clean_single_pr_rebase_merge(
     pr_branch = identity.head_ref
     fake_repo.advance_branch("main", path="upstream.txt", contents="upstream\n")
     landed_commit_id = fake_repo.apply_rebase_merge(fake_repo.prs[identity.pr_number])
-    # The author is still working on the merged change; sync moves the working copy to trunk.
+    # The author is still working on the merged change; sync moves the working copy to trunk,
+    # also when another workspace makes jj list the current one by name.
     run_command(["jj", "edit", submitted.change_id], repo)
+    if other_workspace:
+        _add_other_workspace(repo, tmp_path / "other-workspace", "trunk()")
 
     exit_code = run_main(repo, config_path, "sync", submitted.change_id)
     captured = capsys.readouterr()
@@ -308,7 +313,7 @@ def test_sync_all_cleans_a_rewritten_merge_after_its_local_copy_is_gone(
     assert f"refs/heads/{pr_branch}" not in remote_refs(fake_repo.git_dir)
 
 
-def test_merge_and_sync_name_recovery_for_a_workspace_blocking_removal(
+def test_merge_and_sync_offer_safe_recovery_for_each_workspace_blocking_removal(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -339,22 +344,32 @@ def test_merge_and_sync_name_recovery_for_a_workspace_blocking_removal(
     assert "rerun the same" not in merged.err
 
     other_workspace.rename(tmp_path / "deleted-workspace")
+    # The default workspace holds the repo, so the hint must not offer to trash it.
+    run_command(["jj", "edit", submitted.change_id], repo)
+    current_workspace = tmp_path / "current-workspace"
+    run_command(
+        ["jj", "workspace", "add", "--name", "current", "-r", "trunk()", str(current_workspace)],
+        repo,
+    )
     _squash_merge_pr(fake_repo, 2)
 
-    exit_code = run_main(repo, config_path, "sync", "--all")
+    exit_code = run_main(current_workspace, config_path, "sync", "--all")
     captured = capsys.readouterr()
 
     assert exit_code == 1, (captured.out, captured.err)
-    assert submitted.change_id[:8] in captured.err
-    assert "other" in captured.err
-    assert "jj no longer reports a directory" in captured.err
+    error = " ".join(captured.err.split())
+    assert f"Cannot remove merged {submitted.change_id[:8]}" in error
+    assert "checked out in workspaces default, other." in error
+    assert "jj no longer reports a directory" in error
     workspace_argument = "'other'" if sys.platform == "win32" else "other"
-    assert f"jj workspace forget -- {workspace_argument}" in captured.err
-    assert "If it still exists elsewhere" in captured.err
-    assert str(other_workspace) not in captured.err
-    assert_output_contains(captured.err, f"Then run {retry}")
+    assert f"jj workspace forget -- {workspace_argument}" in error
+    assert "If it still exists elsewhere" in error
+    assert str(other_workspace) not in error
+    assert str(repo) in error
+    assert "trash" not in error.lower()
+    assert f"Then run {retry}" in error
     merged_change = JjClient(repo).resolve_commit(submitted.change_id)
-    assert merged_change.working_copy_workspaces == ("other",)
+    assert set(merged_change.working_copy_workspaces) == {"default", "other"}
     remaining = TrackingStore.for_repo(repo).load().prs
     assert submitted.change_id in remaining
     assert independent.change_id not in remaining

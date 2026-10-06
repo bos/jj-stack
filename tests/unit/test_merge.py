@@ -52,7 +52,7 @@ def test_resolve_merge_method_prefers_rebase_then_squash_then_merge(
     )
 
 
-def test_signed_stack_uses_the_only_allowed_method() -> None:
+def test_a_single_allowed_method_serves_signed_stacks_and_rejects_other_choices() -> None:
     repo = _repo(
         allow_merge_commit=False,
         allow_rebase_merge=False,
@@ -68,6 +68,8 @@ def test_signed_stack_uses_the_only_allowed_method() -> None:
         )
         == "squash"
     )
+    with pytest.raises(CliError, match="does not allow"):
+        _resolve_merge_method(changes=(), configured="rebase", merge_method=None, repo_state=repo)
 
 
 def test_resolve_merge_method_rejects_a_repo_with_no_allowed_method() -> None:
@@ -95,17 +97,6 @@ def test_unreported_merge_methods_require_an_explicit_choice() -> None:
         _resolve_merge_method(changes=(), configured="squash", merge_method=None, repo_state=repo)
         == "squash"
     )
-
-
-def test_resolve_merge_method_rejects_a_method_the_repo_disallows() -> None:
-    repo = _repo(
-        allow_merge_commit=False,
-        allow_rebase_merge=False,
-        allow_squash_merge=True,
-    )
-
-    with pytest.raises(CliError, match="does not allow"):
-        _resolve_merge_method(changes=(), configured="rebase", merge_method=None, repo_state=repo)
 
 
 def test_merge_preconditions_name_a_closed_pull_request() -> None:

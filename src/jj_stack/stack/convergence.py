@@ -524,8 +524,11 @@ def _require_no_checked_out_merged_changes(
     for item in changes:
         change = item.change
         # Only another workspace blocks removal, because abandoning its working copy would leave
-        # it stale. The current workspace moves to trunk before the change is abandoned.
-        if change is None or not change.working_copy_workspaces:
+        # it stale. The current workspace moves to trunk before the change is abandoned. jj lists
+        # working copies by name only when there are several workspaces, including the current.
+        if change is None or len(change.working_copy_workspaces) <= int(
+            change.current_working_copy
+        ):
             continue
         workspaces = change.working_copy_workspaces
         if len(workspaces) == 1:
