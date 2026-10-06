@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from jj_stack.errors import EXIT_AMBIGUOUS, EXIT_FAILURE, EXIT_INCOMPLETE, EXIT_NO_STACK
@@ -686,6 +687,43 @@ def test_reads_that_ignore_the_working_copy_leave_jj_state_untouched(
     capsys.readouterr()
     assert run_main(other, config_path, "view") == EXIT_FAILURE
     assert "jj workspace update-stale" in capsys.readouterr().err
+
+
+def test_view_and_list_name_sync_for_a_moved_pr_head_without_fetching_it(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Inspection never fetches, so it cannot judge GitHub's rewrite and names sync, which can."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = selected_stack(repo).head.change_id
+    fake_repo.advance_branch("main", path="trunk.txt", contents="trunk\n")
+    github_head = fake_repo.rewrite_pr_onto_base(fake_repo.prs[1], base_ref="main")
+    git_dir = run_command(["jj", "git", "root"], repo).stdout.strip()
+
+    def operation_head() -> str:
+        return run_command(
+            ["jj", "--ignore-working-copy", "op", "log", "-n1", "--no-graph", "-T", "id"], repo
+        ).stdout
+
+    operation_before = operation_head()
+    run_main(repo, config_path, "view", change_id)
+    view = " ".join(capsys.readouterr().out.split())
+    run_main(repo, config_path, "list", "--json")
+    (listed,) = json.loads(capsys.readouterr().out)["rows"][0]["changes"]
+
+    assert "PR branch moved" in view
+    assert f"jj-stack sync {change_id[:8]}" in view
+    assert "jj-stack checkout" not in view
+    assert "jj-stack relink" not in view
+    assert f"jj-stack sync {change_id[:8]}" in listed["repair"]
+    assert operation_head() == operation_before
+    missing = subprocess.run(
+        ["git", "--git-dir", git_dir, "cat-file", "-e", github_head], check=False
+    )
+    assert missing.returncode != 0
 
 
 def test_view_and_list_report_readiness_approvals_and_lag_behind_trunk(

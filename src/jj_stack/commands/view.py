@@ -50,6 +50,7 @@ from jj_stack.jj.client import (
     JjCommandError,
     divergent_change_id_from_error,
 )
+from jj_stack.stack.change_state import PRHeadMoved
 from jj_stack.stack.divergence import divergence_recovery_hint
 from jj_stack.stack.preparation import PreparedLocalStack, prepare_local_stack
 from jj_stack.stack.reporting import (
@@ -57,6 +58,7 @@ from jj_stack.stack.reporting import (
     READY_MARK,
     ChangeReport,
     approval_count,
+    moved_pr_branch_advice,
     report_change,
     stack_behind,
     status_label,
@@ -549,6 +551,10 @@ def render_status_advisory_lines(
         and reports[change.change_id].repair is None
     ]
     submitted_disagreements = tuple(reversed(submittable_edits(reports)))
+    # Inspection does not fetch a moved head, so it cannot tell GitHub's rewrite from other work.
+    moved = {
+        change.change_id for change in result.changes if isinstance(change.state, PRHeadMoved)
+    }
     if (
         not cleanup_changes
         and not divergent_changes
@@ -646,39 +652,33 @@ def render_status_advisory_lines(
                 ),
             )
         )
-    submitted_reports = [
-        reports[change.change_id] for change in result.changes if change.tracked is not None
-    ]
-    all_pr_branches_moved = len(submitted_reports) > 1 and all(
-        report.problem == "branch_moved" for report in submitted_reports
-    )
-    if any(report.problem == "branch_moved" for report in reports.values()):
+    # A merged change still in the stack sends everything to sync instead.
+    if moved and not cleanup_changes:
+        conflicted = tuple(
+            change.change_id for change in result.changes if change.change.conflict
+        )
+        # Sync would stop on the conflicts again; submit checks the PR heads once they are gone.
+        command = "jj-stack submit" if conflicted else "jj-stack sync"
+        first_step: ui.Message = (
+            t"Resolve the conflicts in {ui.join(ui.change_id, conflicted)} with {ui.cmd('jj')}, "
+            t"then run "
+            t"{ui.cmd(f'{command} {head}')}"
+            if conflicted
+            else t"Run {ui.cmd(f'{command} {head}')}"
+        )
         rows.append(
             (
-                "GitHub stack rebase",
-                (
-                    "If GitHub rebased the stack, run ",
-                    ui.cmd(f"jj-stack sync {short_change_id(result.changes[0].change_id)}"),
-                    " (preview with ",
-                    ui.option("--dry-run"),
-                    ").",
-                ),
+                status_label("branch_moved", count=len(moved)),
+                (moved_pr_branch_advice(first_step, command=command), "."),
             )
         )
     for change in repair_changes:
         report = reports[change.change_id]
-        if all_pr_branches_moved and report.problem == "branch_moved":
-            continue
+        repair = () if change.change_id in moved else ("; ", report.repair or "")
         rows.append(
             (
                 ui.change_id(change.change_id),
-                (
-                    status_label(report.status),
-                    ": ",
-                    report.reason or "",
-                    "; ",
-                    report.repair or "",
-                ),
+                (status_label(report.status), ": ", report.reason or "", *repair),
             )
         )
 

@@ -16,32 +16,28 @@ from jj_stack.errors import CliError, ConflictedStackError
 from jj_stack.github.error_messages import read_or_stop
 from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.models.github import GithubStack
-from jj_stack.stack.convergence_models import ConvergenceActions
+from jj_stack.stack.convergence_models import SelectedConvergencePlan
 from jj_stack.stack.selected import select_stack_path
 
 
 async def refresh_selected_prs(
     run: GithubRun,
     *,
-    actions: ConvergenceActions,
+    plan: SelectedConvergencePlan,
     github_stacks: tuple[GithubStack, ...],
     trunk: ObservedTrunk,
 ) -> None:
-    if not actions.on_trunk:
+    if not plan.publish:
         return
     context = run.context
-    if actions.remaining_changes and run.dry_run:
-        short = short_change_id(actions.remaining_changes[-1].change_id)
-        console.output(
-            t"Run {ui.cmd(f'jj-stack sync {short}')} to apply the "
-            t"rebase and update the remaining pull requests."
-        )
+    if plan.remaining_changes and run.dry_run:
+        _preview(plan)
         return
-    if not actions.remaining_prs:
-        if actions.remaining_changes:
+    if not plan.remaining_prs:
+        if plan.remaining_changes:
             console.output("The remaining changes have no pull requests; they stay local.")
         return
-    selected_ids = tuple(actions.remaining_prs)
+    selected_ids = tuple(plan.remaining_prs)
     state = context.state_store.load()
     # The rebase changed local commits. PR identities and remote refs are still valid.
     path = select_stack_path(jj_client=context.jj_client, state=state, revset=selected_ids[-1])
@@ -68,7 +64,7 @@ async def refresh_selected_prs(
     except ConflictedStackError as error:
         raise ConflictedStackError(
             error.message,
-            hint=t"The local rebase is complete. Resolve the conflicts with {ui.cmd('jj')}, "
+            hint=t"Resolve the conflicts with {ui.cmd('jj')}, "
             t"then update the remaining pull requests with "
             t"{ui.cmd(f'jj-stack submit {short_change_id(selected_ids[-1])}')}.",
         ) from error
@@ -77,7 +73,7 @@ async def refresh_selected_prs(
     drafts: dict[ChangeId, bool] = {}
     for change in path.stack.changes:
         change_id = change.change_id
-        pr = actions.remaining_prs[change_id]
+        pr = plan.remaining_prs[change_id]
         prepared.append(
             PreparedSubmitChange(
                 branch=pr.head.ref,
@@ -92,7 +88,7 @@ async def refresh_selected_prs(
     changes = tuple(prepared)
     descriptions = preserve_external_pr_text(
         descriptions=inputs.generated_pr_descriptions,
-        prs=actions.remaining_prs,
+        prs=plan.remaining_prs,
         submitted_descriptions=inputs.submitted_descriptions,
         template=inputs.pr_template,
     )
@@ -108,19 +104,44 @@ async def refresh_selected_prs(
         prepared_changes=changes,
         prior_reviewers={},
     )
+    head = short_change_id(selected_ids[-1])
     cleanup_commands = tuple(
         f"jj-stack cleanup --pull-request {merged.candidate.pr_identity.pr_number}"
-        for merged in actions.on_trunk
+        for merged in plan.on_trunk
     )
+    retry_hint: ui.Message = (
+        t"The local stack has been updated. Finish updating the pull requests with "
+        t"{ui.cmd(f'jj-stack submit {head}')}"
+    )
+    if cleanup_commands:
+        retry_hint = (
+            retry_hint,
+            t", then clean up the merged pull requests with {ui.join(ui.cmd, cleanup_commands)}",
+        )
     await publish_prepared(
         run,
         prepared_inputs=inputs,
         pr_plans=plans,
         remote_targets=remote_targets,
-        retry_hint=t"The local stack has been updated. Finish updating the pull requests with "
-        t"{ui.cmd(f'jj-stack submit {short_change_id(selected_ids[-1])}')}, then clean up "
-        t"the merged pull requests with {ui.join(ui.cmd, cleanup_commands)}.",
+        retry_hint=(retry_hint, "."),
         observed_stacks=github_stacks,
         trunk=trunk,
         trunk_targets={trunk.branch: path.stack.trunk.commit_id},
+    )
+
+
+def _preview(plan: SelectedConvergencePlan) -> None:
+    short = short_change_id(plan.remaining_changes[-1].change_id)
+    if conflicted := tuple(item for item in plan.remaining_changes if item.conflict):
+        # Sync would stop at these before updating any pull request.
+        names = ui.join(lambda item: ui.change_id(item.change_id), conflicted)
+        console.output(
+            t"Sync would rebase the stack and stop at the conflicts in {names}. Resolve "
+            t"them with {ui.cmd('jj')}, then update the remaining pull requests with "
+            t"{ui.cmd(f'jj-stack submit {short}')}."
+        )
+        return
+    console.output(
+        t"Run {ui.cmd(f'jj-stack sync {short}')} to apply the "
+        t"rebase and update the remaining pull requests."
     )

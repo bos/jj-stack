@@ -153,9 +153,11 @@ same `sync` command after GitHub reports that the merge finished.
 After GitHub's **Rebase stack** action finishes, run `jj-stack sync <head-change-id>` to bring
 that rebase into your local stack.
 
-GitHub's rewritten commits do not retain jj change IDs. `jj-stack sync` checks that the PR order
-and contents match, rebases your original changes, and updates the PR branches with commits that
-retain their change IDs. It stops if local edits or different contents on GitHub prevent a match.
+GitHub's rewritten commits do not retain jj change IDs. `jj-stack sync` checks that each PR branch
+holds only what you submitted, rebases your local changes onto the same base, and pushes them to
+the PR branches, keeping any local edits. It stops if a PR branch holds work you did not submit.
+Run `jj-stack sync` before `jj-stack submit`; otherwise submit replaces GitHub's rebase with your
+local commits on their old base.
 
 ### Several merged stacks
 

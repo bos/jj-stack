@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -12,23 +11,13 @@ from jj_stack.bootstrap import CommandContext
 from jj_stack.commands.cleanup.command import cleanup_tracked_prs
 from jj_stack.commands.github_run import GithubRun, ObservedTrunk
 from jj_stack.commands.sync_prs import refresh_selected_prs
-from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClientError
 from jj_stack.identifiers import ChangeId, CommitId, short_change_id
-from jj_stack.jj.cli_args import JjCliArgs
-from jj_stack.jj.client import PRRefUpdate, quote_revset_symbol
 from jj_stack.models.github import GithubPR, GithubStack
 from jj_stack.models.stack import LocalCommit
-from jj_stack.models.tracking import SubmittedBaseline, TrackedPR
-from jj_stack.stack.convergence import adopts_github_rewrite
-from jj_stack.stack.convergence_models import (
-    ConvergenceActions,
-    GithubStackMergePlan,
-    GithubStackRebasePlan,
-    OnTrunkChange,
-    SelectedConvergencePlan,
-)
+from jj_stack.models.tracking import TrackedPR
+from jj_stack.stack.convergence_models import OnTrunkChange, SelectedConvergencePlan
 from jj_stack.stack.convergence_observation import dependent_path_heads
 from jj_stack.ui import Message
 
@@ -101,22 +90,18 @@ async def apply_selected_convergence(
     """Apply a stack sync plan in dependency order."""
 
     run = replace(run, trunk=trunk)
-    actions = plan.actions
-    if isinstance(plan, GithubStackRebasePlan):
-        _apply_github_stack_rebase(run, plan=plan, trunk_commit_id=trunk_commit_id)
-        return 0
-    results = await apply_pr_finishes(run, actions.on_trunk)
+    results = await apply_pr_finishes(run, plan.on_trunk)
     dependencies = _apply_local_convergence(run, plan=plan, trunk_commit_id=trunk_commit_id)
     await refresh_selected_prs(
         run,
-        actions=actions,
+        plan=plan,
         github_stacks=github_stacks,
         trunk=trunk,
     )
     return await _cleanup_reconciled_prs(
         run,
         finish_results=results,
-        remaining_prs=actions.remaining_prs,
+        remaining_prs=plan.remaining_prs,
         dependencies=dependencies,
     )
 
@@ -125,221 +110,35 @@ def _apply_local_convergence(
     run: GithubRun, *, plan: SelectedConvergencePlan, trunk_commit_id: CommitId
 ) -> dict[ChangeId, tuple[LocalCommit, ...]]:
     context = run.context
-    actions = plan.actions
-    rewritten = plan.rewritten_changes if isinstance(plan, GithubStackMergePlan) else ()
-    adopt = adopts_github_rewrite(rewritten)
-    adopted_ids = {item.change_id for item in rewritten} if adopt else set()
-    rebased = (
-        (
-            *(item for item in actions.remaining_changes if item.change_id not in adopted_ids),
-            *actions.working_copy_children,
-        )
-        if actions.on_trunk
-        else ()
-    )
-    if isinstance(plan, GithubStackMergePlan) and adopt and rewritten:
-        top = rewritten[-1]
-        replaced = tuple(item.local_change.commit_id for item in rewritten)
-        destination = top.pr.head.sha
-        attachment = context.jj_client.import_remote_pr_branch_ref(
-            remote=run.target.remote.name,
-            branch=top.candidate.pr_identity.head_ref,
-            expected_target=destination,
-            expected_chain=tuple(
-                (item.pr.head.sha, (None, item.change_id)) for item in rewritten
-            ),
-            base_descends_from=plan.merge_result_commit_id,
-            base_ancestor_of=trunk_commit_id,
-        )
-    else:
-        replaced = ()
-        destination = trunk_commit_id
-        attachment = nullcontext()
-    with attachment:
-        operation_id = (
-            _prepare_merge_stack_rewrite(
-                context=context, plan=plan, trunk_commit_id=trunk_commit_id
-            )
-            if isinstance(plan, GithubStackMergePlan) and replaced
-            else None
-        )
-        if run.dry_run:
-            return _observe_removal_dependencies(context=context, actions=actions)
-        if operation_id is not None:
-            context.jj_client.integrate_operation(operation_id)
-            rebased = ()
-            replaced = ()
-        if rebased:
-            context.jj_client.rebase_changes(
-                change_ids=tuple(change.change_id for change in rebased),
-                destination=destination,
-            )
-        if replaced:
-            context.jj_client.abandon_commits(replaced)
-        dependencies = _observe_removal_dependencies(context=context, actions=actions)
-        abandoned = tuple(
-            change.change.commit_id
-            for change in actions.on_trunk
-            if change.change is not None
-            and not change.change.immutable
-            and not dependencies.get(change.change_id)
-        )
-        if abandoned:
-            if any(
-                change.change.current_working_copy
-                for change in actions.on_trunk
-                if change.change is not None and change.change.commit_id in abandoned
-            ):
-                context.jj_client.new_empty_change(trunk_commit_id)
-            context.jj_client.abandon_commits(abandoned)
-        if rewritten:
-            context.state_store.relink_prs(
-                replacements={
-                    item.change_id: TrackedPR(
-                        pr_identity=item.candidate.pr_identity,
-                        submitted_baseline=SubmittedBaseline(commit_id=item.pr.head.sha),
-                    )
-                    for item in rewritten
-                },
-            )
-    return dependencies
-
-
-def _prepare_merge_stack_rewrite(
-    *, context: CommandContext, plan: GithubStackMergePlan, trunk_commit_id: CommitId
-) -> str | None:
-    rewritten = plan.rewritten_changes
-    imported_ids = {
-        change.commit_id: change.change_id
-        for change in context.jj_client.query_commits_by_ids(
-            tuple(item.pr.head.sha for item in rewritten)
-        )
-    }
-    if all(imported_ids[item.pr.head.sha] == item.change_id for item in rewritten):
-        return None
-    _, operation_id = _verified_local_rebase(
-        context=context, plan=plan, trunk_commit_id=trunk_commit_id
-    )
-    return operation_id
-
-
-def _apply_github_stack_rebase(
-    run: GithubRun, *, plan: GithubStackRebasePlan, trunk_commit_id: CommitId
-) -> None:
-    context = run.context
-    remote_name = run.target.remote.name
-    adopted = plan.rewritten_changes
-    top = adopted[-1]
-    with context.jj_client.import_remote_pr_branch_ref(
-        remote=remote_name,
-        branch=top.candidate.pr_identity.head_ref,
-        expected_target=top.pr.head.sha,
-        expected_chain=tuple((item.pr.head.sha, (None, item.change_id)) for item in adopted),
-    ):
-        desired_by_change, operation_id = _verified_local_rebase(
-            context=context,
-            plan=plan,
-            trunk_commit_id=trunk_commit_id,
-        )
-        if run.dry_run:
-            return
-        if operation_id is not None:
-            context.jj_client.integrate_operation(operation_id)
-        context.jj_client.mutate_remote_pr_branch_refs(
-            remote=remote_name,
-            updates=tuple(
-                PRRefUpdate(
-                    branch=item.candidate.pr_identity.head_ref,
-                    expected_target=item.pr.head.sha,
-                    desired_target=desired_by_change[item.change_id].commit_id,
-                )
-                for item in adopted
-            ),
-        )
-        context.state_store.relink_prs(
-            replacements={
-                item.change_id: TrackedPR(
-                    pr_identity=item.candidate.pr_identity,
-                    submitted_baseline=SubmittedBaseline(
-                        commit_id=desired_by_change[item.change_id].commit_id
-                    ),
-                )
-                for item in adopted
-            },
-        )
-
-
-def _verified_local_rebase(
-    *,
-    context: CommandContext,
-    plan: GithubStackRebasePlan | GithubStackMergePlan,
-    trunk_commit_id: CommitId,
-) -> tuple[dict[ChangeId, LocalCommit], str | None]:
-    adopted = plan.rewritten_changes
-    # Trunk may have advanced since GitHub rebased the stack. Compare both versions at the
-    # actual rebase point, including when retrying after a local rewrite or remote push.
-    bases = context.jj_client.query_commits(
-        f"parents({quote_revset_symbol(adopted[0].pr.head.sha)}) & "
-        f"first_ancestors({quote_revset_symbol(trunk_commit_id)})"
-    )
-    if len(bases) != 1:
-        raise CliError(
-            "GitHub's rewritten stack is not based on trunk's first-parent history.",
-            hint=t"Compare the PR branches on GitHub with {ui.revset('trunk()')} before "
-            t"choosing which history to keep.",
-        )
-    base_commit_id = bases[0].commit_id
-    local = plan.actions.remaining_changes
-    desired = local
-    operation_id: str | None = None
-    if adopts_github_rewrite(adopted):
-        operation_id = context.jj_client.prepare_rebase_changes(
+    if run.dry_run:
+        return _observe_removal_dependencies(context=context, plan=plan)
+    # Hiding GitHub's copies first leaves one copy of each change to rebase and publish.
+    context.jj_client.abandon_commits(plan.github_copies)
+    if plan.destination is not None:
+        context.jj_client.rebase_changes(
             change_ids=tuple(
-                change.change_id for change in (*local, *plan.actions.working_copy_children)
+                change.change_id
+                for change in (*plan.remaining_changes, *plan.working_copy_children)
             ),
-            destination=base_commit_id,
+            destination=plan.destination,
         )
-        grouped = context.jj_client.query_commits_by_change_ids(
-            tuple(item.change_id for item in local),
-            cli_args=JjCliArgs((f"--at-op={operation_id}",)),
-        )
-        desired = tuple(
-            commits[0] for item in local if len(commits := grouped[item.change_id]) == 1
-        )
-        if len(desired) != len(local):
-            raise CliError(
-                "A local change did not have exactly one commit after rebasing onto trunk."
-            )
-    expected_parent = base_commit_id
-    for change in desired:
-        if change.conflict:
-            raise CliError(
-                t"A local rebase of {ui.change_id(change.change_id)} would produce conflicts.",
-                hint=t"Rebase and resolve the local stack to match GitHub's version, then "
-                t"rerun the same {ui.cmd('jj-stack sync')} command.",
-            )
-        if change.parents != (expected_parent,):
-            raise CliError(
-                "The local stack does not match GitHub's rebase onto trunk.",
-                hint=t"Compare the local history with the PR branches on GitHub, then "
-                t"restore the intended change order with {ui.cmd('jj')}. Run "
-                t"{ui.cmd('jj-stack sync')} again when the stacks match.",
-            )
-        expected_parent = change.commit_id
-    desired_by_change: dict[ChangeId, LocalCommit] = {item.change_id: item for item in desired}
-    tree_pairs = tuple(
-        (desired_by_change[item.change_id].commit_id, item.pr.head.sha) for item in adopted
+    dependencies = _observe_removal_dependencies(context=context, plan=plan)
+    abandoned = tuple(
+        change.change.commit_id
+        for change in plan.on_trunk
+        if change.change is not None
+        and not change.change.immutable
+        and not dependencies.get(change.change_id)
     )
-    trees = context.jj_client.git_tree_ids(
-        tuple(commit_id for pair in tree_pairs for commit_id in pair)
-    )
-    if any(trees[local_id] != trees[remote_id] for local_id, remote_id in tree_pairs):
-        raise CliError(
-            "GitHub's rewritten stack does not have the same contents as the local rebase.",
-            hint=t"Inspect the changed PR branches on GitHub before choosing which version "
-            t"to keep.",
-        )
-    return desired_by_change, operation_id
+    if abandoned:
+        if any(
+            change.change.current_working_copy
+            for change in plan.on_trunk
+            if change.change is not None and change.change.commit_id in abandoned
+        ):
+            context.jj_client.new_empty_change(trunk_commit_id)
+        context.jj_client.abandon_commits(abandoned)
+    return dependencies
 
 
 async def _cleanup_reconciled_prs(
@@ -379,7 +178,7 @@ async def _cleanup_reconciled_prs(
 
 
 def _observe_removal_dependencies(
-    *, context: CommandContext, actions: ConvergenceActions
+    *, context: CommandContext, plan: SelectedConvergencePlan
 ) -> dict[ChangeId, tuple[LocalCommit, ...]]:
     anchors = {
         change.change_id: (
@@ -387,7 +186,7 @@ def _observe_removal_dependencies(
             if change.change is not None
             else change.candidate.submitted_baseline.commit_id
         )
-        for change in actions.on_trunk
+        for change in plan.on_trunk
         if change.evidence_kind == "rewritten"
     }
     observed = dependent_path_heads(
@@ -395,8 +194,8 @@ def _observe_removal_dependencies(
         context=context,
         excluded_change_ids=frozenset(
             (
-                *(change.change_id for change in actions.on_trunk),
-                *(item.change_id for item in actions.remaining_changes),
+                *(change.change_id for change in plan.on_trunk),
+                *(item.change_id for item in plan.remaining_changes),
             )
         ),
     )

@@ -9,9 +9,7 @@ import jj_stack.ui as ui
 from jj_stack.errors import CliError, DriftError
 from jj_stack.formatting import format_pr_label
 from jj_stack.identifiers import ChangeId, CommitId, short_change_id
-from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalStack
-from jj_stack.models.tracking import TrackedPR
 from jj_stack.stack.change_state import (
     UNOBSERVED,
     BranchDisagrees,
@@ -22,6 +20,7 @@ from jj_stack.stack.change_state import (
     Merged,
     PRHeadMoved,
     Queued,
+    Rewritten,
     Stop,
     Unobserved,
     WithPR,
@@ -29,7 +28,6 @@ from jj_stack.stack.change_state import (
     live_pr,
     stop_error,
 )
-from jj_stack.stack.github_stack_safety import github_rewrote_stack
 from jj_stack.stack.pr_branches import ResolvedPRBranch
 from jj_stack.ui import Message
 
@@ -39,11 +37,9 @@ from .models import ExplicitBase, PreparedSubmitChange
 def prepare_submit_changes(
     *,
     branch_resolutions: tuple[ResolvedPRBranch, ...],
-    github_stacks: tuple[GithubStack, ...],
     lookups: Mapping[str, ChangeObservation],
     remote_targets: Mapping[str, CommitId],
     stack: LocalStack,
-    tracked_prs: Mapping[ChangeId, TrackedPR],
 ) -> tuple[PreparedSubmitChange, ...]:
     """Classify every selected change and describe the one atomic remote update.
 
@@ -63,17 +59,14 @@ def prepare_submit_changes(
             classify(replace(lookups[resolution.branch], remote_target=observed_target))
         )
     head = short_change_id(stack.head.change_id)
-    moved_by_github = _moved_by_github(
-        tuple(states), github_stacks=github_stacks, tracked_prs=tracked_prs
-    )
-    if moved_by_github:
-        # One sync updates them all.
+    rewritten = tuple(state for state in states if isinstance(state, Rewritten))
+    if rewritten and any(isinstance(state, Merged) for state in states):
+        # One sync removes the merged changes and updates them all.
         prs = ui.join(
-            lambda state: format_pr_label(state.pr.number, url=state.pr.html_url), moved_by_github
+            lambda state: format_pr_label(state.pr.number, url=state.pr.html_url), rewritten
         )
         raise DriftError(
-            t"GitHub updated {prs} while merging or rebasing the GitHub stack, so submit made "
-            t"no changes.",
+            t"GitHub updated {prs} while merging the GitHub stack, so submit made no changes.",
             condition="remote_branch_moved",
             hint=t"Run {ui.cmd(f'jj-stack sync {head}')} to bring GitHub's updates into the "
             t"local stack.",
@@ -92,34 +85,6 @@ def prepare_submit_changes(
         for resolution, change, state in zip(
             branch_resolutions, stack.changes, states, strict=True
         )
-    )
-
-
-def _moved_by_github(
-    states: tuple[ChangeState, ...],
-    *,
-    github_stacks: tuple[GithubStack, ...],
-    tracked_prs: Mapping[ChangeId, TrackedPR],
-) -> tuple[PRHeadMoved, ...]:
-    """The PRs GitHub moved while merging or rebasing their GitHub stack."""
-
-    tracked = {pr.pr_identity.pr_number for pr in tracked_prs.values()}
-    unmoved = {
-        state.pr.number
-        for state in states
-        if isinstance(state, WithPR)
-        and state.pr.head.sha == state.tracked.submitted_baseline.commit_id
-    }
-    rewritten = {
-        number
-        for stack in github_stacks
-        if github_rewrote_stack(stack, tracked=tracked, unmoved=unmoved)
-        for number in stack.active_pr_numbers
-    }
-    return tuple(
-        state
-        for state in states
-        if isinstance(state, PRHeadMoved) and state.pr.number in rewritten
     )
 
 

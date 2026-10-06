@@ -22,40 +22,14 @@ class OnTrunkChange:
 
 
 @dataclass(frozen=True, slots=True)
-class ConvergenceActions:
+class SelectedConvergencePlan:
     on_trunk: tuple[OnTrunkChange, ...]
     remaining_prs: dict[ChangeId, GithubPR]
     remaining_changes: tuple[LocalCommit, ...]
     working_copy_children: tuple[LocalCommit, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class RewrittenPRChange:
-    change_id: ChangeId
-    candidate: TrackedPR
-    local_change: LocalCommit
-    pr: GithubPR
-
-
-@dataclass(frozen=True, slots=True)
-class OrdinaryConvergencePlan:
-    actions: ConvergenceActions
-
-
-@dataclass(frozen=True, slots=True)
-class GithubStackMergePlan:
-    actions: ConvergenceActions
-    rewritten_changes: tuple[RewrittenPRChange, ...]
-    # GitHub's reported merge result for the last merged member, when it reported one.
-    merge_result_commit_id: CommitId | None
-
-
-@dataclass(frozen=True, slots=True)
-class GithubStackRebasePlan:
-    actions: ConvergenceActions
-    rewritten_changes: tuple[RewrittenPRChange, ...]
-
-
-type SelectedConvergencePlan = (
-    OrdinaryConvergencePlan | GithubStackMergePlan | GithubStackRebasePlan
-)
+    # Where the remaining changes move; None leaves them in place.
+    destination: CommitId | None
+    # Fetched copies of PR heads that GitHub rewrote and the local commits will replace.
+    github_copies: tuple[CommitId, ...]
+    # Whether the remaining PRs get the local commits.
+    publish: bool

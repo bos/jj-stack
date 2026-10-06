@@ -471,20 +471,20 @@ def test_submit_landed_interior_base_requires_the_child_to_move_to_trunk(
     survivor_snapshot = (
         survivor_pr.base_ref,
         survivor_pr.head_ref,
-        survivor_pr.head_sha,
         read_remote_ref(fake_repo.git_dir, survivor_pr.head_ref),
         fake_repo.stack_number_for_pr(2),
         state_after_sync.prs[parent_survivor.change_id].pr_identity,
         state_after_sync.prs[parent_survivor.change_id].submitted_baseline,
     )
     assert survivor_after_sync.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
-    assert survivor_pr.base_ref == "main"
-    assert (
-        survivor_pr.base_ref,
-        survivor_pr.head_ref,
-        survivor_pr.head_sha,
-        survivor_pr.state,
-    ) == survivor_before
+    assert (survivor_pr.base_ref, survivor_pr.head_ref, survivor_pr.state) == (
+        survivor_before[0],
+        survivor_before[1],
+        survivor_before[3],
+    )
+    assert read_remote_ref(fake_repo.git_dir, survivor_pr.head_ref) == (
+        survivor_after_sync.commit_id
+    )
     assert fake_repo.github_stacks == stacks_before
     assert state_after_sync.prs[parent_survivor.change_id].pr_identity == (
         state_before.prs[parent_survivor.change_id].pr_identity
@@ -512,7 +512,7 @@ def test_submit_landed_interior_base_requires_the_child_to_move_to_trunk(
     child_stack_number = fake_repo.stack_number_for_pr(3)
     assert parent_stack_number is not None
     assert child_stack_number is not None
-    assert parent_stack_number == survivor_snapshot[4]
+    assert parent_stack_number == survivor_snapshot[3]
     assert fake_repo.github_stacks[parent_stack_number] == (1, 2)
     assert fake_repo.github_stacks[child_stack_number] == (3, 4)
     assert parent_stack_number != child_stack_number
@@ -527,7 +527,6 @@ def test_submit_landed_interior_base_requires_the_child_to_move_to_trunk(
     assert (
         survivor_pr.base_ref,
         survivor_pr.head_ref,
-        survivor_pr.head_sha,
         read_remote_ref(fake_repo.git_dir, survivor_pr.head_ref),
         fake_repo.stack_number_for_pr(2),
         state_after_child_submit.prs[parent_survivor.change_id].pr_identity,
@@ -1962,6 +1961,7 @@ def test_submit_refreshes_unchanged_pr_text_and_preserves_github_edits(
     (
         pytest.param("after_remote_push", False, False, id="retry"),
         pytest.param("after_remote_push", True, True, id="relink"),
+        pytest.param("update_pr", False, True, id="pr-updated"),
     ),
 )
 def test_submit_after_an_interrupted_submit_keeps_pr_text_following_the_change(
@@ -1972,9 +1972,9 @@ def test_submit_after_an_interrupted_submit_keeps_pr_text_following_the_change(
     relink: bool,
     describe_again: bool,
 ) -> None:
-    """A submit can stop after pushing a branch but before updating the PR. The PR then shows
-    the text of an earlier version, which is not an edit on GitHub, so later submits keep
-    updating it, also once `relink` records the pushed commit.
+    """A submit can stop after pushing a branch, or after updating the PR but before saving
+    the pushed commit. The PR then shows the text of a version other than the submitted commit,
+    which is not an edit on GitHub, so later submits keep updating it.
     """
 
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
@@ -2145,7 +2145,10 @@ def test_submit_sends_github_stack_rewrites_to_sync_in_one_error(
     capsys,
     drift: str,
 ) -> None:
-    """PRs GitHub moved need one sync; pushes by someone else keep each PR's own repair."""
+    """PRs GitHub moved in a merge need one sync; others' pushes keep each PR's own repair.
+
+    The merged change is still local, as it is when the user submits before syncing.
+    """
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
@@ -2156,8 +2159,6 @@ def test_submit_sends_github_stack_rewrites_to_sync_in_one_error(
         fake_repo.apply_squash_merge(fake_repo.prs[1])
         fake_repo.rewrite_pr_onto_base(fake_repo.prs[2], base_ref="main")
         fake_repo.rewrite_pr_onto_base(fake_repo.prs[3], base_ref=fake_repo.prs[2].head_ref)
-        run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "main"], repo)
-        run_command(["jj", "rebase", "-s", changes[1].change_id, "-o", "main@origin"], repo)
     else:
         for number in (2, 3):
             fake_repo.advance_branch(

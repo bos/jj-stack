@@ -76,7 +76,8 @@ Inspect the PR on GitHub, then decide what to do with the work there:
 
 If GitHub changed the branch while merging or rebasing your stack, run
 `jj-stack sync <head-change-id>` instead. It brings GitHub's completed merge or rebase into your
-local stack.
+local stack. `jj-stack view` cannot tell these cases apart, so it suggests `jj-stack sync`, which
+stops and names the steps above if a PR branch holds work you did not submit.
 
 If someone else pushed to your PR branch and GitHub then merged the PR, what merged came from
 their commit, not from the one jj-stack pushed. `jj-stack sync` cannot tell whether your change is
@@ -153,9 +154,10 @@ After GitHub's **Rebase stack** action completes, run:
 jj-stack sync <head-change-id>
 ```
 
-`jj-stack sync` rebases your original local changes and updates the PR branches with equivalent
-commits that retain their jj change IDs. There is no need to relink the PRs. It stops if local
-edits or different contents on GitHub prevent it from matching the two versions.
+`jj-stack sync` rebases your local changes the same way and pushes them to the PR branches,
+keeping any local edits. There is no need to relink the PRs. It stops if a PR branch on GitHub
+holds work you did not submit. Run `jj-stack sync` before `jj-stack submit`; otherwise submit
+replaces GitHub's rebase with your local commits on their old base.
 
 Select this stack explicitly: `jj-stack sync --all` handles completed merges, not GitHub stack
 rebases.
@@ -206,7 +208,8 @@ jj-stack submit <head-change-id>
 ```
 
 Use `submit` after resolving these conflicts: the local rebase is already applied, so rerunning
-`sync` may find no merged changes left to process.
+`sync` may find no merged changes left to process. Until then, `jj-stack view` reports any PR
+branches GitHub rewrote as moved and names the same `submit` command.
 
 If unused branches or saved links remain for merged PRs, clean up each by its PR number:
 

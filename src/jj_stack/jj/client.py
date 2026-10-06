@@ -694,17 +694,10 @@ class JjClient:
         remote: str,
         branch: str,
         expected_target: CommitId,
-        expected_chain: Sequence[tuple[CommitId, tuple[ChangeId | None, ...]]] = (),
-        base_descends_from: CommitId | None = None,
-        base_ancestor_of: CommitId | None = None,
     ) -> Iterator[LocalCommit]:
         """Import a PR branch at its expected commit, then remove the temporary ref and bookmark.
 
-        An expected chain guards every member's raw Git change ID and single-parent ancestry.
-        The chain's base, the bottom member's parent, must descend from base_descends_from and
-        be an ancestor of base_ancestor_of when those are given: GitHub roots rewritten members
-        on trunk's tip at rewrite time, which may be past the merge result. Each member accepts
-        any listed change ID, including a missing change-ID header represented by `None`.
+        Checkout uses this to make an existing PR head a local commit.
         """
 
         ref = f"refs/heads/{branch}"
@@ -725,26 +718,6 @@ class JjClient:
                     t"Remote branch {ui.bookmark(branch)} changed while it was being imported.",
                     condition="remote_branch_moved",
                 )
-            expected_parent: CommitId | None = None
-            for target, accepted_change_ids in expected_chain:
-                actual = self._read_git_commit_metadata(target)
-                if (
-                    actual.change_id not in accepted_change_ids
-                    or len(actual.parents) != 1
-                    or (expected_parent is not None and actual.parents != (expected_parent,))
-                    or (
-                        expected_parent is None
-                        and not self._git_commit_in_range(
-                            actual.parents[0],
-                            after=base_descends_from,
-                            within=base_ancestor_of,
-                        )
-                    )
-                ):
-                    raise CliError(
-                        "Imported pull request heads no longer form the expected stack."
-                    )
-                expected_parent = target
             self._run_jj(("git", "import"))
             change = self.resolve_commit(quote_revset_symbol(_PR_BRANCH_TEMP_BOOKMARK))
             if change.commit_id != expected_target:
@@ -755,19 +728,44 @@ class JjClient:
         finally:
             self.clear_pr_branch_temp_artifacts()
 
-    def _git_commit_in_range(
-        self, commit_id: CommitId, *, after: CommitId | None, within: CommitId | None
-    ) -> bool:
-        """Whether the commit descends from `after` and is an ancestor of `within`, inclusive."""
+    def fetch_commits(self, *, remote: str, commit_ids: Sequence[CommitId]) -> None:
+        """Fetch commits by ID into the backing Git store without creating any ref."""
 
-        return (after is None or self._git_is_ancestor(after, commit_id)) and (
-            within is None or self._git_is_ancestor(commit_id, within)
+        url = self._git_remote(remote).fetch_url
+        self._run_git(("fetch", "--no-tags", "--no-write-fetch-head", url, *commit_ids))
+
+    def rebased_tree(
+        self, commit_id: CommitId, *, parent: CommitId, onto: CommitId
+    ) -> str | None:
+        """Return the tree of the commit's changes from `parent` applied to `onto`.
+
+        None means the changes conflict there. Renames are not detected, as in a jj rebase.
+        """
+
+        output = self._run_git(
+            (
+                "merge-tree",
+                "--write-tree",
+                "-X",
+                "no-renames",
+                f"--merge-base={parent}",
+                onto,
+                commit_id,
+            ),
+            allowed_returncodes=frozenset({0, 1}),
         )
+        tree, _, rest = output.partition("\n")
+        return None if rest.strip() else tree
 
-    def _git_is_ancestor(self, ancestor: CommitId, descendant: CommitId) -> bool:
-        # rev-list prints the ancestor itself unless the descendant already reaches it.
-        listed = self._run_git(("rev-list", "-n", "1", ancestor, f"^{descendant}"))
-        return not listed.strip()
+    def on_first_parent_chain(self, commit_id: CommitId, *, tip: CommitId) -> bool:
+        """Whether the commit is the tip or reached from it through first parents only."""
+
+        if commit_id == tip:
+            return True
+        # The walk stops at the first commit that the candidate already reaches.
+        walked = self._run_git(("rev-list", "--first-parent", "--parents", tip, f"^{commit_id}"))
+        lines = walked.splitlines()
+        return bool(lines) and lines[-1].split()[1:2] == [commit_id]
 
     def read_remote_git_commit(
         self,
@@ -912,43 +910,6 @@ class JjClient:
             ignore_immutable=True,
         )
 
-    def prepare_rebase_changes(
-        self,
-        *,
-        change_ids: Sequence[ChangeId],
-        destination: CommitId,
-    ) -> str:
-        """Compute a rebase in an unintegrated operation and return its operation ID."""
-
-        output = self._run_jj(
-            (
-                "--no-integrate-operation",
-                "rebase",
-                "-r",
-                change_ids_revset(change_ids),
-                "-d",
-                destination,
-            ),
-            ignore_immutable=True,
-            return_stderr=True,
-        )
-        match = re.search(
-            r"Operation left uncommitted because --no-integrate-operation was requested: "
-            r"([0-9a-f]+)",
-            output,
-        )
-        if match is None:
-            raise JjCommandError(
-                t"{ui.cmd('jj --no-integrate-operation rebase')} did not report its operation ID."
-            )
-        return match.group(1)
-
-    def integrate_operation(self, operation_id: str) -> None:
-        """Integrate one previously prepared jj operation."""
-
-        self._run_jj(("op", "integrate", operation_id), manage_working_copy=True)
-        self._run_jj(("workspace", "update-stale"), manage_working_copy=True)
-
     def git_tree_ids(self, commit_ids: Sequence[CommitId]) -> dict[CommitId, str]:
         """Return Git tree IDs for the given commits."""
 
@@ -1013,7 +974,6 @@ class JjClient:
         *,
         manage_working_copy: bool = False,
         ignore_immutable: bool = False,
-        return_stderr: bool = False,
         color: JjColorWhen = "never",
         cli_args: JjCliArgs = _NO_CLI_ARGS,
     ) -> str:
@@ -1038,7 +998,6 @@ class JjClient:
             ["jj", *self._cli_args.argv, *cli_args.argv, *extra_args, *args],
             missing_tool_message=t"{ui.cmd('jj')} is not installed or is not on PATH.",
             detect_stale_workspace=True,
-            return_stderr=return_stderr,
         )
 
     def _run_git(
@@ -1126,7 +1085,6 @@ class JjClient:
         detect_stale_workspace: bool,
         allowed_returncodes: frozenset[int] = frozenset({0}),
         lossy_text: bool = False,
-        return_stderr: bool = False,
     ) -> str:
         try:
             with timed(command[0], _redact_http_url_userinfo(shlex.join(command))):
@@ -1165,7 +1123,7 @@ class JjClient:
             raise JjCommandError(
                 t"{ui.cmd(displayed_command)} failed: {displayed_message}", stderr=message
             )
-        return completed.stderr if return_stderr else completed.stdout
+        return completed.stdout
 
 
 def _git_push_diagnostics(stderr: str) -> str:

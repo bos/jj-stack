@@ -117,12 +117,7 @@ def test_jj_messages_parse_under_colored_quiet_user_settings(tmp_path: Path) -> 
 
     with pytest.raises(CliError, match="Invalid revset"):
         client.resolve_commit("(")
-    first = client.resolve_commit("@-")
-    operation_id = client.prepare_rebase_changes(
-        change_ids=(first.change_id,), destination=client.resolve_commit("root()").commit_id
-    )
-
-    assert operation_id
+    assert client.resolve_commit("@-").description == "first\n"
 
 
 def test_list_git_remotes_preserves_distinct_fetch_and_push_urls(tmp_path: Path) -> None:

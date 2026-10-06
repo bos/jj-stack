@@ -131,10 +131,10 @@ def test_refresh_check_compares_the_body_submit_wrote_not_the_raw_description() 
 
 
 def test_a_submitted_commit_the_repo_never_held_is_not_an_edit_on_github() -> None:
-    """`sync` saves the head GitHub rewrote for a survivor it could not update.
+    """`relink --replace-remote` can save a remote commit that never reaches local history.
 
-    That baseline never reaches local history, so submit cannot rebuild the text it wrote last
-    time. Preserving the pair would freeze it for the rest of the pull request's life.
+    Submit cannot rebuild the text that commit implies, and preserving the pair would freeze it
+    for the rest of the pull request's life.
     """
 
     preserved = preserve_external_pr_text(

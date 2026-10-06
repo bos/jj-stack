@@ -471,19 +471,30 @@ def test_sync_all_reports_batch_pr_failure_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
+def test_sync_replaces_a_survivor_github_rewrote_with_the_local_rebase_onto_trunk(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
+    """GitHub's rewrite of a survivor is compared with it, never taken as the local change.
+
+    GitHub roots the rewrite on whatever trunk is when it gets to it, here past the merge
+    result, and trunk can move again before sync. The local change goes onto the current trunk
+    and replaces GitHub's commit, including the copy a fetch of the PR branch made visible.
+    """
+
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state_store = TrackingStore.for_repo(repo)
     on_trunk, survivor = selected_stack(repo).changes
-    remote_survivor = _simulate_stack_partial_merge(fake_repo)
-    # GitHub rooted the rewritten survivor at the merge result; trunk then moved on.
+    fake_repo.github_stacks = {7: (1, 2)}
+    merge_result = fake_repo.apply_squash_merge(fake_repo.prs[1])
+    later_trunk = fake_repo.advance_branch(
+        "main", path="landed-first.txt", contents="landed before the rewrite\n"
+    )
+    remote_survivor = fake_repo.rewrite_pr_onto_base(fake_repo.prs[2], base_ref="main")
     advanced_trunk = fake_repo.advance_branch(
-        "main", path="landed-later.txt", contents="landed after the stack merge\n"
+        "main", path="landed-later.txt", contents="landed after the rewrite\n"
     )
     survivor_branch = state_store.load().prs[survivor.change_id].pr_identity.head_ref
     run_command(
@@ -501,59 +512,21 @@ def test_sync_converges_stack_history_and_adopts_rewritten_survivor(
     captured = capsys.readouterr()
 
     assert exit_code == 0, (captured.out, captured.err)
+    jj = JjClient(repo)
+    # GitHub's fetched commit is replaced along with its PR head, leaving one local copy.
+    (local,) = jj.query_commits_by_change_ids((survivor.change_id,))[survivor.change_id]
+    assert not local.immutable
+    assert local.parents == (advanced_trunk,)
+    assert local.commit_id != remote_survivor
+    assert merge_result != later_trunk != advanced_trunk
+    assert jj.resolve_commit("@").parents == (local.commit_id,)
     state = state_store.load()
     assert on_trunk.change_id not in state.prs
-    rewritten_survivor = JjClient(repo).resolve_commit(survivor.change_id)
-    assert rewritten_survivor.parents == (fake_repo.prs[1].merge_commit_sha,)
-    assert (
-        read_remote_ref(fake_repo.git_dir, "main")
-        == advanced_trunk
-        != rewritten_survivor.parents[0]
-    )
-    assert JjClient(repo).resolve_commit("@").parents == (rewritten_survivor.commit_id,)
-    pr_branch_temp = JjClient(repo).pr_branch_temp_artifacts()
-    assert (pr_branch_temp.ref_target, pr_branch_temp.bookmark_targets) == (None, ())
-    assert state.prs[survivor.change_id].submitted_baseline.commit_id == (
-        rewritten_survivor.commit_id
-    )
-    assert fake_repo.prs[2].head_sha == rewritten_survivor.commit_id
+    assert state.prs[survivor.change_id].submitted_baseline.commit_id == local.commit_id
+    assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == local.commit_id
     assert fake_repo.prs[2].base_ref == "main"
     assert fake_repo.github_stacks == {7: (1, 2)}
-    on_trunk_versions = JjClient(repo).query_commits_by_change_ids((on_trunk.change_id,))[
-        on_trunk.change_id
-    ]
-    assert on_trunk_versions == ()
-    assert remote_survivor != survivor.commit_id
-
-
-def test_sync_adopts_survivors_that_github_rooted_past_the_merge_result(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = TrackingStore.for_repo(repo)
-    on_trunk, survivor = selected_stack(repo).changes
-    fake_repo.github_stacks = {7: (1, 2)}
-    merge_result = fake_repo.apply_squash_merge(fake_repo.prs[1])
-    # Another PR lands before GitHub rewrites the survivor, so GitHub roots the rewrite on that
-    # later trunk commit rather than on the stack's merge result.
-    later_trunk = fake_repo.advance_branch(
-        "main", path="landed-first.txt", contents="landed before the rewrite\n"
-    )
-    remote_survivor = fake_repo.rewrite_pr_onto_base(fake_repo.prs[2], base_ref="main")
-
-    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 0, (captured.out, captured.err)
-    adopted = JjClient(repo).resolve_commit(survivor.change_id)
-    assert adopted.commit_id == remote_survivor
-    assert adopted.parents == (later_trunk,) != (merge_result,)
-    state = state_store.load()
-    assert state.prs[survivor.change_id].submitted_baseline.commit_id == remote_survivor
-    assert on_trunk.change_id not in state.prs
+    assert jj.query_commits_by_change_ids((on_trunk.change_id,))[on_trunk.change_id] == ()
 
 
 def test_sync_rejects_unselected_mutable_copy_after_github_rewrite(
@@ -605,45 +578,14 @@ def test_sync_rejects_unselected_mutable_copy_after_github_rewrite(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "more than one mutable local copy" in captured.err
+    assert "more than one local copy" in captured.err
     assert "jj converge -r" in captured.err
     assert state_store.load() == state_before
     assert remote_refs(fake_repo.git_dir) == refs_before
     assert fake_repo.prs == prs_before
 
 
-def test_sync_refuses_to_rebase_an_edited_survivor_beside_its_github_rewrite(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = TrackingStore.for_repo(repo)
-    _merged, survivor = selected_stack(repo).changes
-    _simulate_stack_partial_merge(fake_repo)
-    survivor_branch = state_store.load().prs[survivor.change_id].pr_identity.head_ref
-    run_command(
-        ["jj", "git", "fetch", "--remote", "origin", "--branch", survivor_branch],
-        repo,
-    )
-    run_command(["jj", "describe", "-r", survivor.commit_id, "-m", "survivor edit"], repo)
-    state_before = state_store.load()
-    refs_before = remote_refs(fake_repo.git_dir)
-    prs_before = deepcopy(fake_repo.prs)
-
-    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "multiple visible commits" in captured.err
-    assert "jj converge -r" in captured.err
-    assert state_store.load() == state_before
-    assert remote_refs(fake_repo.git_dir) == refs_before
-    assert fake_repo.prs == prs_before
-
-
-def test_sync_adopts_a_partial_merge_beside_stale_pr_bookmarks(
+def test_sync_applies_a_partial_merge_beside_stale_pr_bookmarks(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -877,7 +819,6 @@ def test_sync_rebases_a_conflicted_pr_before_stopping_its_update(
 
     assert exit_code == 3
     rendered = " ".join(captured.err.split())
-    assert "The local rebase is complete" in rendered
     assert f"jj-stack submit {submitted.change_id[:8]}" in rendered
     conflicted_after = JjClient(repo).resolve_commit(submitted.change_id)
     assert conflicted_after.conflict
@@ -907,7 +848,7 @@ def test_sync_stops_before_rebasing_when_a_survivor_pr_drifted(
     Stopping first keeps a failed sync free of side effects: one rerun after the repair removes
     the merged change, rebases the survivor, and refreshes its pull request together. The
     pushed case uses ungrouped pull requests, because GitHub moves the heads of a stack's active
-    members itself when it merges the stack, and sync adopts those moves after proving them.
+    members itself when it merges the stack, and sync replaces those moves after checking them.
     """
 
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
@@ -941,7 +882,7 @@ def test_sync_stops_before_rebasing_when_a_survivor_pr_drifted(
     assert state_store.load() == state_before
 
 
-def test_sync_retries_id_restoration_after_a_partial_merge_and_native_rebase(
+def test_sync_retries_after_a_partial_merge_and_native_rebase_without_adopting_github(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -972,10 +913,9 @@ def test_sync_retries_id_restoration_after_a_partial_merge_and_native_rebase(
     assert "injected survivor submit failure" in failed.err
     interrupted_state = state_store.load()
     assert on_trunk.change_id in interrupted_state.prs
-    assert (
-        interrupted_state.prs[survivor.change_id].submitted_baseline.commit_id == remote_survivor
-    )
-    assert remote_survivor != baseline_before.commit_id
+    # GitHub's commit never becomes the baseline; only commits this repo holds do.
+    assert interrupted_state.prs[survivor.change_id].submitted_baseline == baseline_before
+    assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == remote_survivor
     restored = JjClient(repo).resolve_commit(survivor.change_id)
     assert restored.commit_id != remote_survivor
     assert restored.parents == (rebased_trunk,)
@@ -1030,29 +970,7 @@ def test_sync_all_requires_terminal_stack_merge_for_exact_stack_member(
     assert fake_repo.prs[1].state == "open"
 
 
-def test_sync_does_not_trust_active_stack_head_drift_without_merged_history(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state_store = TrackingStore.for_repo(repo)
-    _first, second = selected_stack(repo).changes
-    baseline = state_store.load().prs[second.change_id].submitted_baseline
-    fake_repo.github_stacks = {7: (1, 2)}
-    drifted_head = fake_repo.force_push_pr_head(fake_repo.prs[2])
-
-    exit_code = run_main(repo, config_path, "sync", second.change_id)
-    captured = capsys.readouterr()
-
-    assert exit_code == 1
-    assert "cannot verify a merge or a rebase" in captured.err
-    assert state_store.load().prs[second.change_id].submitted_baseline == baseline
-    assert fake_repo.prs[2].head_sha == drifted_head
-
-
-def test_sync_restores_change_ids_after_an_exact_github_stack_rebase(
+def test_sync_replaces_a_github_stack_rebase_with_the_local_changes_on_its_base(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1085,9 +1003,10 @@ def test_sync_restores_change_ids_after_an_exact_github_stack_rebase(
     rejected = capsys.readouterr()
 
     assert dry_exit == 1, (dry.out, dry.err)
-    assert "does not have the same contents" in dry.err
+    assert "PR #2 is at commit" in dry.err
     assert rejected_exit == 1
-    assert "does not have the same contents" in rejected.err
+    assert "PR #2 is at commit" in rejected.err
+    assert "jj-stack checkout --pull-request 2" in rejected.err
     assert state_store.load() == original_state
     assert tuple(
         JjClient(repo).resolve_commit(change.change_id).commit_id for change in original
@@ -1156,6 +1075,34 @@ def test_sync_restores_change_ids_after_an_exact_github_stack_rebase(
     assert not (repo / "later-trunk.txt").exists()
     assert not (repo / "latest-trunk.txt").exists()
     assert JjClient(repo).pr_branch_temp_artifacts().ref_target is None
+
+
+def test_sync_keeps_a_stack_the_user_rebased_past_a_github_stack_rebase(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Sync never moves the stack back onto the older trunk commit GitHub rebased it onto."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    original = selected_stack(repo).changes
+    fake_repo.github_stacks = {7: (1, 2)}
+    fake_repo.advance_branch("main", path="github-base.txt", contents="github base\n")
+    fake_repo.rebase_stack_onto_base(7, base_ref="main")
+    later_trunk = fake_repo.advance_branch("main", path="later.txt", contents="later\n")
+    run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "main"], repo)
+    run_command(["jj", "rebase", "-s", original[0].change_id, "-o", "main@origin"], repo)
+
+    exit_code = run_main(repo, config_path, "sync", original[-1].change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    synced = tuple(JjClient(repo).resolve_commit(change.change_id) for change in original)
+    assert synced[0].parents == (later_trunk,)
+    assert tuple(
+        fake_repo.ref_target(fake_repo.prs[number].head_ref) for number in (1, 2)
+    ) == tuple(change.commit_id for change in synced)
 
 
 def test_sync_rejects_a_submitted_unsubmitted_submitted_sandwich_before_mutation(

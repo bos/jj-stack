@@ -189,10 +189,14 @@ through a merge queue.
 
 `jj` owns general history editing. There is no standalone `jj-stack rebase` command.
 
-`sync` and `merge` fetch before planning, including during `--dry-run`. A merge that waits fetches
-again after GitHub completes it. `checkout --pull-request` fetches when the selected PR's head
-commit is not already local. Other commands do not fetch. Commands evaluate `trunk()` after any
-fetch they perform; without a fetch, they use the locally available trunk.
+`sync` and `merge` fetch ordinary remote state before planning, including during `--dry-run`. A
+merge that waits fetches again after GitHub completes it. `checkout --pull-request` does the same
+when the selected PR's head commit is not already local. Some commands also fetch single commits
+by ID without creating refs: `sync` and `submit` fetch a moved PR head and GitHub's trunk tip to
+compare contents, `submit` fetches a PR branch's commit to recover an interrupted first submit,
+and `relink` fetches the PR's head, each only when it needs that commit. `view`, `list`, and the
+other commands never fetch. Commands evaluate `trunk()` after any ordinary fetch they perform;
+without one, they use the locally available trunk.
 
 A dry run previews planned changes without applying them. It does not promise an untouched local
 repo: the fetches above and ordinary `jj` working-copy snapshots can still occur.
@@ -226,8 +230,6 @@ and cleanup remove it; `sync` uses cleanup to remove eligible records.
 The submitted baseline changes only after:
 
 - `submit` or `sync` successfully updates a PR
-- `sync` adopts commits rewritten by GitHub, or replaces a GitHub-rebased stack with equivalent
-  commits that retain the local change IDs
 - `relink` records the observed PR branch target
 - `checkout` imports an existing PR
 
@@ -301,7 +303,11 @@ The command-specific planning requirements are:
 - `submit` requires an identity match for every tracked selected change and observes the exact
   remote target of each PR branch. Normally that target is the submitted baseline. It may
   already be the change's current commit after an interrupted submit, but only when the identity
-  matches and the PR head agrees with that same commit. Any other target stops the command.
+  matches and the PR head agrees with that same commit. A rewrite of the submitted commit with
+  the same content, as `sync` defines it below, may also be replaced, except that while a
+  selected change's PR has merged the command stops and names `sync`. After a native GitHub
+  stack rebase, `submit` therefore puts the local commits back on their old base. Any other
+  target stops the command.
 - `merge` requires the current local commit and remote PR branch ref both to equal
   `SubmittedBaseline.commit_id`, plus a live snapshot match. Tree or diff equivalence is not
   sufficient.
@@ -468,25 +474,45 @@ Here unpublished local work means a mutable, non-empty change whose commit is no
 baseline. An empty change modifies no files relative to its parent, so removing it discards no
 content.
 
-#### Updating local changes after a merge
+#### Updating local changes after a merge or a GitHub rebase
 
-`sync` updates the remaining local changes only when:
+`sync` decides every stop for the selected stack before it changes anything. It updates the
+remaining local changes only when:
 
 - rewriting them would not discard unpublished local work
-- no surviving change has multiple mutable local copies (a fetched GitHub rewrite is immutable)
+- no remaining change has another local copy, apart from a fetched copy of the commit at its
+  PR head, which `sync` abandons before rebasing
 - no unsubmitted change sits between remaining submitted changes
-- every surviving pull request outside a GitHub stack's active members is open and still at the
-  submitted or local commit; a moved or missing PR branch stops `sync` before any rewrite and
-  names the repair. Changes GitHub rewrote as part of a stack merge or rebase follow the rules
-  below.
+- every remaining pull request is open, uses its saved head branch, and has a PR branch that
+  can be replaced; otherwise `sync` stops and names the repair
+
+A PR branch can be replaced when its head is the submitted commit, the current local commit, or a
+rewrite of the submitted commit with the same content: applying the submitted change to the head's
+only parent gives exactly the head's tree. The bottom PR's head must have its parent on trunk's
+first-parent history, and each head above must have its parent at the head, submitted commit, or
+local commit of the PR below. This covers the PRs GitHub rewrites when it merges part of a GitHub
+stack or rebases one, whichever trunk commit it chose. Only content counts, so a push by anyone
+that changes just a commit message or author is replaced too. GitHub's commits are fetched only
+for this comparison; they never become local changes or submitted baselines. Any other head is
+someone else's work and stops `sync`. A PR whose head and branch disagree also stops it, since
+GitHub may still be updating them.
+
+When a change below has its work on trunk, the remaining changes move onto trunk. When GitHub
+rebased the stack without merging any of it, they move onto the parent of GitHub's bottom commit
+unless they are already based on that commit or on a commit whose first-parent history includes
+it. Otherwise they stay where they are. `sync` never rebases merely because trunk advanced;
+ordinary `jj rebase` owns that workflow.
+
+`sync` then pushes the local commits to every remaining PR branch in one atomic push, each
+leased on the head it observed, and records them as the submitted baselines.
 
 If any selected open PR is still in a merge queue, `sync` leaves the selected stack unchanged.
 Once GitHub no longer reports it queued, ordinary trunk evidence determines whether `sync`
 reconciles merged work or has nothing to do.
 
-It rebases surviving changes onto trunk even when they contain conflicts. If a submitted
-change remains conflicted, the local rebase stays in place but its PR is not updated. The
-user resolves the conflict with `jj` and runs `submit` for the remaining stack.
+It rebases surviving changes even when they contain conflicts. If a submitted change remains
+conflicted, the local rebase stays in place but no PR is updated. The user resolves the conflict
+with `jj` and runs `submit` for the remaining stack.
 
 If another workspace has an obsolete merged change checked out, `sync` does not remove that
 change. Its diagnostic identifies the workspace and gives commands to move it to trunk or, unless
@@ -503,49 +529,10 @@ After updating the remaining PRs, `sync` invokes [cleanup](#unstack-and-cleanup)
 that no local path still needs. Its output describes local updates and cleanup, including when
 no PRs remain.
 
-`sync` never rebases merely because trunk advanced. Ordinary `jj rebase` owns that workflow.
-
 GitHub preserves `jj`'s `change-id` commit header through rebase merges of PRs, but not squash
 merges. A matching full change ID on trunk identifies the successor rather than
 an arbitrary visible side copy. When trunk has no matching change ID, `sync` removes the
 old local change without relabeling that commit.
-
-When GitHub merges part of a stack, each remaining PR is either rewritten from its submitted
-baseline or left at its submitted commit. When every remaining local change is still at its
-baseline and GitHub rewrote every remaining PR, `sync` follows the rewritten chain. It uses commits
-with the original change IDs directly, and restores missing IDs after the content verification
-below. If a local change was edited or GitHub left a PR at its baseline, it adopts none, rebases
-the remaining changes onto trunk, records GitHub's reported heads as their baselines, and
-republishes them. It accepts those
-heads and bases only while a merged PR in the same GitHub stack matches its saved record and its
-merge result is on trunk. GitHub roots the rewritten PRs on trunk's tip at the time of the
-rewrite, which may be past the merge result, so the rewritten chain's base must be on trunk at or
-after that merge result rather than exactly at it.
-
-#### Native GitHub stack rebase
-
-GitHub's native stack rebase rewrites every active member and removes `jj`'s change-ID
-commit headers. With no merged member, those remote commits cannot become the identity of the
-local changes. `sync` recognizes this result only when all of these observations agree:
-
-- every member of the GitHub stack is among the selected tracked PRs, in their local parent
-  order
-- every PR still uses its saved head branch and the expected base branch
-- every PR head and PR branch moved from its submitted baseline to the same reported commit
-- the reported commits form one single-parent chain based on trunk's first-parent history
-- none of the selected local changes is divergent
-
-`sync` then computes a rebase of the original local changes onto the parent of GitHub's bottom
-commit, without first changing the local DAG. Trunk may have advanced since GitHub rebased the
-stack; the comparison uses the same base as GitHub. The computed change IDs must remain the
-selected change IDs, conflicts are rejected, and each computed commit tree must exactly equal
-the corresponding GitHub commit tree. This comparison is also the recovery check when a previous
-run integrated the local rebase but failed before moving the PR branches.
-
-After these checks pass, `sync` integrates the local rebase, atomically replaces every rewritten
-PR branch with leases requiring each branch to remain at its observed GitHub head, and records the
-resulting local commits as the submitted baselines. A changed lease leaves the local rebase in
-place and advances no baseline; a retry compares its trees with the current GitHub stack.
 
 ### GitHub stack membership
 
@@ -719,6 +706,8 @@ Neither command guesses. A change with no saved PR identity is reported as not s
 even if a PR happens to use the branch name that change would generate. A saved PR is always
 the one reported; a different open PR on its branch is a warning. An open PR whose head is
 neither the local commit nor the submitted baseline is reported as moved, not as healthy.
+Inspection does not apply the
+[replacement rule](#updating-local-changes-after-a-merge-or-a-github-rebase).
 
 Inspection tolerates fetched side copies of merged changes. `view` walks past immutable or
 divergent side copies when a supported path remains, and shows merged local work as

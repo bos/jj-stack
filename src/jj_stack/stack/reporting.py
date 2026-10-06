@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jj_stack.ui as ui
-from jj_stack.identifiers import ChangeId
+from jj_stack.identifiers import ChangeId, short_change_id
 from jj_stack.models.github import CheckRollupStatus, GithubPR
 from jj_stack.stack.change_state import (
     BranchClaimed,
@@ -28,6 +28,7 @@ from jj_stack.stack.change_state import (
     Published,
     PushedUnrecorded,
     Queued,
+    Rewritten,
     Stop,
     Unpublished,
     UntrackedPRExists,
@@ -95,6 +96,7 @@ def report_change(state: ChangeState) -> ChangeReport:
             Published()
             | Edited()
             | PushedUnrecorded()
+            | Rewritten()
             | Queued()
             | Closed()
             | PRIdentityMismatch()
@@ -137,7 +139,25 @@ def report_change(state: ChangeState) -> ChangeReport:
         ready=_ready(state.pr) if isinstance(state, WithPR) and problem is None else None,
         approvals=state.pr.approvals if isinstance(state, WithPR) else None,
         reason=state.reason if isinstance(state, Stop) else None,
-        repair=state.repair if isinstance(state, Stop) else None,
+        repair=_repair(state),
+    )
+
+
+def _repair(state: ChangeState) -> ui.Message | None:
+    if isinstance(state, PRHeadMoved) and not state.rewrite_checked:
+        # Inspection never fetches the head, so sync tells GitHub's rewrite from other work.
+        sync = ui.cmd(f"jj-stack sync {short_change_id(state.change_id)}")
+        return (moved_pr_branch_advice(t"Run {sync}", command="jj-stack sync"), ".")
+    return state.repair if isinstance(state, Stop) else None
+
+
+def moved_pr_branch_advice(step: ui.Message, *, command: str) -> ui.Message:
+    """Explain what the command named in `step` does with a PR branch that moved."""
+
+    return (
+        t"{step}. If GitHub rewrote a PR branch while merging or rebasing the stack, "
+        t"{ui.cmd(command)} updates it; if someone else pushed work to it, "
+        t"{ui.cmd(command)} stops and explains what to do"
     )
 
 

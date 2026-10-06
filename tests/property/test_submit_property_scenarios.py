@@ -74,7 +74,7 @@ def test_partial_rebase_merge_preserves_surviving_ids_and_reviews(machine: Stack
     machine.sync_path(0)
 
 
-def test_sync_adopts_survivors_github_rewrote_after_trunk_advanced(
+def test_sync_replaces_survivors_github_rewrote_after_trunk_advanced(
     machine: StackMachine,
 ) -> None:
     machine.start(size=3, submitted=True)
@@ -96,7 +96,7 @@ def test_sync_all_finishes_a_merged_pr_left_by_an_interrupted_sync(
 def test_sync_all_does_not_report_the_pr_of_a_stack_it_syncs(machine: StackMachine) -> None:
     machine.start(size=2, submitted=True, merged=True)
     # Local and trunk edits to the merged change's file leave the survivor conflicted, so the
-    # first sync saves the head GitHub rewrote for it instead of a commit this repo holds.
+    # first sync stops before updating its PR, which GitHub has rewritten meanwhile.
     machine.shared_edit(0, server=False)
     machine.shared_edit(0, server=True)
     machine.sync_all_paths()

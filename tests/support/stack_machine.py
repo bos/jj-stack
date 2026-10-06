@@ -426,8 +426,44 @@ class StackMachine(RuleBasedStateMachine):
         self.ok("submit", head)
         self.pr_count += len(fresh)
         self.accept_submit(path, prior_numbers=numbers)
+        self.rebased.difference_update(path)
         assert self.outside(path) == outside
         assert all(event.kind != "state" for event in self.fake.pr_events)
+
+    def same_patch_heads(self, path: tuple[str, ...]) -> set[str]:
+        """Labels whose moved PR head makes the same change as the submitted commit.
+
+        An interrupted submit can leave such heads with new messages. Submit replaces them when
+        each is rooted on trunk or on the PR below, as it does GitHub's own rewrites.
+        """
+
+        git = self.fake._run_backing_git
+
+        def patch(commit: str) -> str:
+            return git("patch-id", "--stable", stdin=git("diff-tree", "-p", "-U0", commit))[:40]
+
+        trunk = self.fake.ref_target("main")
+        assert trunk is not None
+        result: set[str] = set()
+        below: tuple[str | None, ...] = ()
+        for label in path:
+            pr = self.open_pr(label)
+            if label not in self.submitted or pr is None:
+                continue
+            head = self.fake.ref_target(pr.head_ref)
+            submitted = self.submitted[label].submitted_baseline.commit_id
+            local = self.jj.resolve_commit(self.ids[label]).commit_id
+            if head is not None and head not in (submitted, local):
+                parents = git("rev-list", "--parents", "-n", "1", head).split()[1:]
+                rooted = (
+                    parents[0] in below
+                    if below
+                    else parents[0] in git("rev-list", "--first-parent", trunk).split()
+                )
+                if len(parents) == 1 and patch(head) == patch(submitted) and rooted:
+                    result.add(label)
+            below = (head, submitted, local)
+        return result
 
     def submit_failures(self, path: tuple[str, ...]) -> set[tuple[int, str | None]]:
         if self.foreign.intersection(path):
@@ -438,6 +474,9 @@ class StackMachine(RuleBasedStateMachine):
         failures: set[tuple[int, str | None]] = set()
         if self.conflicts.intersection(path):
             failures.add((3, None))
+        # Submit replaces GitHub's rebase of the stack like any submitted head.
+        rebased = bool(self.rebased.intersection(path))
+        replaceable = self.same_patch_heads(path)
         for label in path:
             if label in self.submitted:
                 head = self.fake.ref_target(self.pr(label).head_ref)
@@ -445,16 +484,22 @@ class StackMachine(RuleBasedStateMachine):
                     failures.add((1, "remote_branch_missing"))
                 elif self.pr(label).state == "closed":
                     failures.add((1, "pr_not_open"))
-                elif head not in {
-                    self.submitted[label].submitted_baseline.commit_id,
-                    self.jj.resolve_commit(self.ids[label]).commit_id,
-                }:
+                elif (
+                    not rebased
+                    and label not in replaceable
+                    and head
+                    not in {
+                        self.submitted[label].submitted_baseline.commit_id,
+                        self.jj.resolve_commit(self.ids[label]).commit_id,
+                    }
+                ):
                     failures.add((1, "remote_branch_moved"))
             elif self.open_pr(label) is not None:
                 failures.add((1, "saved_pr_missing"))
         if self.queued(path):
             failures.add((1, None))
-        if self.rebased.intersection(path):
+        if replaceable and self.merged(path):
+            # Sync removes the merged changes before replacing these heads.
             failures.add((1, "remote_branch_moved"))
         selected = {self.pr(label).number for label in path if label in self.submitted}
         for members in self.fake.github_stacks.values():
@@ -834,19 +879,8 @@ class StackMachine(RuleBasedStateMachine):
         versions = dict(self.trunk)
         conflicts: set[str] = set()
         changes = selected_stack(self.repo, self.ids[path[-1]]).changes
-        published = self.published(path[len(merged) :])
-        adopt = bool(merged and published) and all(
-            change.commit_id == self.submitted[label].submitted_baseline.commit_id
-            and self.fake.ref_target(self.pr(label).head_ref) != change.commit_id
-            for label, change in zip(path, changes, strict=True)
-            if label in published
-        )
-        if adopt:
-            versions = tree_entries(
-                self.fake._run_backing_git("ls-tree", "-r", self.pr(published[-1]).head_ref)
-            )
         for label, change in zip(path, changes, strict=True):
-            if label in merged or (adopt and label in published):
+            if label in merged:
                 continue
             if conflicts or label in self.conflicts:
                 conflicts.add(label)
@@ -930,15 +964,10 @@ class StackMachine(RuleBasedStateMachine):
         if not conflicts & self.submitted.keys():
             self.accept_merge(index, len(merged))
             return
+        # A conflict stops sync before it publishes, so no PR branch or baseline moves.
         for label in self.published(path):
             pr = self.pr(label)
-            head = refs[f"refs/heads/{pr.head_ref}"]
-            assert self.fake.ref_target(pr.head_ref) == head
-            if label not in merged:
-                self.submitted[label] = TrackedPR(
-                    pr_identity=self.submitted[label].pr_identity,
-                    submitted_baseline=SubmittedBaseline(commit_id=head),
-                )
+            assert self.fake.ref_target(pr.head_ref) == refs[f"refs/heads/{pr.head_ref}"]
         for label in merged:
             self.check_removed(label)
         self.paths[index] = path[len(merged) :]

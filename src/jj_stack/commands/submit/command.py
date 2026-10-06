@@ -43,7 +43,7 @@ from jj_stack.models.github import GithubPR, GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR
 from jj_stack.pr_branch_namespace import current_pr_branch_namespace, pr_branch_matches_change
-from jj_stack.stack.change_state import ChangeObservation
+from jj_stack.stack.change_state import UNOBSERVED, ChangeObservation
 from jj_stack.stack.pr_branches import (
     ResolvedPRBranch,
     ensure_new_pr_branches_unclaimed,
@@ -51,6 +51,7 @@ from jj_stack.stack.pr_branches import (
     resolve_pr_branches,
 )
 from jj_stack.stack.pr_facts import observe_github_stacks
+from jj_stack.stack.pr_rewrites import find_head_rewrites
 from jj_stack.stack.status import discover_pr_lookups
 from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import operation_lock
@@ -514,13 +515,22 @@ async def _observe_submit(
         descriptions=options.descriptions,
         describe_with=options.describe_with,
     )
+    rewrite_parents = await find_head_rewrites(
+        client,
+        github_client,
+        remote=remote.name,
+        trunk_branch=trunk_branch,
+        chain=tuple(lookups[resolution.branch] for resolution in branch_resolutions),
+    )
+    lookups = {
+        branch: replace(lookup, rewrite_parent=rewrite_parents.get(lookup.change_id, UNOBSERVED))
+        for branch, lookup in lookups.items()
+    }
     prepared_changes = prepare_submit_changes(
         branch_resolutions=branch_resolutions,
-        github_stacks=observed_stacks,
         lookups=lookups,
         remote_targets=remote_targets,
         stack=stack,
-        tracked_prs=state.prs,
     )
     bottom_base_branch = trunk_branch
     if explicit_base is not None:

@@ -107,9 +107,9 @@ def preserve_external_pr_text(
     """Preserve a live PR pair that matches no description this repo recorded for its change.
 
     An interrupted submit can leave a PR showing the text of a version other than the submitted
-    commit, which is not an edit on GitHub. A submitted commit this repo never held leaves
-    nothing to compare, so the pair follows the change: `sync` records the head GitHub rewrote
-    for a survivor it could not update, and `relink --replace-remote` records the remote commit.
+    commit, which is not an edit on GitHub. A submitted commit this repo never held, as
+    `relink --replace-remote` can record, leaves nothing to compare, so the pair follows the
+    change.
     """
 
     preserved: dict[ChangeId, GeneratedDescription] = {}

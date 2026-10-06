@@ -28,10 +28,10 @@ observations. Use `jj op log` and `jj undo` for local recovery, never destructiv
   `sync <head-change-id>`. It fetches, checks which changes reached trunk, removes their local
   copies, rebases the remaining selected changes, and updates only their existing PRs.
 - After GitHub's **Rebase stack** action finishes, use the same `sync` sequence. It
-  verifies the rewritten PR branches and contents, rebases the original local changes, and
-  restores their change IDs.
+  checks that the rewritten PR branches hold only the submitted work, rebases the local
+  changes onto the same base, and pushes them.
 - Use the full head change ID when a remaining change has several visible commits. Let
-  `sync` identify the commit GitHub produced; do not choose a `/0` or `/1` copy or
+  `sync` identify a fetched copy of GitHub's commit; do not choose a `/0` or `/1` copy or
   abandon a copy before that dry run.
 - Do not run a separate `jj git fetch` merely to prepare this recovery. `sync` performs the
   required fetch itself; importing rewritten PR branches first can create avoidable local

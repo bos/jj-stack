@@ -8,13 +8,13 @@ Run it after GitHub's Rebase stack action, or after a merge that `jj-stack merge
 for finishes on GitHub; when `merge` waits, it performs this update itself. While a selected PR
 is still queued, sync leaves the stack unchanged.
 
-After a Rebase stack action, sync checks that the PR order and contents match, rebases your
-original changes, and updates the PR branches with commits that retain their jj change IDs.
+After a Rebase stack action, sync checks that each PR branch holds only what you submitted,
+rebases your changes onto the same base, and pushes them to the PR branches.
 
-Sync stops if it would discard local edits or cannot determine which local changes and PRs to
-update. The error explains what needs attention. If a rebase produces conflicts, the local rebase
-stays in place but the affected PRs are not updated. Resolve the conflicts with `jj`, then run
-`jj-stack submit <head-change-id>`.
+Sync stops if it would discard local edits, if a PR branch holds work you did not submit, or if
+it cannot determine which local changes and PRs to update. The error explains what needs
+attention. If a rebase produces conflicts, the local rebase stays in place but the affected PRs
+are not updated. Resolve the conflicts with `jj`, then run `jj-stack submit <head-change-id>`.
 
 `jj-stack sync --all` updates every local stack affected by a completed merge and cleans up merged
 PRs whose local changes are gone. A blocked stack does not prevent it from syncing independent
@@ -54,11 +54,12 @@ from jj_stack.github.error_messages import require_github_target
 from jj_stack.github.resolution import resolve_github_target
 from jj_stack.identifiers import ChangeId, CommitId, is_change_id_prefix, short_change_id
 from jj_stack.jj.client import quote_revset_symbol
+from jj_stack.stack.change_state import UNOBSERVED
 from jj_stack.stack.convergence import (
     CheckedOutMergedChangeError,
     build_selected_convergence_plan,
 )
-from jj_stack.stack.convergence_models import GithubStackRebasePlan, SelectedConvergencePlan
+from jj_stack.stack.convergence_models import SelectedConvergencePlan
 from jj_stack.stack.convergence_observation import (
     complete_sync_observation,
     queued_pr_numbers,
@@ -72,6 +73,7 @@ from jj_stack.stack.pr_facts import (
     observe_github_stacks,
     observe_prs,
 )
+from jj_stack.stack.pr_rewrites import find_head_rewrites
 from jj_stack.stack.preparation import (
     PreparedLocalStack,
     prepare_local_stack,
@@ -350,6 +352,26 @@ async def _run_selected_convergence(run: GithubRun, *, prepared: PreparedLocalSt
             observation=observation,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
+        rewrite_parents = await find_head_rewrites(
+            context.jj_client,
+            github,
+            remote=remote.name,
+            trunk_branch=trunk.branch,
+            chain=tuple(
+                replace(observation.prs[change.change_id], selected=change)
+                for change in selected
+                if change.change_id in observation.prs
+            ),
+        )
+        observation = replace(
+            observation,
+            prs={
+                change_id: replace(
+                    item, rewrite_parent=rewrite_parents.get(change_id, UNOBSERVED)
+                )
+                for change_id, item in observation.prs.items()
+            },
+        )
         plan = build_selected_convergence_plan(
             ancestries=ancestries,
             github_stacks=observed_stacks,
@@ -359,7 +381,6 @@ async def _run_selected_convergence(run: GithubRun, *, prepared: PreparedLocalSt
             ),
             observation=observation,
             prepared=prepared,
-            trunk_branch=trunk.branch,
         )
     _render_selected_plan(dry_run=run.dry_run, plan=plan)
     return await apply_selected_convergence(
@@ -372,17 +393,20 @@ async def _run_selected_convergence(run: GithubRun, *, prepared: PreparedLocalSt
 
 
 def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> None:
-    if isinstance(plan, GithubStackRebasePlan):
-        action = "Would apply" if dry_run else "Applying"
-        console.output(f"{action} GitHub's stack rebase using the original jj change IDs.")
-        return
-    if not plan.actions.on_trunk:
-        console.output("No completed merges to apply to this stack.")
+    if not plan.on_trunk:
+        if plan.publish:
+            action = "Would replace" if dry_run else "Replacing"
+            console.output(
+                f"{action} pull request heads that have the same contents as your submitted "
+                "changes."
+            )
+        else:
+            console.output("No completed merges to apply to this stack.")
         return
     status = "Would remove" if dry_run else "Removing"
     console.output(
         t"{status} merged changes from the bottom of the stack: "
-        t"{ui.join(lambda item: ui.change_id(item.change_id), plan.actions.on_trunk)}"
+        t"{ui.join(lambda item: ui.change_id(item.change_id), plan.on_trunk)}"
     )
 
 

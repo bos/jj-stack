@@ -97,7 +97,6 @@ def test_first_submit_stops_when_github_rejects_the_open_pr_lookup() -> None:
     with pytest.raises(CliError, match="GitHub 422"):
         prepare_submit_changes(
             branch_resolutions=(ResolvedPRBranch(branch=branch, change_id=change.change_id),),
-            github_stacks=(),
             lookups={branch: lookup},
             remote_targets={branch: change.commit_id},
             stack=LocalStack(
@@ -107,7 +106,6 @@ def test_first_submit_stops_when_github_rejects_the_open_pr_lookup() -> None:
                 selected_revset=change.change_id,
                 trunk=trunk,
             ),
-            tracked_prs={},
         )
 
 

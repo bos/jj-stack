@@ -29,24 +29,6 @@ def require_merged_prefix(stack: GithubStack) -> GithubStack:
     return stack
 
 
-def github_rewrote_stack(
-    stack: GithubStack,
-    *,
-    tracked: Collection[int],
-    unmoved: Collection[int],
-) -> bool:
-    """Whether GitHub, not someone else, moved the stack's open PRs.
-
-    A merge moves every open PR above it, shown by a merged PR that still has a saved link. A
-    stack rebase moves every open PR.
-    """
-
-    merged = {pr.number for pr in stack.historical_prs}
-    if merged:
-        return not merged.isdisjoint(tracked)
-    return set(stack.active_pr_numbers).isdisjoint(unmoved)
-
-
 def selected_github_stack(
     repo: GithubRepoAddress,
     selected_pr_numbers: Collection[int],

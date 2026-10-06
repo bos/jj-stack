@@ -110,7 +110,7 @@ def test_merge_no_wait_resumes_a_pending_or_queued_request_and_syncs_after_waiti
         advance_merge_queue(fake)
 
     monkeypatch.setattr(FakeGithubRepo, "advance_merge_queue", observe_then_advance)
-    for name in ("abandon_commits", "prepare_rebase_changes", "rebase_changes"):
+    for name in ("abandon_commits", "rebase_changes"):
         rewrite = getattr(JjClient, name)
 
         def observe_then_rewrite(client, *args, rewrite=rewrite, **kwargs):

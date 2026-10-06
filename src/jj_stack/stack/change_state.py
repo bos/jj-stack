@@ -66,6 +66,9 @@ class ChangeObservation:
     open_prs_on_branch: tuple[GithubPR, ...] | Unobserved | ObservationFailed = UNOBSERVED
     # The commit at branch@remote; None when the branch is absent.
     remote_target: CommitId | None | Unobserved = UNOBSERVED
+    # The parent of a moved PR head that holds only the submitted change, as `pr_rewrites`
+    # decides; None when the head is not such a rewrite.
+    rewrite_parent: CommitId | None | Unobserved = UNOBSERVED
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -166,6 +169,16 @@ class Edited(WithPR):
 @dataclass(frozen=True, kw_only=True)
 class PushedUnrecorded(WithPR):
     """The open pull request already follows the local commit, but no baseline records it."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class Rewritten(WithPR):
+    """The open PR's head moved but holds only the submitted change, so it may be replaced.
+
+    GitHub rewrites the PRs of a GitHub stack it merges part of or rebases this way.
+    """
+
+    rewrite_parent: CommitId
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -349,6 +362,9 @@ class BranchClaimed(Stop, _State):
 
 @dataclass(frozen=True, kw_only=True)
 class PRHeadMoved(Stop, WithPR):
+    # Whether this command compared the head's contents with the submitted change.
+    rewrite_checked: bool
+
     @property
     def drift_condition(self) -> DriftCondition:
         return "remote_branch_moved"
@@ -356,9 +372,15 @@ class PRHeadMoved(Stop, WithPR):
     @property
     def reason(self) -> Message:
         head = self.pr.head.sha
+        # Without the content check, GitHub's own rewrite looks the same as someone's push.
+        source = (
+            "the PR branch was updated outside this repo"
+            if self.rewrite_checked
+            else "the PR branch changed on GitHub"
+        )
         return (
             t"{_pr_label(self.pr)} is at commit {ui.commit_id(head)}, which matches neither this "
-            t"change nor its last submitted commit; the PR branch was updated outside this repo"
+            t"change nor its last submitted commit; {source}"
         )
 
     @property
@@ -425,6 +447,7 @@ type LinkedPRState = (
     Published
     | Edited
     | PushedUnrecorded
+    | Rewritten
     | Queued
     | Landed
     | Merged
@@ -584,8 +607,12 @@ def _classify_open(
     # GitHub moves a PR branch before it reports the new head, so a disagreement comes first.
     if not isinstance(remote, Unobserved) and remote != head:
         return BranchDisagrees(**with_pr)
+    rewrite = o.rewrite_parent
+    # A fetched copy of such a rewrite is visible locally, but it is still not this repo's work.
+    if head != baseline and isinstance(rewrite, str):
+        return Rewritten(**with_pr, rewrite_parent=rewrite)
     if head != baseline and head not in _local_commit_ids(o):
-        return PRHeadMoved(**with_pr)
+        return PRHeadMoved(**with_pr, rewrite_checked=not isinstance(rewrite, Unobserved))
     # A queued pull request whose head and branch still agree with what was submitted waits
     # for GitHub; one that no longer agrees is reported as moved first.
     if pr.is_queued:

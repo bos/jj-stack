@@ -46,5 +46,6 @@ governed = [
   "src/jj_stack/stack/convergence_observation.py",
   "src/jj_stack/stack/global_convergence.py",
   "src/jj_stack/stack/pr_facts.py",
+  "src/jj_stack/stack/pr_rewrites.py",
   "src/jj_stack/stack/change_state.py",
 ]

@@ -51,6 +51,7 @@ def _status_change(
     change_id: str,
     commit_id: str = "commit-1",
     divergent: bool = False,
+    conflict: bool = False,
     pr: GithubPR,
     competitors: tuple[GithubPR, ...] = (),
     pr_identity: PRIdentity,
@@ -60,7 +61,7 @@ def _status_change(
         change_id=change_id,
         commit_id=commit_id,
         description="feature\n",
-    ).model_copy(update={"divergent": divergent})
+    ).model_copy(update={"divergent": divergent, "conflict": conflict})
     tracked = TrackedPR(
         pr_identity=pr_identity,
         submitted_baseline=submitted_baseline or SubmittedBaseline(commit_id=commit_id),
@@ -224,45 +225,30 @@ def test_view_advises_submit_when_selected_stack_changed_since_submit() -> None:
     assert "Submit needed" not in " ".join(waiting_lines)
 
 
-def test_view_advises_checkout_or_replace_when_a_pr_branch_moved() -> None:
-    pr = _pr(number=7, state="open").model_copy(
-        update={"head": GithubPRHead(ref="jj-stack/feature", sha="f" * 40)}
-    )
-    lines = _render_lines(
-        *view_module.render_status_advisory_lines(
-            result=_status_result(
-                changes=(
-                    _status_change(
-                        change_id="abcdefghijkl",
-                        commit_id="local-commit",
-                        pr_identity=make_pr_identity(head_ref="jj-stack/feature", pr_number=7),
-                        pr=pr,
-                        submitted_baseline=SubmittedBaseline(commit_id="submitted-commit"),
-                    ),
-                ),
-            ),
-        )
-    )
-    normalized = " ".join(" ".join(line.split()) for line in lines)
+@pytest.mark.parametrize(
+    ("moved_count", "with_submitted_child", "conflicted"),
+    ((1, False, False), (2, True, False), (2, False, True)),
+)
+def test_view_sends_moved_pr_heads_to_sync_or_after_conflicts_to_submit(
+    moved_count: int, with_submitted_child: bool, conflicted: bool
+) -> None:
+    """View cannot tell GitHub's rewrite from other work, so it names the command that can.
 
-    assert "PR branch moved" in normalized
-    assert "jj-stack checkout --pull-request 7" in normalized
-    assert "jj-stack relink --replace-remote 7 abcdefgh" in normalized
-    assert "Submit needed" not in normalized
+    Sync would stop on a conflict again; submit checks the PR heads once it is resolved.
+    """
 
-
-@pytest.mark.parametrize("with_submitted_child", (False, True))
-def test_view_keeps_short_sync_advice_above_a_moved_stack(with_submitted_child: bool) -> None:
     head_id = "uowkpmtkykptovmvunrxrywxynlnwpoo"
+    moved = (head_id, "ztzvrmuknyosvtltrtwmvpuwunsqmymu")[:moved_count]
     changes = tuple(
         _status_change(
             change_id=change_id,
+            conflict=conflicted and index == len(moved) - 1,
             pr_identity=make_pr_identity(head_ref=f"jj-stack/{number}", pr_number=number),
             pr=_pr(number=number, state="open").model_copy(
                 update={"head": GithubPRHead(ref=f"jj-stack/{number}", sha="f" * 40)}
             ),
         )
-        for change_id, number in ((head_id, 8), ("ztzvrmuknyosvtltrtwmvpuwunsqmymu", 7))
+        for index, (change_id, number) in enumerate(zip(moved, (8, 7), strict=False))
     )
     if with_submitted_child:
         head_id = "v" * 32
@@ -281,11 +267,14 @@ def test_view_keeps_short_sync_advice_above_a_moved_stack(with_submitted_child: 
     )
     normalized = " ".join(" ".join(line.split()) for line in lines)
 
-    assert normalized.count(f"jj-stack sync {head_id[:8]}") == 1
-    assert "--dry-run" in normalized
+    assert normalized.count(f"jj-stack sync {head_id[:8]}") == (0 if conflicted else 1)
+    assert normalized.count(f"jj-stack submit {head_id[:8]}") == (1 if conflicted else 0)
+    assert ("Resolve the conflicts" in normalized) == conflicted
+    assert normalized.count("matches neither this change") == moved_count
     assert head_id not in normalized
-    assert ("jj-stack checkout" in normalized) == with_submitted_child
-    assert ("jj-stack relink" in normalized) == with_submitted_child
+    assert "jj-stack checkout" not in normalized
+    assert "jj-stack relink" not in normalized
+    assert "Submit needed" not in normalized
 
 
 def test_view_closed_pr_advisory_guides_reopen_relink_or_cleanup() -> None:
