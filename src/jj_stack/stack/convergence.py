@@ -151,7 +151,9 @@ def build_selected_convergence_plan(
     working_copy_children = tuple(
         commit
         for commit in head_children
-        if commit.is_working_copy and commit.empty and commit.parents == (local_head.commit_id,)
+        if commit.is_working_copy
+        and not commit.has_described_work
+        and commit.parents == (local_head.commit_id,)
     )
     actions = ConvergenceActions(
         on_trunk=tuple(on_trunk),

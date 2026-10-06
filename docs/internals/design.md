@@ -491,7 +491,8 @@ If another workspace has an obsolete merged change checked out, `sync` does not 
 change. Its diagnostic identifies the workspace and gives commands to move it to trunk or forget
 it and move its directory to the trash. The current workspace moves to a new empty change on
 trunk before its merged change is removed. A workspace on a surviving child does not block its
-ordinary rebase.
+ordinary rebase. A working-copy change on the stack head that has no description or no contents,
+and no children, moves with the stack and keeps its contents.
 
 If another local path still depends on a merged change after the rebase, `sync` leaves the
 change and its tracking in place and names each other stack that still needs `sync`.

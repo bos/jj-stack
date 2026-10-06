@@ -367,7 +367,7 @@ def test_stack_merge_preserves_advanced_trunk_and_syncs_the_resolved_head(
 
 
 @pytest.mark.parametrize("merge_method", ("rebase", "squash"))
-def test_stack_rewriting_merge_automatically_removes_pre_merge_copies(
+def test_stack_rewriting_merge_removes_pre_merge_copies_and_keeps_working_copy_edits(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -386,6 +386,8 @@ def test_stack_rewriting_merge_automatically_removes_pre_merge_copies(
     assert any(
         STACK_OVERVIEW_COMMENT_MARKER in comment.body for comment in issue_comments(fake_repo, 2)
     )
+    # Uncommitted work in progress on top of the stack.
+    (repo / "wip.txt").write_text("wip\n", encoding="utf-8")
 
     merge_exit_code = run_main(repo, config_path, "merge", "--method", merge_method)
     merged = capsys.readouterr()
@@ -402,7 +404,10 @@ def test_stack_rewriting_merge_automatically_removes_pre_merge_copies(
     assert not any(
         STACK_OVERVIEW_COMMENT_MARKER in comment.body for comment in issue_comments(fake_repo, 2)
     )
-    assert JjClient(repo).resolve_commit("@").parents == (final_trunk,)
+    working_copy = JjClient(repo).resolve_commit("@")
+    assert working_copy.parents == (final_trunk,)
+    assert not working_copy.conflict
+    assert (repo / "wip.txt").read_text() == "wip\n"
     copies = JjClient(repo).query_commits_by_change_ids(
         tuple(change.change_id for change in stack.changes)
     )

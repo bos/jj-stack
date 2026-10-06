@@ -353,8 +353,9 @@ async def _run_selected_convergence(run: GithubRun, *, prepared: PreparedLocalSt
         plan = build_selected_convergence_plan(
             ancestries=ancestries,
             github_stacks=observed_stacks,
+            # Moving a child with `jj rebase -r` would leave its own children behind.
             head_children=context.jj_client.query_commits(
-                f"children({quote_revset_symbol(selected[-1].commit_id)})"
+                f"children({quote_revset_symbol(selected[-1].commit_id)}) & visible_heads()"
             ),
             observation=observation,
             prepared=prepared,
