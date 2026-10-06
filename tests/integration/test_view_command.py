@@ -15,6 +15,7 @@ from ..support.fake_github import FakeMergeRequirements, create_app
 from ..support.integration_helpers import (
     OfflineGithubClient,
     commit_file,
+    expose_pr_branch_namespace,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
@@ -201,6 +202,26 @@ def test_view_warns_and_reports_empty_working_copy_from_another_workspace(
     assert other_working_copy.change_id[:8] in captured.out
     assert other_working_copy.change_id[:8] in captured.err
     assert "is empty" in captured.err
+
+
+def test_view_warns_that_fetched_pr_branches_need_doctor_fix(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    expose_pr_branch_namespace(repo)
+    run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
+    capsys.readouterr()
+
+    exit_code = run_main(repo, config_path, "view")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, captured.err
+    unwrapped = " ".join(captured.err.split())
+    assert "PR branches were fetched as untracked remote bookmarks" in unwrapped
+    assert "jj-stack doctor --fix" in unwrapped
 
 
 def test_view_warns_and_reports_merge_commit_first_parent_path(

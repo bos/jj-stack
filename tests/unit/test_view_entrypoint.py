@@ -108,6 +108,7 @@ def test_view_shares_pr_observation_without_losing_selector_order(
     monkeypatch.setattr(view_module, "bootstrap_context", lambda *_args, **_kwargs: context)
     monkeypatch.setattr(view_module, "prepare_local_stack", prepare_stack)
     monkeypatch.setattr("jj_stack.bootstrap.build_github_client", lambda **_kwargs: github)
+    monkeypatch.setattr(context.jj_client, "untracked_pr_bookmarks", lambda: ())
 
     stdout = StringIO()
     stderr = StringIO()
@@ -149,6 +150,7 @@ def test_view_keeps_selector_errors_between_their_neighboring_reports(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     jj_client = Mock(spec=JjClient)
+    jj_client.untracked_pr_bookmarks.return_value = ()
     jj_client.render_commit_log_blocks.side_effect = lambda changes, **_kwargs: {
         change.commit_id: (change.commit_id,) for change in changes
     }

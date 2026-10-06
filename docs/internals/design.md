@@ -117,8 +117,9 @@ prefix.
 
 The namespace normally stays out of the local `jj` view. `jj`'s default `immutable_heads()` counts
 untracked remote bookmarks as immutable, so `doctor --fix` excludes the namespace from ordinary
-fetches. Commands warn if that exclusion is missing or overridden, but use the configured fetch
-selection and do not stop solely because a PR bookmark is visible.
+fetches. `view` warns when PR branches were fetched as untracked remote bookmarks and names
+`jj-stack doctor --fix`. Commands that fetch use the configured fetch selection and do not stop
+solely because a PR bookmark is visible.
 
 A visible bookmark in the reserved namespace does not make its commit immutable for `jj-stack`
 subprocesses, so a stack can be adopted from a clone that fetched the namespace. The exception

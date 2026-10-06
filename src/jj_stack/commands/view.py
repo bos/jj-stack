@@ -135,6 +135,15 @@ def _run_status(
         if isinstance(prepared, PreparedLocalStack)
     }
     exit_code = 0
+    if context.jj_client.untracked_pr_bookmarks():
+        console.warning(
+            (
+                "PR branches were fetched as untracked remote bookmarks, which jj's default ",
+                t"{ui.code('immutable_heads()')} treats as immutable; run ",
+                t"{ui.cmd('jj-stack doctor --fix')} to forget them and keep them out of future "
+                t"fetches.",
+            )
+        )
     multi_selector = len(selectors) > 1
     json_stacks: list[dict[str, object]] = []
     for index, (selector, prepared_status, notes) in enumerate(selections):
