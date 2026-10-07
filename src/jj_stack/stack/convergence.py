@@ -74,7 +74,7 @@ def build_selected_convergence_plan(
             selected=change,
         )
         if isinstance(change_state, Closed):
-            raise _closed_error(change_state)
+            raise _closed_error(change_state, ancestries=ancestries, observation=observation)
         if isinstance(change_state, Merged):
             raise CliError(
                 t"Cannot remove {ui.change_id(change.change_id)}: "
@@ -212,8 +212,37 @@ def _member_state(
     return state
 
 
-def _closed_error(state: Closed) -> CliError:
+def _closed_error(
+    state: Closed, *, ancestries: dict[CommitId, CommitAncestry], observation: RepoFacts
+) -> CliError:
     pr_label = format_pr_label(state.pr.number, url=state.pr.html_url)
+    above = next(
+        (
+            o.pr
+            for o in observation.prs.values()
+            if o.pr and o.pr.state == "open" and o.pr.base.ref == state.pr.head.ref
+        ),
+        None,
+    )
+    # GitHub closes a PR that its rewrite left with no changes.
+    if (
+        above is not None
+        and ancestries.get(state.pr.head.sha) == "on_trunk"
+        and not state.has_local_edits
+    ):
+        steps = (
+            f"jj-stack unstack --pull-request {above.number}",
+            f"gh pr edit {above.number} --base {state.pr.base.ref}",
+            f"jj-stack cleanup --pull-request {state.pr.number}",
+            f"jj abandon {short_change_id(state.change_id)}",
+            f"jj-stack sync --pull-request {above.number}",
+        )
+        return CliError(
+            t"GitHub closed {pr_label} for {ui.change_id(state.change_id)} because its changes "
+            t"are already on trunk. GitHub will not reopen it, and its branch must stay while "
+            t"{format_pr_label(above.number, url=above.html_url)} uses it as its base.",
+            hint=("Run these commands in order:", *(t"\n  {ui.cmd(step)}" for step in steps)),
+        )
     return CliError(
         t"{pr_label} for {ui.change_id(state.change_id)} is closed, so jj-stack cannot update "
         t"that PR.",

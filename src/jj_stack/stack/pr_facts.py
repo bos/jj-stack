@@ -145,6 +145,7 @@ def classify_observed_commit_ancestries(
         for commit_id in (
             item.tracked.submitted_baseline.commit_id,
             item.pr.merge_commit_sha if item.pr is not None else None,
+            item.pr.head.sha if item.pr is not None else None,
         )
         if commit_id is not None
     )

@@ -882,6 +882,53 @@ def test_sync_stops_before_rebasing_when_a_survivor_pr_drifted(
     assert state_store.load() == state_before
 
 
+def test_sync_names_working_steps_when_github_closed_a_pr_whose_changes_reached_trunk(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    # The middle change reached main another way, so GitHub's rewrite after the bottom merge
+    # left its PR empty and GitHub closed it.
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.github_stacks = {7: (1, 2, 3)}
+    _, middle, head = selected_stack(repo).changes
+    fake_repo.advance_branch(
+        "main", path="feature-2.txt", contents=(repo / "feature-2.txt").read_text()
+    )
+    trunk = fake_repo.apply_squash_merge(fake_repo.prs[1])
+    update_remote_ref(fake_repo, branch=fake_repo.prs[2].head_ref, target=trunk)
+    fake_repo.update_pr_base(fake_repo.prs[2], base_ref="main")
+    fake_repo.prs[2].state = "closed"
+    fake_repo.rewrite_pr_onto_base(fake_repo.prs[3], base_ref=fake_repo.prs[2].head_ref)
+
+    assert run_main(repo, config_path, "sync", head.change_id) == 1
+    hint = " ".join(capsys.readouterr().err.split())
+    assert "because its changes are already on trunk" in hint
+    steps = (
+        "jj-stack unstack --pull-request 3",
+        "gh pr edit 3 --base main",
+        "jj-stack cleanup --pull-request 2",
+        f"jj abandon {short_change_id(middle.change_id)}",
+        "jj-stack sync --pull-request 3",
+    )
+    assert hint.index(steps[0]) < hint.index(steps[1]) < hint.index(steps[2])
+    assert hint.index(steps[2]) < hint.index(steps[3]) < hint.index(steps[4])
+
+    assert run_main(repo, config_path, *steps[0].split()[1:]) == 0
+    fake_repo.update_pr_base(fake_repo.prs[3], base_ref="main")
+    assert run_main(repo, config_path, *steps[2].split()[1:]) == 0
+    run_command(steps[3].split(), repo)
+    exit_code = run_main(repo, config_path, *steps[4].split()[1:])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert set(TrackingStore.for_repo(repo).load().prs) == {head.change_id}
+    remaining = selected_stack(repo)
+    assert remaining.head.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert fake_repo.ref_target(fake_repo.prs[3].head_ref) == remaining.head.commit_id
+
+
 def test_sync_retries_after_a_partial_merge_and_native_rebase_without_adopting_github(
     tmp_path: Path,
     monkeypatch,
