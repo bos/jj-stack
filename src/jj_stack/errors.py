@@ -123,9 +123,11 @@ class ConflictedStackError(CliError):
 
 
 # Which pre-mutation verification check failed when cross-system drift made PR identity
-# unprovable. The property harness uses this to distinguish stops that share an exit code.
+# unprovable. Merge and the property harness use this to tell apart stops that share an exit
+# code.
 type DriftCondition = Literal[
     "pr_ambiguous",
+    "pr_head_lagging",
     "pr_not_open",
     "remote_branch_missing",
     "remote_branch_moved",

@@ -65,6 +65,7 @@ from jj_stack.state.operation_lock import OperationLockBusyError, operation_lock
 
 from .github_stack import PendingMerge, build_async_merge_plan, execute_async_merge
 from .plan import MergeExecutionInputs, MergeResult, build_merge_plan
+from .wait import retry_while_github_catches_up
 
 _RERUN_HINT = "Resolve the GitHub error above, then rerun jj-stack merge."
 HELP = "Merge pull requests at the bottom of a stack"
@@ -166,14 +167,15 @@ async def _run_merge(
             return 0
         console.output("Updating the local stack after the completed merge:")
         try:
-            with operation_lock(context.state_store, command="merge"):
-                exit_code = await _update_local_stack(
+            exit_code = await retry_while_github_catches_up(
+                lambda: _update_local_stack(
                     context=context,
                     github_client=github_client,
                     trunk=trunk,
                     prepared_merge=prepared_merge,
                     result=result,
                 )
+            )
         except OperationLockBusyError as error:
             _warn_incomplete_post_merge_sync(prepared_merge.sync_head, has_recovery_hint=True)
             error.hint = (
@@ -208,8 +210,6 @@ async def _update_local_stack(
     """Sync the merged stack, or only clean up when the fetch already removed its changes."""
 
     head = prepared_merge.stack.head
-    with console.spinner(description="Fetching trunk"):
-        context.jj_client.fetch_remote(remote=prepared_merge.target.remote.name)
     run = GithubRun(
         context=context,
         dry_run=False,
@@ -217,9 +217,14 @@ async def _update_local_stack(
         target=prepared_merge.target,
         trunk=trunk,
     )
-    if context.jj_client.query_commits_by_change_ids((head.change_id,))[head.change_id]:
-        return await converge_selected_stack(run, revset=head.change_id)
-    return await cleanup_stack_without_local_copies(run, change_id=result.merged_change_ids[-1])
+    with operation_lock(context.state_store, command="merge"):
+        with console.spinner(description="Fetching trunk"):
+            context.jj_client.fetch_remote(remote=prepared_merge.target.remote.name)
+        if context.jj_client.query_commits_by_change_ids((head.change_id,))[head.change_id]:
+            return await converge_selected_stack(run, revset=head.change_id)
+        return await cleanup_stack_without_local_copies(
+            run, change_id=result.merged_change_ids[-1]
+        )
 
 
 def _warn_incomplete_post_merge_sync(sync_head: str, *, has_recovery_hint: bool) -> None:

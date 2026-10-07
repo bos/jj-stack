@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from math import ceil
 
 import jj_stack.console as console
 import jj_stack.ui as ui
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, DriftError
 from jj_stack.formatting import format_pr_number
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.identifiers import short_commit_id
@@ -20,6 +21,10 @@ _QUEUE_POLL_INTERVAL_SECONDS = 10.0
 # GitHub drops a queue entry shortly before it records the merge or the removal reason, so an
 # open, unqueued PR with no recorded reason is only a removal once it stays that way.
 _UNEXPLAINED_POLLS = 6
+# GitHub rewrites the PRs above a merged one several seconds after reporting the merge, and a
+# PR's reported head trails its branch meanwhile.
+_CATCH_UP_SECONDS = 15.0
+_CATCH_UP_POLL_INTERVAL_SECONDS = 3.0
 
 
 async def wait_for_merge(
@@ -55,6 +60,27 @@ async def wait_for_merge(
             hint=execution.sync_after_github,
         ) from error
     return result
+
+
+async def retry_while_github_catches_up(update: Callable[[], Awaitable[int]]) -> int:
+    """Rerun the local update while GitHub has not yet caught up with its own rewrite."""
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _CATCH_UP_SECONDS
+    waited = False
+    while True:
+        try:
+            return await update()
+        except DriftError as error:
+            if error.condition != "pr_head_lagging" or loop.time() >= deadline:
+                raise
+        if not waited:
+            console.output(
+                "GitHub is still updating the remaining PRs; waiting for it to finish."
+            )
+            waited = True
+        with console.spinner(description="Waiting for GitHub to update the remaining PRs"):
+            await asyncio.sleep(_CATCH_UP_POLL_INTERVAL_SECONDS)
 
 
 async def _request_result(

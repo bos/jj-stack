@@ -90,6 +90,8 @@ class FakeGithubPR:
     requested_reviewers: list[str] = field(default_factory=list)
     requested_team_reviewers: list[str] = field(default_factory=list)
     state: str = "open"
+    # A head GitHub still reports after the branch moved; it catches up seconds later.
+    lagging_head: str | None = None
 
     @property
     def graphql_state(self) -> str:
@@ -102,7 +104,7 @@ class FakeGithubPR:
             "body": self.body,
             "headRef": None if head_target is None else {"name": self.head_ref},
             "headRefName": self.head_ref,
-            "headRefOid": self.head_sha,
+            "headRefOid": self.lagging_head or self.head_sha,
             # Real GitHub reports the head repository's owner, which is a fork owner for a
             # PR opened from a fork. Head-ref lookups return those nodes too.
             "headRepositoryOwner": {"login": self.head_label.partition(":")[0]},

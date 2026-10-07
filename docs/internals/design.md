@@ -379,7 +379,8 @@ error before requesting anything. It sends the explicit action `merge_queue` whe
 found and `direct_merge` otherwise.
 
 `merge` waits for completion by default, then fetches and syncs the whole selected stack before
-returning, including changes above the last merged PR and commits GitHub rewrote. An `enqueued`
+returning, including changes above the last merged PR and commits GitHub rewrote. While a PR's
+head and branch disagree, that sync retries for a few seconds before stopping. An `enqueued`
 result means GitHub accepted the PRs into the queue; waiting continues by observing every selected
 PR until all report merged. Observations must still match the planned PR identities and submitted
 heads. Queue progress is shown but never determines merge eligibility. GitHub removes a queue

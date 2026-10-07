@@ -424,7 +424,7 @@ class BranchMissing(Stop, WithPR):
 class BranchDisagrees(Stop, WithPR):
     @property
     def drift_condition(self) -> DriftCondition:
-        return "remote_branch_moved"
+        return "pr_head_lagging"
 
     @property
     def reason(self) -> Message:

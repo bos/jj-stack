@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from jj_stack.commands.merge import command as merge_command
 from jj_stack.commands.merge.github_stack import PendingMerge
 from jj_stack.errors import EXIT_GITHUB, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -420,6 +421,49 @@ def test_stack_rewriting_merge_removes_pre_merge_copies_and_keeps_working_copy_e
         )
     else:
         assert all(not changes for changes in copies.values())
+
+
+def test_merge_update_waits_while_github_reports_an_old_head_for_a_rewritten_branch(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    # GitHub moves the branches above a merged PR seconds before the PRs report the new heads.
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.allow_rebase_merge = True
+    fake_repo.github_stacks = {7: (1, 2)}
+    stack = selected_stack(repo)
+    monkeypatch.setattr("jj_stack.commands.merge.wait._CATCH_UP_POLL_INTERVAL_SECONDS", 0)
+    wait = PendingMerge.wait
+    converge = merge_command.converge_selected_stack
+    attempts: list[str] = []
+
+    async def merge_then_lag(self, github):
+        result = await wait(self, github)
+        fake_repo.prs[2].lagging_head = stack.head.commit_id
+        return result
+
+    async def converge_then_catch_up(run, *, revset):
+        attempts.append(revset)
+        try:
+            return await converge(run, revset=revset)
+        finally:
+            fake_repo.prs[2].lagging_head = None
+
+    monkeypatch.setattr(PendingMerge, "wait", merge_then_lag)
+    monkeypatch.setattr(merge_command, "converge_selected_stack", converge_then_catch_up)
+    exit_code = run_main(repo, config_path, "merge", "--method", "rebase", "--pull-request", "1")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    assert len(attempts) == 2
+    assert "catching up" not in captured.err
+    assert "GitHub is still updating the remaining PRs" in captured.out
+    remaining = selected_stack(repo)
+    assert remaining.head.parents == (read_remote_ref(fake_repo.git_dir, "main"),)
+    assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == remaining.head.commit_id
+    assert set(TrackingStore.for_repo(repo).load().prs) == {stack.head.change_id}
 
 
 def test_merge_finishes_when_another_sync_already_cleaned_up_the_stack(
