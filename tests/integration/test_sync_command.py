@@ -16,6 +16,7 @@ from jj_stack.state.store import TrackingStore
 from ..support.fake_github import _complete_stack_merge
 from ..support.integration_helpers import (
     commit_file,
+    enable_sign_on_push,
     expose_pr_branch_namespace,
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
@@ -527,6 +528,28 @@ def test_sync_replaces_a_survivor_github_rewrote_with_the_local_rebase_onto_trun
     assert fake_repo.prs[2].base_ref == "main"
     assert fake_repo.github_stacks == {7: (1, 2)}
     assert jj.query_commits_by_change_ids((on_trunk.change_id,))[on_trunk.change_id] == ()
+
+
+def test_sync_signs_the_survivor_it_rebases_when_sign_on_push_is_set(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    enable_sign_on_push(repo)
+    survivor = selected_stack(repo).head
+    _squash_merge_pr(fake_repo, 1)
+
+    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    (local,) = JjClient(repo).query_commits_by_change_ids((survivor.change_id,))[
+        survivor.change_id
+    ]
+    assert local.signed
+    assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == local.commit_id
 
 
 def test_sync_rejects_unselected_mutable_copy_after_github_rewrite(

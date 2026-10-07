@@ -59,7 +59,7 @@ from jj_stack.state.operation_lock import operation_lock
 from .changes import prepare_submit_changes, require_published_base
 from .descriptions import preserve_external_pr_text, read_pr_template
 from .editor import edit_pr_document, parse_edited_pr_document, resume_edit_hint
-from .inputs import prepare_publication_inputs, select_submit_inputs
+from .inputs import prepare_publication_inputs, select_submit_inputs, sign_selected_stack
 from .models import (
     GeneratedDescription,
     PreparedSubmitChange,
@@ -298,6 +298,13 @@ async def run_submit_async(
                         context.state_store, command="submit", mutating=not run.dry_run
                     )
                 )
+                if not run.dry_run:
+                    # Sign first so that the observation below sees the commits to push.
+                    sign_selected_stack(
+                        context.jj_client,
+                        revset=options.revset,
+                        state=context.state_store.load(),
+                    )
                 observed = await _observe_submit(
                     run, options=options, print_selected=print_selected
                 )

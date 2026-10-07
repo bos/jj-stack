@@ -875,6 +875,29 @@ class JjClient:
                 stderr=error.stderr,
             ) from error
 
+    def sign_before_push(self, revset: str, *, pushed: Sequence[CommitId]) -> None:
+        """Sign commits as `jj git push` does when `git.sign-on-push` is set.
+
+        Like jj, sign only the user's own unsigned mutable commits that are not already pushed,
+        and rebase their descendants.
+        """
+
+        if self._settings is not None:
+            enabled = self._settings.table("git").get("sign-on-push") is True
+        else:
+            enabled = self.get_config_string("git.sign-on-push") == "true"
+        if not enabled:
+            return
+        pushed_revset = " | ".join(f"present({quote_revset_symbol(c)})" for c in pushed)
+        self._run_jj(
+            (
+                "sign",
+                "-r",
+                f"({revset}) & mine() & ~signed() & mutable() ~ ({pushed_revset or 'none()'})",
+            ),
+            manage_working_copy=True,
+        )
+
     def edit_commit(self, commit_id: CommitId, *, cli_args: JjCliArgs) -> None:
         """Edit the given commit in the current workspace.
 

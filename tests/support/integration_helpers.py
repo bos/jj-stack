@@ -422,6 +422,19 @@ def sign_commit(repo: Path, revset: str) -> None:
     )
 
 
+def enable_sign_on_push(repo: Path) -> None:
+    """Configure `git.sign-on-push` with a disposable SSH key."""
+
+    key = repo.parent / "signing-key"
+    run_command(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], repo)
+    for setting, value in (
+        ("git.sign-on-push", "true"),
+        ("signing.backend", "ssh"),
+        ("signing.key", str(key)),
+    ):
+        run_command(["jj", "config", "set", "--repo", setting, value], repo)
+
+
 def jj_commit_id(repo: Path, revset: str) -> CommitId:
     return CommitId(
         run_command(

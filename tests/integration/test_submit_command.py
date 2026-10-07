@@ -29,6 +29,7 @@ from ..support.fake_github import (
 )
 from ..support.integration_helpers import (
     commit_file,
+    enable_sign_on_push,
     init_fake_github_repo,
     init_fake_github_repo_with_submitted_feature,
     init_fake_github_repo_with_submitted_stack,
@@ -1643,6 +1644,33 @@ def test_submit_dry_run_reports_update_without_mutating_remote_or_github(
     assert fake_repo.prs == prs_before
     assert remote_refs(fake_repo.git_dir) == remote_refs_before
     assert TrackingStore.for_repo(repo).load() == state_before
+
+
+def test_submit_signs_own_unpublished_commits_when_sign_on_push_is_set(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Like `jj git push`, sign the user's own unsigned commits that are not yet published."""
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    published = selected_stack(repo).head
+    enable_sign_on_push(repo)
+    commit_file(repo, "feature 2", "feature-2.txt")
+    commit_file(repo, "feature 3", "feature-3.txt")
+    run_command(["jj", "metaedit", "-r", "@-", "--author", "Other <other@example.com>"], repo)
+
+    exit_code = run_main(repo, config_path, "submit")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, captured.err
+    changes = selected_stack(repo).changes
+    assert changes[0] == published
+    assert [change.signed for change in changes] == [False, True, False]
+    for change in changes:
+        branch = TrackingStore.for_repo(repo).load().prs[change.change_id].pr_identity.head_ref
+        assert read_remote_ref(fake_repo.git_dir, branch) == change.commit_id
 
 
 @pytest.mark.parametrize(

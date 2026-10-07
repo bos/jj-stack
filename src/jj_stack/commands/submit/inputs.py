@@ -7,8 +7,8 @@ from collections.abc import Sequence
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ConflictedStackError, UsageError
-from jj_stack.identifiers import ChangeId, short_change_id
-from jj_stack.jj.client import JjClient
+from jj_stack.identifiers import ChangeId, is_full_change_id, short_change_id
+from jj_stack.jj.client import JjClient, change_ids_revset
 from jj_stack.models.github import GithubStackPR
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.models.tracking import TrackingState
@@ -133,6 +133,27 @@ def preflight_publication_stack(client: JjClient, stack: LocalStack) -> None:
     require_submittable_changes(stack.changes)
     preflight_conflicted_changes(stack.changes)
     preflight_private_commits(client, stack.changes)
+
+
+def sign_unsubmitted_commits(client: JjClient, *, revset: str, state: TrackingState) -> None:
+    """Apply `git.sign-on-push` to commits in `revset` other than the ones already submitted."""
+
+    client.sign_before_push(
+        revset,
+        pushed=tuple(tracked.submitted_baseline.commit_id for tracked in state.prs.values()),
+    )
+
+
+def sign_selected_stack(client: JjClient, *, revset: str | None, state: TrackingState) -> None:
+    """Apply `git.sign-on-push` to the stack below a submit selection, before reading it."""
+
+    if revset is None:
+        head = "@"
+    elif is_full_change_id(revset):
+        head = change_ids_revset((ChangeId(revset),))
+    else:
+        head = revset
+    sign_unsubmitted_commits(client, revset=f"::({head}) ~ ::trunk() ~ empty()", state=state)
 
 
 def confirm_orphaned_pr_snapshots(

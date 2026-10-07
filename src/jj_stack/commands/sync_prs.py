@@ -9,12 +9,14 @@ from jj_stack.commands.submit.descriptions import preserve_external_pr_text, rea
 from jj_stack.commands.submit.inputs import (
     preflight_publication_stack,
     prepare_publication_inputs,
+    sign_unsubmitted_commits,
 )
 from jj_stack.commands.submit.models import PreparedSubmitChange, PRMetadataAction
 from jj_stack.commands.submit.publication import plan_pr_updates, publish_prepared
 from jj_stack.errors import CliError, ConflictedStackError
 from jj_stack.github.error_messages import read_or_stop
 from jj_stack.identifiers import ChangeId, CommitId, short_change_id
+from jj_stack.jj.client import change_ids_revset
 from jj_stack.models.github import GithubStack
 from jj_stack.stack.convergence_models import SelectedConvergencePlan
 from jj_stack.stack.selected import select_stack_path
@@ -39,6 +41,10 @@ async def refresh_selected_prs(
         return
     selected_ids = tuple(plan.remaining_prs)
     state = context.state_store.load()
+    # Sign the rebased commits before reading them, so the push names the signed ones.
+    sign_unsubmitted_commits(
+        context.jj_client, revset=change_ids_revset(selected_ids), state=state
+    )
     # The rebase changed local commits. PR identities and remote refs are still valid.
     path = select_stack_path(jj_client=context.jj_client, state=state, revset=selected_ids[-1])
     if tuple(change.change_id for change in path.stack.changes) != selected_ids:
