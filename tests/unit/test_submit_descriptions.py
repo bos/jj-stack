@@ -95,17 +95,9 @@ def test_refresh_check_compares_the_body_submit_wrote_not_the_raw_description() 
 
     wrapped_body = "A paragraph that\nwraps across two source lines."
     submitted = {
-        ChangeId("ch1"): make_change(
-            commit_id="c1",
-            change_id="ch1",
-            description=f"feature 1\n\n{wrapped_body}\n",
-        ),
-        ChangeId("ch2"): make_change(commit_id="c2", change_id="ch2", description="feature 2\n"),
-        ChangeId("ch3"): make_change(
-            commit_id="c3",
-            change_id="ch3",
-            description=f"feature 3\n\n{wrapped_body}\n",
-        ),
+        ChangeId("ch1"): frozenset((f"feature 1\n\n{wrapped_body}\n",)),
+        ChangeId("ch2"): frozenset(("feature 2\n",)),
+        ChangeId("ch3"): frozenset((f"feature 3\n\n{wrapped_body}\n",)),
     }
 
     preserved = preserve_external_pr_text(
@@ -124,7 +116,7 @@ def test_refresh_check_compares_the_body_submit_wrote_not_the_raw_description() 
             ChangeId("ch2"): _live_pr(body="## Checklist", title="feature 2"),
             ChangeId("ch3"): _live_pr(body=wrapped_body, title="feature 3"),
         },
-        submitted_commits=submitted,
+        submitted_descriptions=submitted,
         template="## Checklist",
     )
 
@@ -150,7 +142,7 @@ def test_a_submitted_commit_the_repo_never_held_is_not_an_edit_on_github() -> No
             ChangeId("ch1"): GeneratedDescription(body="edited body", title="feature 1")
         },
         prs={ChangeId("ch1"): _live_pr(body="feature 1", title="feature 1")},
-        submitted_commits={},
+        submitted_descriptions={},
         template="",
     )
 

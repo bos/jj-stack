@@ -55,6 +55,13 @@ _CHANGE_JSON_FIELDS = dedent(
     """
 ).strip()
 _COMMIT_TEMPLATE = rf'"{{" ++ {_CHANGE_JSON_FIELDS} ++ "}}\n"'
+_CHANGE_VERSION_TEMPLATE = dedent(
+    r"""
+    "{\"change_id\":" ++ json(commit.change_id()) ++
+    ",\"commit_id\":" ++ json(commit.commit_id()) ++
+    ",\"description\":" ++ json(commit.description()) ++ "}\n"
+    """
+).strip()
 _BOOKMARK_TEMPLATE = dedent(
     r"""
     "{\"name\":" ++ json(self.name()) ++
@@ -160,6 +167,16 @@ class _CommitScan(BaseModel):
 
     commit: LocalCommit
     membership: tuple[bool, ...]
+
+
+class ChangeVersion(BaseModel):
+    """One commit from a change's evolution log."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    change_id: ChangeId
+    commit_id: CommitId
+    description: str
 
 
 class _CommitDiffStat(BaseModel):
@@ -302,6 +319,28 @@ class JjClient:
             for commit in commits:
                 commits_by_id.setdefault(commit.commit_id, commit)
         return tuple(commits_by_id.values())
+
+    def change_versions(self, commit_ids: Sequence[CommitId]) -> tuple[ChangeVersion, ...]:
+        """Return the commits in these commits' evolution logs, skipping unavailable IDs.
+
+        jj also lists the commits of other changes that were squashed into one of them.
+        """
+
+        versions: dict[CommitId, ChangeVersion] = {}
+        for chunk in batched(tuple(dict.fromkeys(commit_ids)), QUERY_BATCH_SIZE, strict=False):
+            stdout = self._run_jj(
+                (
+                    "evolog",
+                    "--no-graph",
+                    "-r",
+                    _present_symbols_revset(chunk),
+                    "-T",
+                    _CHANGE_VERSION_TEMPLATE,
+                )
+            )
+            for version in _parse_json_lines(stdout, command="jj evolog", model=ChangeVersion):
+                versions.setdefault(version.commit_id, version)
+        return tuple(versions.values())
 
     def query_present_commit_ancestor_membership(
         self,

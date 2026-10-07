@@ -7,6 +7,13 @@ from pydantic import BaseModel, ConfigDict
 from jj_stack.identifiers import ChangeId, CommitId
 
 
+def description_subject(description: str) -> str:
+    """Return a description's first line for display."""
+
+    first_line = description.splitlines()[0] if description else ""
+    return first_line or "(no description set)"
+
+
 class LocalCommit(BaseModel):
     """A commit with the fields needed for stack discovery."""
 
@@ -27,10 +34,7 @@ class LocalCommit(BaseModel):
 
     @property
     def subject(self) -> str:
-        """Return the first non-empty description line for display."""
-
-        first_line = self.description.splitlines()[0] if self.description else ""
-        return first_line or "(no description set)"
+        return description_subject(self.description)
 
     @property
     def has_described_work(self) -> bool:

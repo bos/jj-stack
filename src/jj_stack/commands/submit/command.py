@@ -85,7 +85,8 @@ template, including the owner's public `.github` repository fallback. Without a 
 it repeats the subject line.
 
 Later submits refresh the title and body from the change description, provided both still match
-the defaults for the last submitted version. Editing either field on GitHub preserves both.
+the defaults for the last submitted version or another version in the change's `jj evolog`.
+Editing either field on GitHub preserves both.
 
 Use `--describe CHANGE=FILE` to read a PR body from a Markdown file, or `--describe stack=FILE`
 to add an overview comment to the head PR of a stack with several changes. Relative paths are
@@ -540,7 +541,7 @@ async def _observe_submit(
     generated_descriptions = preserve_external_pr_text(
         descriptions=prepared_inputs.generated_pr_descriptions,
         prs={prepared.change.change_id: prepared.pr for prepared in prepared_changes},
-        submitted_commits=prepared_inputs.submitted_commits,
+        submitted_descriptions=prepared_inputs.submitted_descriptions,
         template=prepared_inputs.pr_template,
     )
     return _SubmitObservation(

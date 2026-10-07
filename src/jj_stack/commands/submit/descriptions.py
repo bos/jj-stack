@@ -19,7 +19,7 @@ from jj_stack.errors import CliError, UsageError
 from jj_stack.identifiers import ChangeId
 from jj_stack.jj.client import JjClient, JjCommandError
 from jj_stack.models.github import DEFAULT_PR_TEMPLATE_PATHS, GithubPR
-from jj_stack.models.stack import LocalCommit
+from jj_stack.models.stack import LocalCommit, description_subject
 
 from .default_pr_text import default_pr_body
 from .models import GeneratedDescription
@@ -101,28 +101,30 @@ def preserve_external_pr_text(
     *,
     descriptions: dict[ChangeId, GeneratedDescription],
     prs: Mapping[ChangeId, GithubPR | None],
-    submitted_commits: dict[ChangeId, LocalCommit],
+    submitted_descriptions: Mapping[ChangeId, frozenset[str]],
     template: str,
 ) -> dict[ChangeId, GeneratedDescription]:
-    """Preserve a live PR pair once its text no longer matches the submitted description.
+    """Preserve a live PR pair that matches no description this repo recorded for its change.
 
-    A saved baseline can name a commit this repo never held: `sync` records the head GitHub
-    rewrote for a survivor it could not update, and `relink --replace-remote` records the remote
-    commit. That is not evidence of an edit on GitHub, so the pair still follows the change.
+    An interrupted submit can leave a PR showing the text of a version other than the submitted
+    commit, which is not an edit on GitHub. A submitted commit this repo never held leaves
+    nothing to compare, so the pair follows the change: `sync` records the head GitHub rewrote
+    for a survivor it could not update, and `relink --replace-remote` records the remote commit.
     """
 
     preserved: dict[ChangeId, GeneratedDescription] = {}
     for change_id, description in descriptions.items():
         pr = prs[change_id]
-        submitted = submitted_commits.get(change_id)
+        recorded = submitted_descriptions.get(change_id)
         if pr is None:
             preserved[change_id] = description
             continue
 
         live_body = pr.body or ""
-        preserve_existing = submitted is not None and (
-            pr.title != submitted.subject
-            or live_body != default_pr_body(submitted.description, template=template)
+        preserve_existing = recorded is not None and not any(
+            pr.title == description_subject(text)
+            and live_body == default_pr_body(text, template=template)
+            for text in recorded
         )
         preserved[change_id] = replace(
             description,

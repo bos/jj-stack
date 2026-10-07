@@ -155,4 +155,5 @@ class PublicationInputs:
     pr_template: str
     stack: LocalStack
     state: TrackingState
-    submitted_commits: dict[ChangeId, LocalCommit]
+    # Every recorded description of each change whose submitted commit this repo holds.
+    submitted_descriptions: dict[ChangeId, frozenset[str]]

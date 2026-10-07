@@ -101,13 +101,22 @@ def prepare_publication_inputs(
         changes=stack.changes,
         template=template,
     )
-    submitted_commits = client.query_commits_by_ids(
-        tuple(
-            state.prs[change.change_id].submitted_baseline.commit_id
-            for change in stack.changes
-            if change.change_id in state.prs
-        )
+    submitted = {
+        change.change_id: state.prs[change.change_id].submitted_baseline.commit_id
+        for change in stack.changes
+        if change.change_id in state.prs
+    }
+    versions = client.change_versions(
+        (*submitted.values(), *(change.commit_id for change in stack.changes))
     )
+    held = {version.commit_id for version in versions}
+    submitted_descriptions = {
+        change_id: frozenset(
+            version.description for version in versions if version.change_id == change_id
+        )
+        for change_id, commit_id in submitted.items()
+        if commit_id in held
+    }
     return PublicationInputs(
         client=client,
         generated_pr_descriptions=generated_pr_descriptions,
@@ -116,7 +125,7 @@ def prepare_publication_inputs(
         pr_template=template,
         stack=stack,
         state=state,
-        submitted_commits={change.change_id: change for change in submitted_commits},
+        submitted_descriptions=submitted_descriptions,
     )
 
 

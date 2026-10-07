@@ -8,11 +8,13 @@ weight: 100
 
 `jj-stack submit` takes each new PR's title and body from its `jj` change description. Later
 submits refresh that text as you edit the change, provided the PR's title and body still match
-the defaults for the last submitted version.
+the defaults for the last submitted version or another version in the change's `jj evolog`.
 
 For example, suppose a submit creates the title `Add caching`. You rename it on GitHub to
 `Cache API requests`, then change the local description. The next submit keeps both the GitHub
-title and body. Editing either field on GitHub preserves the pair.
+title and body. Editing either field on GitHub preserves the pair. Changing them on GitHub back
+to the text of an earlier version of the change counts as no edit, so the next submit replaces
+them.
 
 Use `--describe` to replace a body explicitly, `--edit` to edit titles and bodies yourself, or
 `--describe-with` to generate them with a helper.

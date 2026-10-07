@@ -89,8 +89,9 @@ it may describe a different release, and do not fetch it for routine stack opera
 
 **Collaboration writes are fine when the user asks**: comments, reviews,
 labels, assignees, milestones, reviewer requests, draft/ready state, and
-title or body edits. Ordinary `submit` preserves PR text edited on GitHub when it differs from
-the last automated description; explicitly supplied text still replaces the corresponding fields.
+title or body edits. Ordinary `submit` preserves PR text edited on GitHub unless it matches the
+automated description of some version of the change; explicitly supplied text still replaces
+the corresponding fields.
 The user may also ask you to edit a comment containing
 `<!-- jj-stack-overview -->`; preserve that marker so `jj-stack` can keep managing and moving the
 overview. Never delete the marker or the managed comment by hand.

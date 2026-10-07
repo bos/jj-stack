@@ -93,7 +93,7 @@ async def refresh_selected_prs(
     descriptions = preserve_external_pr_text(
         descriptions=inputs.generated_pr_descriptions,
         prs=actions.remaining_prs,
-        submitted_commits=inputs.submitted_commits,
+        submitted_descriptions=inputs.submitted_descriptions,
         template=inputs.pr_template,
     )
     plans = plan_pr_updates(

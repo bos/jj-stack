@@ -40,6 +40,7 @@ from ..support.integration_helpers import (
     write_fake_github_config,
     write_file,
 )
+from ..support.submit_faults import install_submit_fault
 from .submit_command_helpers import (
     configure_submit_environment,
     issue_comments,
@@ -1956,58 +1957,52 @@ def test_submit_refreshes_unchanged_pr_text_and_preserves_github_edits(
     assert fake_repo.prs[pr_number].body == "Helper body"
 
 
-def test_submit_rerun_recovers_after_lost_remote_update_response(
+@pytest.mark.parametrize(
+    ("point", "relink", "describe_again"),
+    (
+        pytest.param("after_remote_push", False, False, id="retry"),
+        pytest.param("after_remote_push", True, True, id="relink"),
+    ),
+)
+def test_submit_after_an_interrupted_submit_keeps_pr_text_following_the_change(
     tmp_path: Path,
     monkeypatch,
     capsys,
+    point: str,
+    relink: bool,
+    describe_again: bool,
 ) -> None:
+    """A submit can stop after pushing a branch but before updating the PR. The PR then shows
+    the text of an earlier version, which is not an edit on GitHub, so later submits keep
+    updating it, also once `relink` records the pushed commit.
+    """
+
     repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_id = selected_stack(repo).head.change_id
+    bookmark = fake_repo.prs[1].head_ref
 
-    stack = selected_stack(repo)
-    change_id = stack.changes[-1].change_id
-    identity = TrackingStore.for_repo(repo).load().prs[change_id].pr_identity
-    bookmark = identity.head_ref
-    pr_number = identity.pr_number
+    def describe(message: str) -> None:
+        run_command(
+            ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", message], repo
+        )
 
-    run_command(
-        ["jj", "describe", "--ignore-immutable", "-r", change_id, "-m", "feature 1 renamed"],
-        repo,
-    )
-
-    original_mutate = JjClient.mutate_remote_pr_branch_refs
-
-    def mutate_then_fail(
-        self,
-        *,
-        remote: str,
-        updates,
-    ) -> None:
-        original_mutate(self, remote=remote, updates=updates)
-        raise RuntimeError("Simulated failure after remote update")
-
-    monkeypatch.setattr(
-        "jj_stack.commands.submit.command.JjClient.mutate_remote_pr_branch_refs",
-        mutate_then_fail,
-    )
-
-    with pytest.raises(RuntimeError, match="Simulated failure after remote update"):
-        run_main(repo, config_path, "submit", change_id)
+    describe("feature 1 renamed")
+    install_submit_fault(monkeypatch, fake_repo, point, "feature 1 renamed")
+    assert run_main(repo, config_path, "submit", change_id) != 0
+    if relink:
+        assert run_main(repo, config_path, "relink", "1", change_id) == 0
+    if describe_again:
+        describe("feature 1 renamed again")
     capsys.readouterr()
-
-    monkeypatch.setattr(
-        "jj_stack.commands.submit.command.JjClient.mutate_remote_pr_branch_refs",
-        original_mutate,
-    )
 
     exit_code = run_main(repo, config_path, "submit", change_id)
     captured = capsys.readouterr()
-    rewritten_stack = selected_stack(repo, change_id)
 
-    assert exit_code == 0
-    assert "updated" in captured.out
-    assert read_remote_ref(fake_repo.git_dir, bookmark) == rewritten_stack.changes[-1].commit_id
-    assert fake_repo.prs[pr_number].title == "feature 1 renamed"
+    assert exit_code == 0, captured.err
+    head = selected_stack(repo, change_id).head
+    assert read_remote_ref(fake_repo.git_dir, bookmark) == head.commit_id
+    assert fake_repo.prs[1].title == head.subject
 
 
 def test_submit_requires_relink_after_state_loss(
