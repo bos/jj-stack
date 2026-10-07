@@ -107,6 +107,8 @@ PR; changing GitHub stack membership outside `jj-stack`; or equivalent `gh api`
 mutations. Direct writes can leave local changes, PR branches, and tracking out of agreement.
 If the user explicitly requests a direct GitHub operation, explain the tracking implications and
 use the recovery reference to reconcile afterward. Existing explicit authorization is sufficient.
+When a jj-stack diagnostic prints an ordered list of commands that includes a `gh` write, those
+commands are the supported recovery: run them in the order given, after inspecting the stack.
 
 ## Everyday flow
 
@@ -165,7 +167,8 @@ state, and branches still needed as PR bases block cleanup of the affected recor
 5 invalid arguments; 6 ambiguous selector (fails closed — use `relink` to repair an incorrect
 attachment or select explicitly); 10 `view`/`list` printed an incomplete
 report (the output is still valid — read it; ordinary warnings can also appear with exit 0);
-11 `in-use` could not determine its result; 130 interrupted.
+11 `in-use` could not determine its result; 12 another jj-stack command is changing this repo
+(wait for it to finish, then retry the same command); 130 interrupted.
 
 ## When something goes wrong
 

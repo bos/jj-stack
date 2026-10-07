@@ -36,8 +36,15 @@ observations. Use `jj op log` and `jj undo` for local recovery, never destructiv
 - Do not run a separate `jj git fetch` merely to prepare this recovery. `sync` performs the
   required fetch itself; importing rewritten PR branches first can create avoidable local
   divergence.
+- If a command reports that GitHub may still be catching up with a recent push, GitHub has moved
+  a PR branch but not yet updated the PR, which usually takes a few seconds after a merge or
+  push. Wait briefly and rerun the same command; do not `relink`, `checkout`, or `unstack` for
+  this.
 - If GitHub completed the merge but the local update failed, do not rerun `merge`; continue
   with the `sync` or `cleanup` command printed in the diagnostic.
+- If `sync` reports that GitHub closed a PR because its changes are already on trunk, run the
+  commands it prints in order. They remove the GitHub stack, retarget the PR above with `gh`,
+  clean up the closed PR, abandon the emptied local change, and sync again.
 - If a selected PR is still in the merge queue, do not submit or sync that stack; rerun the same
   `merge` command to resume waiting. Independent stacks remain usable.
 - If `sync` stops because someone pushed to a PR branch before GitHub merged that PR, follow its
