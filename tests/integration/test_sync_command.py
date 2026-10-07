@@ -728,9 +728,6 @@ def test_sync_preserves_a_conflict_resolution_that_restores_the_submitted_tree(
 
     assert blocked == 1
     assert "could discard local work" in captured.err
-    error = " ".join(captured.err.split())
-    assert f"jj rebase -s {submitted.change_id[:8]} -o 'trunk()'" in error, error
-    assert f"jj diff -r {submitted.change_id[:8]}" in error, error
     assert JjClient(repo).resolve_commit(submitted.change_id).commit_id == resolved.commit_id
     assert state_store.load() == state_before
     assert (
@@ -739,6 +736,46 @@ def test_sync_preserves_a_conflict_resolution_that_restores_the_submitted_tree(
         )
         == baseline
     )
+
+
+def test_sync_recovery_for_an_edited_copy_of_a_merge_commit_names_commits(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    # A merge commit puts the submitted commit on trunk, so the edited local copy shares its
+    # change ID there and jj refuses that ID as a revision.
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    (submitted,) = selected_stack(repo).changes
+    state_store = TrackingStore.for_repo(repo)
+    baseline = state_store.load().prs[submitted.change_id].submitted_baseline.commit_id
+    fake_repo.apply_merge_commit((fake_repo.prs[1],))
+    run_command(["jj", "edit", submitted.change_id], repo)
+    write_file(repo / "after-merge.txt", "new work\n")
+    run_command(["jj", "new", "trunk()"], repo)
+    edited = JjClient(repo).resolve_commit(submitted.change_id).commit_id[:8]
+
+    blocked = run_main(repo, config_path, "sync", submitted.change_id)
+    captured = capsys.readouterr()
+
+    assert blocked == 1
+    error = " ".join(captured.err.split())
+    hint_commands = (
+        ["jj", "interdiff", "--from", baseline[:8], "--to", edited],
+        ["jj", "duplicate", edited, "-o", "trunk()"],
+        ["jj", "abandon", edited],
+    )
+    for command in hint_commands:
+        assert " ".join(command).replace("trunk()", "'trunk()'") in error, error
+        run_command(command, repo)
+    assert run_main(repo, config_path, "sync", submitted.change_id) == 0
+    copy = JjClient(repo).resolve_commit("trunk()+ ~ @")
+    assert copy.change_id != submitted.change_id
+    assert run_command(["jj", "diff", "--name-only", "-r", copy.commit_id], repo).stdout == (
+        "after-merge.txt\n"
+    )
+    assert submitted.change_id not in state_store.load().prs
 
 
 def test_sync_removes_a_merged_change_that_a_local_rebase_emptied(

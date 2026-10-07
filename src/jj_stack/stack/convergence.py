@@ -7,7 +7,7 @@ from dataclasses import replace
 import jj_stack.ui as ui
 from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label
-from jj_stack.identifiers import ChangeId, CommitId, short_change_id
+from jj_stack.identifiers import ChangeId, CommitId, short_change_id, short_commit_id
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR
@@ -410,17 +410,17 @@ def _require_no_unpublished_edits(changes: tuple[OnTrunkChange, ...], *, head: s
         local, baseline = item.change, item.candidate.submitted_baseline.commit_id
         if local is None or not local.holds_unpublished_edit(baseline):
             continue
-        short = short_change_id(local.change_id)
+        # The merged commit can share this change ID on trunk, so the commands name commits.
+        commit = short_commit_id(local.commit_id)
         raise CliError(
-            t"Cannot remove merged {ui.change_id(item.change_id)}: its local commit changed "
-            t"since submit and is not empty. Removing it could discard local work.",
-            hint=t"Run {ui.cmd(f"jj rebase -s {short} -o 'trunk()'")} and rerun "
-            t"{ui.cmd(f'jj-stack sync {head}')}. If "
-            t"{ui.cmd(f'jj diff -r {short}')} still shows changes, move anything still needed "
-            t"to another change, then drop this copy with {ui.cmd(f'jj abandon {short}')} and "
-            t"rerun {ui.cmd(f'jj-stack sync {head}')}, or keep it and forget the selected "
-            t"stack's saved links with "
-            t"{ui.cmd(f'jj-stack unstack --local {short}')}.",
+            t"Cannot remove merged {ui.change_id(item.change_id)}: its local commit "
+            t"{ui.commit_id(local.commit_id)} changed since submit and is not empty. "
+            t"Removing it could discard local work.",
+            hint=t"Compare it with what you submitted using "
+            t"{ui.cmd(f'jj interdiff --from {short_commit_id(baseline)} --to {commit}')}. To "
+            t"keep those edits, copy them onto trunk as a new change with "
+            t"{ui.cmd(f"jj duplicate {commit} -o 'trunk()'")}. Then drop this copy with "
+            t"{ui.cmd(f'jj abandon {commit}')} and rerun {ui.cmd(f'jj-stack sync {head}')}.",
         )
 
 
