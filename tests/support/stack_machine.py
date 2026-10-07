@@ -717,13 +717,15 @@ class StackMachine(RuleBasedStateMachine):
             self.fake._run_backing_git("update-ref", "-d", f"refs/heads/{pr.head_ref}")
             self.fake.update_pr_state(pr, state="closed")
         elif kind == "foreign_branch_fetched":
-            update_remote_ref(
-                self.fake,
-                branch=f"agent/{label}",
-                target=self.submitted[label].submitted_baseline.commit_id,
-            )
+            target = self.submitted[label].submitted_baseline.commit_id
+            update_remote_ref(self.fake, branch=f"agent/{label}", target=target)
             run_command(["jj", "git", "fetch", "--remote", "origin"], self.repo)
-            self.foreign.add(label)
+            # jj makes the fetched commit and its ancestors immutable, and those ancestors
+            # may belong to another stack after a move.
+            protected = self.jj._run_jj(
+                ("log", "--no-graph", "-r", f"::{target}", "-T", 'change_id ++ "\\n"')
+            ).split()
+            self.foreign.update(item for item, change in self.ids.items() if change in protected)
         elif kind == "pr_base_retargeted":
             stack = self.fake.stack_number_for_pr(pr.number)
             if stack is not None:
