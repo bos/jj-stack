@@ -52,7 +52,7 @@ from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClientError
 from jj_stack.github.error_messages import require_github_target
 from jj_stack.github.resolution import resolve_github_target
-from jj_stack.identifiers import ChangeId, CommitId, is_change_id_prefix
+from jj_stack.identifiers import ChangeId, CommitId, is_change_id_prefix, short_change_id
 from jj_stack.jj.client import quote_revset_symbol
 from jj_stack.stack.convergence import (
     CheckedOutMergedChangeError,
@@ -280,6 +280,7 @@ async def converge_prepared_stack(
             hint=_checked_out_workspace_hint(
                 workspaces=error.workspaces,
                 context=run.context,
+                head_change_id=prepared.stack.head.change_id,
             ),
         ) from error
 
@@ -385,7 +386,7 @@ def _render_selected_plan(*, dry_run: bool, plan: SelectedConvergencePlan) -> No
 
 
 def _checked_out_workspace_hint(
-    *, workspaces: tuple[str, ...], context: CommandContext
+    *, workspaces: tuple[str, ...], context: CommandContext, head_change_id: ChangeId
 ) -> Message:
     known = {workspace.name: workspace for workspace in context.jj_client.list_workspaces()}
     hint: list[Message] = ["Move each workspace off the merged change:\n"]
@@ -416,7 +417,7 @@ def _checked_out_workspace_hint(
         for name, root in disposable:
             command = _workspace_disposal_command(name=name, root=root, platform=sys.platform)
             hint.append(t"For {ui.code(name)}{shell}:\n  {ui.cmd(command)}\n")
-    hint.append("Then rerun the same jj-stack sync command.")
+    hint.append(t"Then run {ui.cmd(f'jj-stack sync {short_change_id(head_change_id)}')}.")
     return tuple(hint)
 
 

@@ -308,7 +308,7 @@ def test_sync_all_cleans_a_rewritten_merge_after_its_local_copy_is_gone(
     assert f"refs/heads/{pr_branch}" not in remote_refs(fake_repo.git_dir)
 
 
-def test_sync_all_explains_how_to_forget_a_deleted_workspace_blocking_removal(
+def test_merge_and_sync_name_recovery_for_a_workspace_blocking_removal(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -324,8 +324,21 @@ def test_sync_all_explains_how_to_forget_a_deleted_workspace_blocking_removal(
     other_workspace = tmp_path / "other-workspace"
     _add_other_workspace(repo, other_workspace, submitted.change_id)
     run_command(["jj", "edit", submitted.change_id], other_workspace)
+
+    assert run_main(repo, config_path, "merge", "--pull-request", "1") == 1
+    merged = capsys.readouterr()
+    retry = f"jj-stack sync {short_change_id(submitted.change_id)}"
+    assert_output_contains(merged.out, "Merge completed")
+    assert_output_contains(
+        merged.err,
+        "Do not run jj-stack merge again",
+        "Move each workspace off the merged change",
+        str(other_workspace),
+        f"Then run {retry}",
+    )
+    assert "rerun the same" not in merged.err
+
     other_workspace.rename(tmp_path / "deleted-workspace")
-    _squash_merge_pr(fake_repo, 1)
     _squash_merge_pr(fake_repo, 2)
 
     exit_code = run_main(repo, config_path, "sync", "--all")
@@ -339,11 +352,16 @@ def test_sync_all_explains_how_to_forget_a_deleted_workspace_blocking_removal(
     assert f"jj workspace forget -- {workspace_argument}" in captured.err
     assert "If it still exists elsewhere" in captured.err
     assert str(other_workspace) not in captured.err
+    assert_output_contains(captured.err, f"Then run {retry}")
     merged_change = JjClient(repo).resolve_commit(submitted.change_id)
     assert merged_change.working_copy_workspaces == ("other",)
     remaining = TrackingStore.for_repo(repo).load().prs
     assert submitted.change_id in remaining
     assert independent.change_id not in remaining
+
+    run_command(["jj", "workspace", "forget", "other"], repo)
+    assert run_main(repo, config_path, *retry.split()[1:]) == 0
+    assert TrackingStore.for_repo(repo).load().prs == {}
 
 
 def test_sync_keeps_tracking_and_names_the_recovery_when_a_merged_pr_head_changed(
