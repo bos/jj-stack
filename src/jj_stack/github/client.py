@@ -469,7 +469,7 @@ class GithubClient:
 
     async def list_stacks(self) -> tuple[GithubStack, ...]:
         return await self._get_paginated(
-            f"{self._repo_path}/stacks", model=GithubStack, response_name="stack list"
+            f"{self._repo_path}/stacks", model=tuple[GithubStack, ...], response_name="stack list"
         )
 
     async def get_stack(self, *, stack_number: int) -> GithubStack:
@@ -612,7 +612,7 @@ class GithubClient:
     ) -> tuple[GithubPRReview, ...]:
         return await self._get_paginated(
             f"{self._repo_path}/pulls/{pr_number}/reviews",
-            model=GithubPRReview,
+            model=tuple[GithubPRReview, ...],
             response_name="pull request reviews",
         )
 
@@ -1063,7 +1063,7 @@ class GithubClient:
         self,
         path: str,
         *,
-        model: type[ItemT],
+        model: type[tuple[ItemT, ...]],
         response_name: str,
     ) -> tuple[ItemT, ...]:
         items: list[ItemT] = []
@@ -1074,7 +1074,7 @@ class GithubClient:
             items.extend(
                 _response_model(
                     response,
-                    model=tuple[model, ...],
+                    model=model,
                     response_name=response_name,
                 )
             )
