@@ -367,9 +367,7 @@ def _status_fragments(
     judged = [report.ready for report in reports if report.ready is not None]
     if judged:
         fragments.append(f"{sum(judged)} ready")
-    if (
-        behind := stack_behind(state.pr for state in states if isinstance(state, WithPR))
-    ) is not None:
+    if (behind := stack_behind(states)) is not None:
         count, branch = behind
         fragments.append(t"{count} behind {ui.bookmark(branch)}")
     counts = Counter(report.status for report in reports)

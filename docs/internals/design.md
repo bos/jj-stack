@@ -698,10 +698,10 @@ Both report specific merge warnings alongside reviews and checks, omitting GitHu
 checks; `view --verbose` includes other open PRs. Rules come from the branch a PR's GitHub stack
 lands on, or its own base outside a stack. Both also report whether GitHub would merge each open
 PR now, its approvals from reviewers with write access, and how far the stack's landing branch has
-moved past its bottom PR; they never infer a review decision GitHub leaves out. Drafts, queued
-PRs, and changes with a reported problem are excluded. Details are discarded if the PR head or
-base changes during the lookup. GitHub computes merge state lazily, so an unknown state is not
-reported or polled.
+moved past its bottom PR, unless the bottom change was edited or rebased since its last submit;
+they never infer a review decision GitHub leaves out. Drafts, queued PRs, and changes with a
+reported problem are excluded. Details are discarded if the PR head or base changes during the
+lookup. GitHub computes merge state lazily, so an unknown state is not reported or polled.
 
 Neither command guesses. A change with no saved PR identity is reported as not submitted,
 even if a PR happens to use the branch name that change would generate. A saved PR is always

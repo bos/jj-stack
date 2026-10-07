@@ -173,12 +173,17 @@ def submittable_edits(reports: Mapping[ChangeId, ChangeReport]) -> tuple[ChangeI
     return tuple(change_id for change_id, report in reports.items() if report.needs_submit)
 
 
-def stack_behind(prs: Iterable[GithubPR | None]) -> tuple[int, str] | None:
-    """How many commits the landing branch has that the stack's bottom PR lacks, and its name."""
+def stack_behind(states: Iterable[ChangeState]) -> tuple[int, str] | None:
+    """How many commits the landing branch has that the stack's bottom PR lacks, and its name.
 
-    for pr in prs:
-        if pr is not None and pr.behind:
-            return pr.behind, pr.stack_base_ref or pr.base.ref
+    The count describes the submitted PR, so it is left out once the change moved on locally.
+    """
+
+    for state in states:
+        if isinstance(state, WithPR) and state.pr.behind:
+            if isinstance(state, Edited):
+                return None
+            return state.pr.behind, state.pr.stack_base_ref or state.pr.base.ref
     return None
 
 

@@ -401,7 +401,7 @@ def _render_prepared_status(
             prerendered_blocks[prepared_status.stack.base_parent.commit_id],
         )
     )
-    if (behind := stack_behind(change.pr for change in reversed(result.changes))) is not None:
+    if (behind := stack_behind(change.state for change in reversed(result.changes))) is not None:
         count, branch = behind
         commits = "commit" if count == 1 else "commits"
         _emit_lines((t"The stack is {count} {commits} behind {ui.bookmark(branch)}.",))

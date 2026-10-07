@@ -756,3 +756,13 @@ def test_view_and_list_report_readiness_approvals_and_lag_behind_trunk(
     assert "1 ready, 1 behind main, unresolved review" in plain
     # The warning links to the lowest PR it applies to, not the stack's top PR.
     assert re.search(r"pull/1\x1b\\\x1b\[[\d;]*munresolved review", out)
+
+    # Once the stack is rebased onto trunk locally, the count no longer describes it.
+    run_command(["jj", "git", "fetch"], repo)
+    run_command(
+        ["jj", "rebase", "-s", selected_stack(repo).changes[0].change_id, "-o", "trunk()"], repo
+    )
+    assert run_main(repo, config_path, "view") == 0
+    assert "behind" not in capsys.readouterr().out
+    assert run_main(repo, config_path, "list") == 0
+    assert "behind" not in capsys.readouterr().out
