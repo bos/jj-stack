@@ -228,6 +228,36 @@ class LiveGithubSuite:
         )
         _find_pr(self._pull_requests(state="closed"), "prerelease cleanup")
 
+        self._section("merge the bottom of a stack and follow GitHub's update of the rest")
+        self._run_command(("jj", "new", "main"), cwd=self.primary)
+        self._commit_change(title="prerelease lower change", filename="lower.txt")
+        middle_change = self._commit_change(
+            title="prerelease middle change", filename="middle.txt"
+        )
+        upper_change = self._commit_change(title="prerelease upper change", filename="upper.txt")
+        self._jj_stack(self.primary, "submit", upper_change)
+        lower_pr = _find_pr(self._pull_requests(), "prerelease lower change")
+        self._jj_stack(
+            self.primary,
+            "merge",
+            "--method",
+            "squash",
+            "--pull-request",
+            str(lower_pr["number"]),
+            max_seconds=MERGE_TIMEOUT_SECONDS,
+        )
+        _find_pr(self._pull_requests(state="merged"), "prerelease lower change")
+        open_prs = self._pull_requests(state="open")
+        for title, change in (
+            ("prerelease middle change", middle_change),
+            ("prerelease upper change", upper_change),
+        ):
+            pr = _find_pr(open_prs, title)
+            if pr["headRefOid"] != self._commit_id(change):
+                raise LiveTestError(f"the PR for {title!r} does not hold its local commit")
+        if _find_pr(open_prs, "prerelease middle change")["baseRefName"] != "main":
+            raise LiveTestError("the PR above the merged one does not target main")
+
     def _create_remote(self) -> None:
         self._section("create private disposable repository")
         self._run_command(
@@ -304,6 +334,22 @@ class LiveGithubSuite:
             raise LiveTestError(f"could not read change ID for {title!r}")
         return change_id
 
+    def _commit_id(self, change_id: str) -> str:
+        completed = self._run_command(
+            (
+                "jj",
+                "log",
+                "--no-graph",
+                "-r",
+                f"change_id({change_id})",
+                "-T",
+                'commit_id ++ "\\n"',
+            ),
+            cwd=self.primary,
+            capture=True,
+        )
+        return completed.stdout.strip()
+
     def _jj_stack(
         self,
         repo: Path,
@@ -330,7 +376,7 @@ class LiveGithubSuite:
                 "--limit",
                 "100",
                 "--json",
-                "number,title,state,headRefOid",
+                "number,title,state,headRefOid,baseRefName",
             ),
             capture=True,
         )
