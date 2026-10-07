@@ -32,10 +32,6 @@ from .submit_command_helpers import (
     run_main,
 )
 
-# Every case in this file counts toward the merge/recovery test limit in
-# complexity-budget.toml.
-pytestmark = pytest.mark.merge_recovery
-
 
 def _squash_merge_pr(fake_repo, pr_number: int) -> None:
     stack_number = fake_repo.stack_number_for_pr(pr_number)

@@ -38,10 +38,6 @@ from .submit_command_helpers import (
     run_main,
 )
 
-# Every case in this file counts toward the merge/recovery test limit in
-# complexity-budget.toml.
-pytestmark = pytest.mark.merge_recovery
-
 
 def test_merge_no_wait_resumes_a_pending_or_queued_request_and_syncs_after_waiting(
     tmp_path: Path,

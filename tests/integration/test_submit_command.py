@@ -2003,7 +2003,6 @@ def test_submit_rerun_recovers_after_lost_remote_update_response(
     assert fake_repo.prs[pr_number].title == "feature 1 renamed"
 
 
-@pytest.mark.merge_recovery
 def test_submit_requires_relink_after_state_loss(
     tmp_path: Path,
     monkeypatch,
@@ -2049,7 +2048,6 @@ def test_submit_requires_relink_after_state_loss(
     assert fake_repo.prs[pr_number].title == "feature 1 renamed"
 
 
-@pytest.mark.merge_recovery
 def test_submit_names_sync_when_tracked_pr_is_merged(
     tmp_path: Path,
     monkeypatch,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from jj_stack.identifiers import CommitId
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead
 from jj_stack.models.stack import LocalCommit
@@ -40,7 +38,6 @@ def _moved_head() -> GithubPR:
     )
 
 
-@pytest.mark.merge_recovery
 def test_trunk_evidence_needs_the_pr_head_at_the_submitted_commit_and_a_result_on_trunk() -> None:
     merged = _pr(state="merged", merge_commit_sha="merge-1")
     rows: tuple[tuple[GithubPR, CommitAncestry, CommitAncestry | None, str | None], ...] = (

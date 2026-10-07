@@ -33,8 +33,8 @@ Before requesting another guard, saved field, or recovery path, ask:
 
 Apply the root [complexity policy](../../AGENTS.md#complexity-control), including removing
 replaced mechanisms in the same change and reconsidering a subsystem after repeated hardening.
-Moving logic into another helper does not reduce its complexity. Review budget, governed-path, and
-test marker changes as carefully as production code.
+Moving logic into another helper does not reduce its complexity. Review budget and governed-path
+changes as carefully as production code.
 
 Match safeguards to the harm they prevent. Protect commits and PR identity before reconstructible
 metadata. An elaborate recovery system is rarely justified for data that can be observed again.

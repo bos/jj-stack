@@ -21,7 +21,6 @@ from jj_stack.ui import plain_text
 # The fake GitHub server drives ordinary queue outcomes through the CLI. These snapshots cover
 # what it cannot produce: a PR whose exit GitHub never explains, a head rewritten mid-wait, and
 # the wait ending on an exception.
-pytestmark = pytest.mark.merge_recovery
 
 
 def _queued_pr(number: int) -> GithubPR:

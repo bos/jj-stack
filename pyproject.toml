@@ -58,10 +58,6 @@ ty = [
 
 [tool.pytest.ini_options]
 addopts = "-ra"
-markers = [
-  "fixed_property: fixed regressions and generated command sequences",
-  "merge_recovery: bounded deterministic merge and recovery coverage",
-]
 testpaths = ["tests"]
 
 [tool.coverage.run]

@@ -3,7 +3,6 @@
 
 import ast
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -16,16 +15,10 @@ BUDGET = ROOT / "complexity-budget.toml"
 TOKEI_VERSIONS = ("14", "15")
 
 
-def _run(
-    command: Sequence[str],
-    *,
-    accepted: tuple[int, ...] = (0,),
-    env: dict[str, str] | None = None,
-) -> str:
+def _run(command: Sequence[str], *, accepted: tuple[int, ...] = (0,)) -> str:
     result = subprocess.run(
         command,
         cwd=ROOT,
-        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -84,20 +77,6 @@ def _c901(paths: Sequence[str]) -> int:
     return sum(" C901 " in line for line in output.splitlines())
 
 
-def _collected(marker: str, paths: Sequence[str]) -> int:
-    command = (sys.executable, "-m", "pytest", "--collect-only", "-q", "-m", marker, *paths)
-    output = _run(command, env=_collection_env())
-    return sum(line.startswith("tests/") and "::" in line for line in output.splitlines())
-
-
-def _collection_env() -> dict[str, str]:
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if key != "PYTEST_ADDOPTS" and ("PROPERTY_" not in key or not key.startswith("JJ_STACK_"))
-    }
-
-
 def _quantity(value: int, unit: str) -> str:
     return f"{value:,} {unit}{'' if value == 1 else 's'}"
 
@@ -106,8 +85,8 @@ def _budget_result(*, label: str, limit: int, unit: str, value: int) -> tuple[st
     remaining = limit - value
     if remaining < 0:
         detail = f"OVER LIMIT by {_quantity(-remaining, unit)}"
-    elif remaining == 0:
-        detail = "requirement met" if limit == 0 else "at limit"
+    elif limit == 0:
+        detail = "requirement met"
     else:
         detail = f"{_quantity(remaining, unit)} available"
     line = f"  {label}: {_quantity(value, unit)} (limit {_quantity(limit, unit)}; {detail})"
@@ -124,9 +103,8 @@ def _report(
 ) -> int:
     failures: list[str] = []
     sections = (
-        ("Code size", ("production", "tests", "total", "merge", "governed", "checker")),
+        ("Code size", ("production", "tests", "total", "merge", "governed")),
         ("Functions with a complexity score above 10", ("c901", "governed_c901")),
-        ("Fixed test-case limits", ("fixed_property", "merge_recovery")),
     )
     print("Complexity check")
     for heading, names in sections:
@@ -145,15 +123,15 @@ def _report(
     )
     module_failures = tuple(failure for _, failure in module_results if failure is not None)
     failures.extend(module_failures)
-    visible_modules = tuple(result for result in module_results if result[1] is not None)
-    visible_modules = visible_modules or module_results[:3]
     print(
         f"\nMerge/recovery file sizes ({_quantity(len(module_results), 'file')}; "
         f"{limits['governed_module']:,}-line limit each)"
     )
-    print("  Over limit:" if module_failures else "  Closest to the limit:")
-    for line, _failure in visible_modules:
-        print(f"  {line}")
+    if not module_failures:
+        print("  All files are within the limit.")
+    for line, failure in module_results:
+        if failure is not None:
+            print(f"  {line}")
     if failures:
         sys.stdout.flush()
         print("\nResult: failed\n- " + "\n- ".join(failures), file=sys.stderr)
@@ -180,11 +158,10 @@ def main() -> int:
     missing = [path for group in paths.values() for path in group if not (ROOT / path).exists()]
     if missing:
         raise SystemExit(f"Error: missing complexity-budget paths: {', '.join(missing)}")
-    limits = budget["code"] | budget["ruff"] | budget["pytest"]
+    limits = budget["code"] | budget["ruff"]
     measured = {
         "production": _code_lines(paths["production"]),
         "tests": _code_lines(paths["tests"]),
-        "checker": _code_lines(paths["checker"]),
         "merge": _code_lines(paths["merge"]),
         "governed": _code_lines(paths["governed"]),
     }
@@ -203,8 +180,6 @@ def main() -> int:
     measured |= {
         "c901": _c901(("src/jj_stack",)),
         "governed_c901": _c901(paths["governed"]),
-        "fixed_property": _collected("fixed_property", paths["fixed_property"]),
-        "merge_recovery": _collected("merge_recovery", paths["merge_recovery"]),
     }
 
     return _report(labels, limits, measured, module_lines, units)

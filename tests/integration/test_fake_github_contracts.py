@@ -20,7 +20,6 @@ from ..support.integration_helpers import (
 )
 
 
-@pytest.mark.merge_recovery
 def test_fake_rejects_retargets_that_github_cannot_apply(tmp_path: Path) -> None:
     _repo, fake = init_fake_github_repo_with_submitted_feature(tmp_path)
     pr = fake.prs[1]
@@ -45,7 +44,6 @@ def test_fake_rejects_retargets_that_github_cannot_apply(tmp_path: Path) -> None
     asyncio.run(exercise())
 
 
-@pytest.mark.merge_recovery
 def test_fake_partial_stack_merge_preserves_base_changes_in_merge_and_survivor(
     tmp_path: Path,
 ) -> None:

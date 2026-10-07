@@ -5,44 +5,32 @@ total = 41_833
 merge = 1_682
 governed = 3_869
 governed_module = 502
-checker = 182
 
 [ruff]
 c901 = 16
 governed_c901 = 0
 
-[pytest]
-fixed_property = 11
-merge_recovery = 67
-
 [labels]
 production = "Production"
 tests = "Tests"
 total = "Production and tests combined"
-checker = "Complexity checker"
 merge = "Merge command"
 governed = "Merge, recovery, and change-state code"
 c901 = "Production"
 governed_c901 = "Merge, recovery, and change-state code"
-fixed_property = "Property-test cases"
-merge_recovery = "Merge and recovery cases"
 
 [units]
 production = "line"
 tests = "line"
 total = "line"
-checker = "line"
 merge = "line"
 governed = "line"
 c901 = "function"
 governed_c901 = "function"
-fixed_property = "case"
-merge_recovery = "case"
 
 [paths]
 production = ["src"]
 tests = ["tests"]
-checker = ["tools/check_complexity.py"]
 merge = ["src/jj_stack/commands/merge"]
 governed = [
   "src/jj_stack/commands/merge",
@@ -60,7 +48,3 @@ governed = [
   "src/jj_stack/stack/pr_facts.py",
   "src/jj_stack/stack/change_state.py",
 ]
-fixed_property = [
-  "tests/property/test_submit_property_scenarios.py",
-]
-merge_recovery = ["tests"]

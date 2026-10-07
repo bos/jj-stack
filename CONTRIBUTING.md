@@ -63,8 +63,8 @@ just test tests/unit/test_jj_client.py
 ```
 
 CI also enforces the cumulative complexity budgets. Check them locally with `just complexity`
-when a supported `tokei` is installed. Raising a budget is a design decision, not routine
-maintenance — say why in the pull request.
+when a supported `tokei` is installed. If a change needs a higher limit, raise it and say why in
+the pull request.
 
 If your change touches user-facing guides or references, refresh the website snapshot with
 `just website` and include the resulting change in the sibling `website` repository.

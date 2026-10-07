@@ -8,9 +8,12 @@
   external mutation to the identity and version observed while planning when the platform
   supports a conditional write or lease. Re-observe only when an earlier mutation invalidates a
   precondition or when an observed trigger or platform contract requires it.
-- Check the cumulative complexity budgets after each code change. Run `just complexity` locally
-  when a supported `tokei` is installed; CI invokes the underlying checker. A budget increase is a
-  design stop that requires explicit review, not routine maintenance of the budget file.
+- CI enforces the limits in `complexity-budget.toml`. Run `just complexity` before finishing a
+  code change when a supported `tokei` is installed. Remaining headroom is not worth reporting.
+- When a change written the natural way exceeds a limit, ask for an increase: name the limit, the
+  overage, and why the growth is needed. Do not reshape code, merge tests, or delete coverage to
+  fit, and do not edit the budget file until the increase is approved. Never lower a limit to
+  match current usage.
 - If the same subsystem needs a third consecutive hardening change, stop patching it and
   re-derive the design from the core invariants.
 

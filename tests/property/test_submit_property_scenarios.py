@@ -13,7 +13,6 @@ from hypothesis.stateful import run_state_machine_as_test
 from tests.support.stack_edit_scenarios import StackEditOperation
 from tests.support.stack_machine import RULE_NAMES, StackMachine
 
-pytestmark = pytest.mark.fixed_property
 SEARCH_EXAMPLES = os.environ.get("JJ_STACK_PROPERTY_EXAMPLES")
 SHARDS = int(os.environ.get("JJ_STACK_PROPERTY_SHARDS", "1"))
 

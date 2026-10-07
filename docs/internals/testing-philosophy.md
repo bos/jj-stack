@@ -109,7 +109,6 @@ Prefer focused fixtures, direct setup, and clear assertions. Avoid tests that pr
 Test names should state the protected rule, not merely list setup details. A failure should be
 understandable from the name and assertions without reconstructing the entire fixture.
 
-Code-size and test-count limits live in [`complexity-budget.toml`](../../complexity-budget.toml).
-Consolidate overlapping coverage to stay within them; increases require the design review defined
-in the root [complexity policy](../../AGENTS.md#complexity-control). More tests do not compensate
-for an unnecessarily complicated design.
+Code-size limits live in [`complexity-budget.toml`](../../complexity-budget.toml); increases follow
+the root [complexity policy](../../AGENTS.md#complexity-control). More tests do not compensate for
+an unnecessarily complicated design.

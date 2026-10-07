@@ -71,20 +71,6 @@ def test_fragile_test_output_check_rejects_exact_captured_output(
         check_script._check_fragile_test_output_assertions()
 
 
-def test_complexity_collection_ignores_property_and_pytest_overrides(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("PYTEST_ADDOPTS", "-qq")
-    monkeypatch.setenv("JJ_STACK_SUBMIT_PROPERTY_SCENARIOS", "99")
-    monkeypatch.setenv("UNRELATED_SETTING", "kept")
-
-    environment = complexity_script._collection_env()
-
-    assert "PYTEST_ADDOPTS" not in environment
-    assert "JJ_STACK_SUBMIT_PROPERTY_SCENARIOS" not in environment
-    assert environment["UNRELATED_SETTING"] == "kept"
-
-
 def test_complexity_report_rejects_exceeded_limits_and_accepts_the_boundary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -92,23 +78,17 @@ def test_complexity_report_rejects_exceeded_limits_and_accepts_the_boundary(
         "production": "Production",
         "tests": "Tests",
         "total": "Production and tests combined",
-        "checker": "Complexity checker",
         "merge": "Merge command",
         "governed": "Merge and recovery code",
         "c901": "Production",
         "governed_c901": "Merge and recovery code",
-        "fixed_property": "Property-test cases",
-        "merge_recovery": "Merge and recovery cases",
     }
     limits = {name: 10 for name in labels} | {"governed_module": 5}
     limits["governed_c901"] = 0
     measured = {name: 8 for name in labels}
-    measured |= {"checker": 10, "merge": 12, "governed": 11, "governed_c901": 0}
-    units = {
-        name: "line" for name in ("production", "tests", "total", "checker", "merge", "governed")
-    }
+    measured |= {"tests": 10, "merge": 12, "governed": 11, "governed_c901": 0}
+    units = {name: "line" for name in ("production", "tests", "total", "merge", "governed")}
     units |= {"c901": "function", "governed_c901": "function"}
-    units |= {"fixed_property": "case", "merge_recovery": "case"}
 
     exit_code = complexity_script._report(
         labels,
@@ -121,7 +101,7 @@ def test_complexity_report_rejects_exceeded_limits_and_accepts_the_boundary(
 
     assert exit_code == 1
     assert "Production: 8 lines (limit 10 lines; 2 lines available)" in captured.out
-    assert "Complexity checker: 10 lines (limit 10 lines; at limit)" in captured.out
+    assert "Tests: 10 lines (limit 10 lines; 0 lines available)" in captured.out
     assert "Merge command: 12 lines (limit 10 lines; OVER LIMIT by 2 lines)" in captured.out
     assert (
         "Merge and recovery code: 0 functions (limit 0 functions; requirement met)"
