@@ -283,9 +283,6 @@
         "merge_details": {
           "$ref": "#/$defs/mergeDetails"
         },
-        "merge_details_error": {
-          "type": "string"
-        },
         "number": {
           "type": "integer",
           "minimum": 1

@@ -143,9 +143,8 @@ saved-link problems omit it. The object contains:
 All arrays include all available pages. Unlike the text display, JSON includes successful
 checks and does not shorten comment bodies.
 
-If details cannot be read, or the PR head or base changes during inspection, the PR instead
-contains a plain-text `merge_details_error`. The basic summary remains available and the command
-exits 10. Rerun the command to refresh the report.
+If details cannot be read, or the PR head or base changes during inspection, the PR omits
+`merge_details`. The rest of the report is unaffected.
 
 ## `list --json`
 

@@ -147,11 +147,7 @@ def build_status_result(
     return StatusResult(
         github_error=github_error,
         github_repo=github_repo,
-        incomplete=any(
-            report_incomplete(change.state)
-            or (change.pr is not None and isinstance(change.pr.merge_details, str))
-            for change in changes
-        ),
+        incomplete=any(report_incomplete(change.state) for change in changes),
         remote=target.remote,
         remote_error=target.remote_error,
         changes=tuple(changes),
@@ -209,10 +205,7 @@ async def lookup_pr_lookups_async(
             update: dict[str, object] = {}
             if pr.number in progress:
                 update["approvals"], update["behind"] = progress[pr.number]
-            if pr.number in blocked or isinstance(details.get(pr.number), str):
-                evidence = details.get(pr.number)
-                if evidence is None:
-                    evidence = "PR head or base changed during inspection; rerun the command"
+            if (evidence := details.get(pr.number)) is not None:
                 update["merge_details"] = evidence
             lookups[branch] = replace(observation, pr=pr.model_copy(update=update))
         return lookups
@@ -223,8 +216,11 @@ async def _follow_up(
     *,
     reviewed: Mapping[int, GithubPR],
     blocked: Mapping[int, GithubPR],
-) -> tuple[Mapping[int, GithubPRMergeDetails | str | None], Mapping[int, tuple[int, int | None]]]:
-    """Merge details for blocked PRs, and approvals and trunk lag for every reviewed PR."""
+) -> tuple[Mapping[int, GithubPRMergeDetails | None], Mapping[int, tuple[int, int | None]]]:
+    """Merge details for blocked PRs, and approvals and trunk lag for every reviewed PR.
+
+    These only explain the summary, so a failed lookup leaves them out rather than failing it.
+    """
 
     async def merge_details() -> Mapping[int, GithubPRMergeDetails | None]:
         if not blocked:
@@ -235,9 +231,8 @@ async def _follow_up(
     progress = asyncio.create_task(github_client.get_pr_progress(prs=tuple(reviewed.values())))
     try:
         await wait_for_read_tasks(details, progress)
-    except GithubClientError as error:
-        # Either lookup failing leaves the report incomplete, as a failed details lookup did.
-        return dict.fromkeys(reviewed, error.user_facing_reason()), {}
+    except GithubClientError:
+        return {}, {}
     return details.result(), progress.result()
 
 

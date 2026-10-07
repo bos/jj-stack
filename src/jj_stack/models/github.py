@@ -160,7 +160,7 @@ class GithubPR(BaseModel):
         default=None, validation_alias=AliasPath("mergeCommit", "oid")
     )
     merge_state_status: str | None = Field(default=None, validation_alias="mergeStateStatus")
-    merge_details: GithubPRMergeDetails | str | None = None
+    merge_details: GithubPRMergeDetails | None = None
     # Approvals from reviewers with write access, when looked up.
     approvals: int | None = None
     # How many commits the landing branch has that this PR's head lacks, when looked up.

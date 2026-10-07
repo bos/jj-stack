@@ -31,7 +31,7 @@ from .submit_command_helpers import (
 )
 
 
-def test_verbose_view_keeps_summary_on_detail_failure_and_shows_evidence_on_retry(
+def test_verbose_view_omits_details_on_lookup_failure_and_shows_evidence_on_retry(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -71,18 +71,20 @@ def test_verbose_view_keeps_summary_on_detail_failure_and_shows_evidence_on_retr
 
     monkeypatch.setattr(GithubClient, "get_pr_merge_details", get_details)
 
-    # A failed follow-up keeps the known summary and reports incomplete evidence.
-    assert run_main(repo, config_path, "view") == EXIT_INCOMPLETE
-    assert "approved, checks pending, merge details unavailable" in capsys.readouterr().out
+    # A failed follow-up only leaves out the explanation; the summary is still complete.
+    assert run_main(repo, config_path, "view") == 0
+    captured = capsys.readouterr()
+    assert "approved, checks pending" in captured.out
+    assert "merge details" not in captured.out + captured.err
 
-    assert run_main(repo, config_path, "view", "--verbose", "--json") == EXIT_INCOMPLETE
+    assert run_main(repo, config_path, "view", "--verbose", "--json") == 0
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert_json_output_matches_schema(payload, "view")
     change = payload["stacks"][0]["changes"][0]
     assert change["status"] == "approved"
-    assert "access denied" in change["pr"]["merge_details_error"]
-    assert "Could not inspect merge details for PR #1" in captured.err
+    assert "merge_details" not in change["pr"]
+    assert "merge details" not in captured.err
 
     details_unavailable = False
     assert run_main(repo, config_path, "view", "--verbose") == 0
@@ -102,7 +104,6 @@ def test_verbose_view_keeps_summary_on_detail_failure_and_shows_evidence_on_retr
     assert_json_output_matches_schema(payload, "view")
     pr = payload["stacks"][0]["changes"][0]["pr"]
     assert pr["merge_details"] == evidence.model_dump(mode="json")
-    assert "merge_details_error" not in pr
 
     # Resolving threads and completing checks may leave an unrelated GitHub rule unmet.
     evidence = GithubPRMergeDetails(checks=(GithubCheck(name="build", state="SUCCESS"),))

@@ -9,7 +9,6 @@ from typing import Literal
 import jj_stack.ui as ui
 from jj_stack.identifiers import ChangeId
 from jj_stack.models.github import CheckRollupStatus, GithubPR
-from jj_stack.models.github_details import GithubPRMergeDetails
 from jj_stack.stack.change_state import (
     BranchClaimed,
     BranchDisagrees,
@@ -231,14 +230,12 @@ def _merge_warnings(pr: GithubPR) -> tuple[str, ...]:
     warnings: list[str] = []
     details = pr.merge_details
     if pr.merge_state_status == "DIRTY" or (
-        isinstance(details, GithubPRMergeDetails) and details.mergeable == "CONFLICTING"
+        details is not None and details.mergeable == "CONFLICTING"
     ):
         warnings.append("merge conflicts")
     if pr.merge_state_status == "BEHIND":
         warnings.append("behind base")
-    if isinstance(details, str):
-        warnings.append("merge details unavailable")
-    elif details is not None:
+    if details is not None:
         if details.resolve_threads and details.unresolved_threads:
             warnings.append("unresolved review threads")
         warnings.extend(f"missing required check: {name}" for name in details.missing_checks)

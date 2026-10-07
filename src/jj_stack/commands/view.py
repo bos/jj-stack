@@ -135,13 +135,6 @@ def _run_status(
         if isinstance(prepared, PreparedLocalStack)
     }
     exit_code = 0
-    if as_json:
-        for result in results.values():
-            for change in result.changes:
-                if (pr := change.pr) is not None and isinstance(pr.merge_details, str):
-                    console.warning(
-                        t"Could not inspect merge details for PR #{pr.number}: {pr.merge_details}"
-                    )
     multi_selector = len(selectors) > 1
     json_stacks: list[dict[str, object]] = []
     for index, (selector, prepared_status, notes) in enumerate(selections):

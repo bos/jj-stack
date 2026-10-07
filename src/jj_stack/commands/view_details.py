@@ -34,11 +34,7 @@ def render_merge_details(result: StatusResult) -> tuple[ui.Renderable, ...]:
         pr = change.pr
         if pr is None or (evidence := pr.merge_details) is None:
             continue
-        if isinstance(evidence, str):
-            rows = [("Details unavailable", evidence)]
-        else:
-            rows = _evidence_rows(pr, evidence)
-        if not rows:
+        if not (rows := _evidence_rows(pr, evidence)):
             continue
         lines.extend(("", t"Merge details for {format_pr_label(pr.number, url=pr.html_url)}:"))
         lines.extend(t"  {kind}: {detail}" for kind, detail in rows)
