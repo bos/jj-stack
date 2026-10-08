@@ -12,3 +12,4 @@ htmlcov/
 .venv/
 
 .hypothesis/
+/result
