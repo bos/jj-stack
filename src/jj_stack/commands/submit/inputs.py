@@ -7,13 +7,18 @@ from collections.abc import Sequence
 import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext
 from jj_stack.errors import CliError, ConflictedStackError, UsageError
+from jj_stack.formatting import format_pr_label
 from jj_stack.identifiers import ChangeId, is_full_change_id, short_change_id
 from jj_stack.jj.client import JjClient, change_ids_revset
-from jj_stack.models.github import GithubStackPR
+from jj_stack.models.github import GithubPR, GithubStackPR
 from jj_stack.models.stack import LocalCommit, LocalStack
 from jj_stack.models.tracking import TrackingState
 from jj_stack.stack.observation import observe_change_copies
-from jj_stack.stack.selected import require_submittable_changes, select_stack_path
+from jj_stack.stack.selected import (
+    require_linear_changes,
+    require_submittable_changes,
+    select_stack_path,
+)
 
 from .descriptions import resolve_generated_descriptions
 from .github_stack import GithubStackPRSnapshot, github_stack_pr_snapshot
@@ -25,6 +30,7 @@ def select_submit_inputs(
     context: CommandContext,
     options: SubmitOptions,
     state: TrackingState,
+    base_pr: GithubPR | None = None,
 ) -> SubmitSelection:
     """Load local submit state before any GitHub mutation begins."""
 
@@ -33,15 +39,17 @@ def select_submit_inputs(
         jj_client=client,
         revset=options.revset,
         state=state,
+        inspection_mode=options.base_revset is not None,
     )
     stack = _select_submit_stack(
         base_revset=options.base_revset,
         jj_client=client,
         stack=path.stack,
         state=state,
+        base_pr=base_pr,
     )
-    explicit_base = None
-    if options.base_revset is not None:
+    explicit_base: ExplicitBase | GithubPR | None = base_pr
+    if options.base_revset is not None and base_pr is None:
         base = stack.base_parent
         short_base = short_change_id(base.change_id)
         short_head = short_change_id(stack.head.change_id)
@@ -54,10 +62,12 @@ def select_submit_inputs(
         retry = ui.cmd(f"jj-stack submit --base {short_base} {short_head}")
         tracked_base = state.prs.get(base.change_id)
         if tracked_base is None:
+            with_pr = ui.cmd(f"jj-stack submit --base {short_base} --base-pr <pr> {short_head}")
             raise CliError(
                 t"Base {ui.change_id(base.change_id)} has no submitted PR.",
-                hint=t"Inspect the parent with {ui.cmd(f'jj-stack view {short_base}')}, "
-                t"submit the stack that contains it, then run {retry}.",
+                hint=t"If the parent already has a PR, run {with_pr} with its PR number. "
+                t"Otherwise inspect it with {ui.cmd(f'jj-stack view {short_base}')}, submit "
+                t"the stack that contains it, then run {retry}.",
             )
         if tracked_base.submitted_baseline.commit_id != base.commit_id:
             raise CliError(
@@ -130,6 +140,7 @@ def prepare_publication_inputs(
 
 
 def preflight_publication_stack(client: JjClient, stack: LocalStack) -> None:
+    require_linear_changes(stack.changes)
     require_submittable_changes(stack.changes)
     preflight_conflicted_changes(stack.changes)
     preflight_private_commits(client, stack.changes)
@@ -144,7 +155,9 @@ def sign_unsubmitted_commits(client: JjClient, *, revset: str, state: TrackingSt
     )
 
 
-def sign_selected_stack(client: JjClient, *, revset: str | None, state: TrackingState) -> None:
+def sign_selected_stack(
+    client: JjClient, *, revset: str | None, base_revset: str | None, state: TrackingState
+) -> None:
     """Apply `git.sign-on-push` to the stack below a submit selection, before reading it."""
 
     if revset is None:
@@ -153,7 +166,10 @@ def sign_selected_stack(client: JjClient, *, revset: str | None, state: Tracking
         head = change_ids_revset((ChangeId(revset),))
     else:
         head = revset
-    sign_unsubmitted_commits(client, revset=f"::({head}) ~ ::trunk() ~ empty()", state=state)
+    selected = f"::({head}) ~ ::trunk() ~ empty()"
+    if base_revset is not None:
+        selected += f" ~ ::({base_revset})"
+    sign_unsubmitted_commits(client, revset=selected, state=state)
 
 
 def confirm_orphaned_pr_snapshots(
@@ -201,16 +217,27 @@ def _select_submit_stack(
     jj_client: JjClient,
     stack: LocalStack,
     state: TrackingState,
+    base_pr: GithubPR | None,
 ) -> LocalStack:
     """Select the ordinary path, optionally excluding one explicit submitted ancestor."""
 
     if base_revset is None:
         return stack
+    base_label = ui.revset(base_revset)
     base = select_stack_path(
         jj_client=jj_client,
         revset=base_revset,
         state=state,
+        inspection_mode=True,
     ).stack.head
+    if base_pr is not None and base.commit_id != base_pr.head.sha:
+        raise CliError(
+            t"Parent {format_pr_label(base_pr.number, url=base_pr.html_url)} no longer "
+            t"matches local base {ui.change_id(base.change_id)}. jj-stack left it untouched.",
+            hint=t"Fetch the parent branch with {ui.cmd('jj git fetch')}, rebase only your "
+            t"child changes onto its current head, then retry with {ui.cmd('--base')} naming "
+            t"that new local parent.",
+        )
     if base.commit_id == stack.base_parent.commit_id:
         base_index = -1
     else:
@@ -224,15 +251,13 @@ def _select_submit_stack(
         )
     if base_index is None:
         raise CliError(
-            t"Base {ui.revset(base_revset)} is not an ancestor of the selected head within "
-            t"its stack.",
+            t"Base {base_label} is not an ancestor of the selected head within its stack.",
             hint=t"Choose the submitted parent immediately below the changes to submit.",
         )
     changes = stack.changes[base_index + 1 :]
     if not changes:
         raise CliError(
-            t"Base {ui.revset(base_revset)} is the selected head, so there are no child "
-            t"changes to submit."
+            t"Base {base_label} is the selected head, so there are no child changes to submit."
         )
     return stack.model_copy(
         update={

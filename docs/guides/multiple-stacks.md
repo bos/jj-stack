@@ -65,6 +65,24 @@ jj-stack submit <child-head-change-id>
 
 Select only the child's changes for this rebase, even if more work remains in the parent stack.
 
+## Build on someone else's PR
+
+To build on a PR created outside jj-stack, name its local head and PR:
+
+```console
+jj-stack submit -b <local-parent-change-id> -B 42 <child-head-change-id>
+```
+
+`-b` is `--base`; `-B` is `--base-pull-request` or `--base-pr` and accepts a number or URL.
+The local parent must match the open PR's exact head, with its branch in the same repo.
+Only the children are submitted; the parent is left untouched and no link is saved for it.
+Repeat both options on refresh. For a parent with a saved link, `--base` alone is sufficient.
+
+If the parent changes, fetch it, rebase only your children onto its current head, and update
+`--base`. Closing it stops submission and leaves your PRs open; reopening it allows refresh.
+After it merges, fetch trunk, rebase the children onto `trunk()`, and submit without either
+option.
+
 ## Combine independent stacks locally
 
 To test independent stacks together, create a local *megamerge*: an empty jj merge change whose

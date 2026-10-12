@@ -148,6 +148,18 @@ def select_stack_path_containing_change(
     )
 
 
+def require_linear_changes(changes: tuple[LocalCommit, ...]) -> None:
+    """Reject a selected stack that contains a merge change."""
+
+    if any(len(change.parents) > 1 for change in changes):
+        raise UnsupportedStackError(
+            "The selected stack includes a change with multiple parents.",
+            hint=t"jj-stack submits only linear stacks. Rearrange the changes into a single "
+            t"chain with {ui.cmd('jj rebase')}, or select a head below the merge change.",
+            reason="merge_commit",
+        )
+
+
 def require_submittable_changes(changes: tuple[LocalCommit, ...]) -> None:
     """Require the ordinary mutable changes accepted for publishing or relinking."""
 
@@ -285,14 +297,9 @@ def _project_rows(
     # trunk() and its first-parent ancestors are the stack's base rather than stack members, so
     # the merge commit GitHub's default merge method leaves at the tip of the default branch must
     # not fail the selected stack's shape rules.
-    if not inspection_mode and any(
-        len(row.commit.parents) > 1 for row in rows if row.is_path and not row.is_trunk_path
-    ):
-        raise UnsupportedStackError(
-            "The selected stack includes a change with multiple parents.",
-            hint=t"jj-stack submits only linear stacks. Rearrange the changes into a single "
-            t"chain with {ui.cmd('jj rebase')}, or select a head below the merge change.",
-            reason="merge_commit",
+    if not inspection_mode:
+        require_linear_changes(
+            tuple(row.commit for row in rows if row.is_path and not row.is_trunk_path)
         )
     if any(not commit.parents for commit in path_commits):
         raise UnsupportedStackError(

@@ -25,16 +25,25 @@ async def load_pr(*, github_client: GithubClient, pr_number: int) -> GithubPR:
         raise CliError(t"Could not load pull request {pr_label}") from error
 
 
-def managed_pr_head_problem(pr: GithubPR, repo: GithubRepoAddress) -> ui.Message | None:
-    """Explain why a PR's head is not owned by this repo and branch namespace, if it is not."""
+def pr_head_repo_problem(pr: GithubPR, repo: GithubRepoAddress) -> ui.Message | None:
+    """Explain why a PR's head branch does not belong to the selected repo."""
 
-    namespace = current_pr_branch_namespace()
     pr_number_label = format_pr_number(pr.number, url=pr.html_url)
     if pr.head.label != f"{repo.owner}:{pr.head.ref}":
         return (
             t"Pull request {pr_number_label}'s head branch "
             t"{ui.bookmark(pr.head.label or pr.head.ref)} does not belong to {repo.full_name}."
         )
+    return None
+
+
+def managed_pr_head_problem(pr: GithubPR, repo: GithubRepoAddress) -> ui.Message | None:
+    """Explain why a PR's head is not owned by this repo and branch namespace, if it is not."""
+
+    if (problem := pr_head_repo_problem(pr, repo)) is not None:
+        return problem
+    namespace = current_pr_branch_namespace()
+    pr_number_label = format_pr_number(pr.number, url=pr.html_url)
     if not namespace.contains(pr.head.ref):
         return (
             t"Pull request {pr_number_label}'s head branch "

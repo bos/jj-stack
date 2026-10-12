@@ -386,6 +386,209 @@ def test_submit_explicit_base_creates_and_updates_only_the_child_stack(
         } == existing_prs
 
 
+def test_submit_builds_on_an_ordinary_pr_without_linking_or_rewriting_its_parent(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Only the child is published, including with signing and an immutable merge parent."""
+
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "parent 1", "parent-1.txt")
+    first = JjClient(repo).resolve_commit("@-")
+    run_command(["jj", "new", "main"], repo)
+    commit_file(repo, "parent 2", "parent-2.txt")
+    second = JjClient(repo).resolve_commit("@-")
+    run_command(["jj", "new", first.change_id, second.change_id], repo)
+    commit_file(repo, "parent merge", "parent-merge.txt")
+    parent = JjClient(repo).resolve_commit("@-")
+    branch = "colleague/feature"
+    run_command(["jj", "bookmark", "create", branch, "-r", parent.change_id], repo)
+    run_command(["jj", "git", "push", "--bookmark", branch], repo)
+    parent_pr = fake_repo.create_pr(
+        base_ref="main", body="colleague's description", head_ref=branch, title="parent"
+    )
+    parent_snapshot = deepcopy(parent_pr)
+    commit_file(repo, "child 1", "child-1.txt")
+    commit_file(repo, "child 2", "child-2.txt")
+    child = JjClient(repo).resolve_commit("@-")
+    enable_sign_on_push(repo)
+    options = ("-b", parent.change_id, "-B", str(parent_pr.number), child.change_id)
+    refs_before = remote_refs(fake_repo.git_dir)
+
+    assert (
+        run_main(repo, config_path, "submit", "--base-pr", str(parent_pr.number), child.change_id)
+        == EXIT_USAGE
+    )
+    assert "requires --base" in capsys.readouterr().err
+    assert run_main(repo, config_path, "submit", "--dry-run", *options) == 0
+    capsys.readouterr()
+    assert remote_refs(fake_repo.git_dir) == refs_before
+    assert TrackingStore.for_repo(repo).load().prs == {}
+    assert not JjClient(repo).resolve_commit(child.change_id).signed
+
+    assert run_main(repo, config_path, "submit", *options) == 0
+    captured = capsys.readouterr()
+    assert "Submitted changes" in captured.out
+    state = TrackingStore.for_repo(repo).load()
+    assert len(state.prs) == 2
+    assert parent.change_id not in state.prs
+    assert fake_repo.prs[2].base_ref == branch
+    assert fake_repo.prs[3].base_ref == fake_repo.prs[2].head_ref
+    assert set(fake_repo.github_stacks.values()) == {(2, 3)}
+    assert fake_repo.prs[1] == parent_snapshot
+    assert JjClient(repo).resolve_commit(parent.change_id).commit_id == parent.commit_id
+    assert not JjClient(repo).resolve_commit(parent.change_id).signed
+    assert all(JjClient(repo).resolve_commit(change_id).signed for change_id in state.prs)
+
+    run_command(["jj", "bookmark", "forget", branch], repo)
+    run_command(["jj", "git", "fetch", "--branch", branch], repo)
+    assert JjClient(repo).resolve_commit(parent.change_id).immutable
+    run_command(["jj", "edit", child.change_id], repo)
+    write_file(repo / "child-2.txt", "updated child\n")
+    parent_url = f"https://github.com/{fake_repo.full_name}/pull/{parent_pr.number}"
+    assert (
+        run_main(
+            repo,
+            config_path,
+            "submit",
+            "--base",
+            parent.change_id,
+            "--base-pr",
+            parent_url,
+            child.change_id,
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert tuple(fake_repo.prs) == (1, 2, 3)
+    assert fake_repo.prs[1] == parent_snapshot
+    assert read_remote_ref(fake_repo.git_dir, branch) == parent.commit_id
+    assert set(fake_repo.github_stacks.values()) == {(2, 3)}
+    assert TrackingStore.for_repo(repo).load().prs[child.change_id].pr_identity == (
+        state.prs[child.change_id].pr_identity
+    )
+    assert read_remote_ref(fake_repo.git_dir, fake_repo.prs[3].head_ref) == (
+        JjClient(repo).resolve_commit(child.change_id).commit_id
+    )
+
+
+@pytest.mark.parametrize(
+    "problem", ("rewritten", "rewound", "closed", "fork", "head_lag", "shared_stack")
+)
+def test_submit_external_base_stops_before_changing_children_when_parent_is_unsuitable(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    problem: str,
+) -> None:
+    """An explicit PR number must not bypass ancestry, identity, or mutation scope checks."""
+
+    repo, fake_repo = init_fake_github_repo(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    commit_file(repo, "parent", "parent.txt")
+    parent = JjClient(repo).resolve_commit("@-")
+    rewind_target = parent.commit_id
+    if problem == "rewound":
+        commit_file(repo, "parent extra", "parent-extra.txt")
+        parent = JjClient(repo).resolve_commit("@-")
+    branch = "colleague/feature"
+    run_command(["jj", "bookmark", "create", branch, "-r", parent.change_id], repo)
+    run_command(["jj", "git", "push", "--bookmark", branch], repo)
+    parent_pr = fake_repo.create_pr(
+        base_ref="main", body="parent", head_ref=branch, title="parent"
+    )
+    commit_file(repo, "child", "child.txt")
+    child = JjClient(repo).resolve_commit("@-")
+    options = (
+        "--base",
+        parent.change_id,
+        "--base-pull-request",
+        str(parent_pr.number),
+        child.change_id,
+    )
+    assert run_main(repo, config_path, "submit", *options) == 0
+    capsys.readouterr()
+    run_command(["jj", "edit", child.change_id], repo)
+    write_file(repo / "child.txt", "updated child\n")
+    if problem == "closed":
+        parent_pr.state = "closed"
+    elif problem == "fork":
+        parent_pr.head_label = f"colleague:{branch}"
+    elif problem == "shared_stack":
+        fake_repo.github_stacks[7] = (1, 2)
+    elif problem == "rewound":
+        # A backwards force-push must not turn the old parent's commits into new child PRs.
+        update_remote_ref(fake_repo, branch=branch, target=rewind_target)
+    else:
+        run_command(["jj", "new", "main" if problem == "rewritten" else parent.change_id], repo)
+        commit_file(repo, "parent update", "parent-update.txt")
+        new_parent = JjClient(repo).resolve_commit("@-")
+        run_command(
+            ["jj", "bookmark", "move", branch, "--to", new_parent.change_id, "--allow-backwards"],
+            repo,
+        )
+        run_command(["jj", "git", "push", "--bookmark", branch], repo)
+        run_command(["jj", "edit", child.change_id], repo)
+        if problem == "head_lag":
+            parent_pr.lagging_head = parent.commit_id
+    # Reading the PR lets the fake record a moved head before the snapshot below.
+    parent_pr.to_graphql_payload(fake_repo)
+    refs_before = remote_refs(fake_repo.git_dir)
+    prs_before = deepcopy(fake_repo.prs)
+    stacks_before = dict(fake_repo.github_stacks)
+    state_before = TrackingStore.for_repo(repo).load()
+
+    assert run_main(repo, config_path, "submit", *options) == 1
+    captured = capsys.readouterr()
+    expected = {
+        "rewritten": "no longer matches local base",
+        "rewound": "no longer matches local base",
+        "closed": "must be open",
+        "fork": "does not belong",
+        "head_lag": "no longer point to the same commit",
+        "shared_stack": "shares a GitHub stack",
+    }
+    assert expected[problem] in " ".join((captured.out + captured.err).split())
+    assert remote_refs(fake_repo.git_dir) == refs_before
+    assert fake_repo.prs == prs_before
+    assert fake_repo.github_stacks == stacks_before
+    assert TrackingStore.for_repo(repo).load() == state_before
+    if problem == "closed":
+        parent_pr.state = "open"
+        assert run_main(repo, config_path, "submit", *options) == 0
+        capsys.readouterr()
+        assert tuple(fake_repo.prs) == (1, 2)
+        assert TrackingStore.for_repo(repo).load().prs[child.change_id].pr_identity == (
+            state_before.prs[child.change_id].pr_identity
+        )
+    if problem == "rewritten":
+        run_command(["jj", "rebase", "-s", child.change_id, "-o", branch], repo)
+        options = ("--base", branch, "--base-pr", str(parent_pr.number), child.change_id)
+        assert run_main(repo, config_path, "submit", *options) == 0
+        capsys.readouterr()
+        assert tuple(fake_repo.prs) == (1, 2)
+        assert read_remote_ref(fake_repo.git_dir, branch) == prs_before[1].head_sha
+        assert (repo / "child.txt").read_text() == "updated child\n"
+        assert TrackingStore.for_repo(repo).load().prs[child.change_id].pr_identity == (
+            state_before.prs[child.change_id].pr_identity
+        )
+
+        fake_repo.delete_branch_on_merge = True
+        fake_repo.apply_squash_merge(parent_pr)
+        assert fake_repo.ref_target(branch) is None
+        assert fake_repo.prs[2].base_ref == "main"
+        assert run_main(repo, config_path, "submit", *options) == 1
+        assert "must be open" in capsys.readouterr().err
+        run_command(["jj", "git", "fetch", "--branch", "main"], repo)
+        run_command(["jj", "rebase", "-s", child.change_id, "-o", "trunk()"], repo)
+        assert run_main(repo, config_path, "submit", child.change_id) == 0
+        capsys.readouterr()
+        assert fake_repo.prs[2].base_ref == "main"
+        assert set(TrackingStore.for_repo(repo).load().prs) == {child.change_id}
+
+
 def test_submit_landed_interior_base_requires_the_child_to_move_to_trunk(
     tmp_path: Path,
     monkeypatch,

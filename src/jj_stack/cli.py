@@ -271,12 +271,25 @@ def build_parser() -> ArgumentParser:
     )
     add_help_argument(
         submit_parser,
+        "-b",
         "--base",
         dest="base_revset",
         metavar="REVSET",
         help=(
-            "Submit changes above this submitted ancestor, using its PR branch as the base; "
-            "repeat this option on later submits of the dependent stack"
+            t"Submit only changes above this local ancestor; it must have a saved PR link "
+            t"or match the PR named by {ui.cmd('--base-pull-request')}; repeat on later submits"
+        ),
+    )
+    add_help_argument(
+        submit_parser,
+        "-B",
+        "--base-pull-request",
+        "--base-pr",
+        metavar="NUMBER_OR_URL",
+        help=(
+            t"Use this open PR's branch as the base without linking or changing the parent; "
+            t"requires {ui.cmd('--base')} to name its exact local head; "
+            t"repeat both on later submits"
         ),
     )
     add_help_argument(

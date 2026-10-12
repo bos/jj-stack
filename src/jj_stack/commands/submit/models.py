@@ -24,6 +24,7 @@ class SubmitOptions:
     """Parsed submit options after CLI normalization."""
 
     base_revset: str | None
+    base_pull_request: str | None
     descriptions: Sequence[str]
     describe_with: str | None
     draft_mode: SubmitDraftMode
@@ -137,9 +138,9 @@ class ExplicitBase:
 
 @dataclass(frozen=True, slots=True)
 class SubmitSelection:
-    """The local stack and base selected before reading GitHub."""
+    """The selected local stack and its optional parent PR."""
 
-    explicit_base: ExplicitBase | None
+    explicit_base: ExplicitBase | GithubPR | None
     is_maximal_path: bool
     stack: LocalStack
 

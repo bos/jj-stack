@@ -99,7 +99,7 @@ The branch name stays stable after creation, even if the change's description ch
 The GitHub base branch for a change is:
 
 - the parent change's remote branch when the parent is in the local stack
-- the explicit submitted base's remote branch for the bottom change selected by `submit --base`
+- the explicit base's PR branch for the bottom change selected by `submit --base`
 - otherwise the trunk branch
 
 `trunk()` defines the lower bound of a stack without specifying a GitHub branch name. GitHub's
@@ -332,7 +332,7 @@ an ancestor of `H` on the selected single-parent path and is excluded from every
 local commit, submitted baseline, PR branch, and live PR head must be the same commit, and its
 saved identity must match an open PR.
 
-An externally moved or missing base PR branch is never overwritten by `submit`. `jj-stack`
+An externally moved or missing tracked base PR branch is never overwritten by `submit`. `jj-stack`
 cannot repair it automatically: the user must restore that branch to its saved submitted commit
 before retrying.
 
@@ -341,6 +341,12 @@ back to trunk and may include or regroup the parent path. Once the base PR merge
 stops, even if a higher PR in the parent stack remains open. The user syncs the parent, then
 rebases the child and its descendants onto `trunk()` and submits the child without `--base`
 before merging it. Other child stacks wait for the user to select them.
+
+With `--base-pull-request P`, `B` needs no saved link. `P` must be open, have its head branch in
+the selected repo, and have both head and branch equal to `B`'s exact local commit. `--base` is
+still required: a moving PR head cannot choose which local work to submit. The parent may be
+immutable or contain merges and is excluded from signing and mutation. No parent tracking is
+created. If selected children share a GitHub stack with `P`, submit stops before changing it.
 
 `submit` rebuilds GitHub stacks under the [membership rules](#github-stack-membership). When
 only one active PR remains in its selection, it becomes an ordinary PR.

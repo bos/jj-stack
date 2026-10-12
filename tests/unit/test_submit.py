@@ -133,6 +133,7 @@ def test_submit_metadata_prefers_cli_values_over_config() -> None:
         ),
         options=SubmitOptions(
             base_revset=None,
+            base_pull_request=None,
             descriptions=(),
             describe_with=None,
             draft_mode="default",

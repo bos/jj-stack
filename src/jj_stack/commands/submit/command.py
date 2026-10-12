@@ -17,6 +17,10 @@ Common examples:
 - `jj-stack submit --base <parent-change-id> <child-head-change-id>` submits only the changes
   after an open parent pull request. Repeat `--base` whenever you refresh the child stack.
 
+- `jj-stack submit --base <parent-change-id> --base-pr <number-or-url> <child-head-change-id>`
+  builds on an existing PR without linking or changing it, including PRs created outside
+  jj-stack. The local parent must match the PR's current head.
+
 """
 
 from __future__ import annotations
@@ -33,8 +37,10 @@ import jj_stack.ui as ui
 from jj_stack.bootstrap import CommandContext, GlobalOptions, bootstrap_context
 from jj_stack.commands.github_run import GithubRun, ObservedTrunk
 from jj_stack.concurrency import wait_for_read_tasks
-from jj_stack.errors import CliError
+from jj_stack.errors import CliError, UsageError
+from jj_stack.formatting import format_pr_label
 from jj_stack.github.error_messages import observe_github_repo, read_or_stop
+from jj_stack.github.pr_refs import load_pr, parse_repo_pr_reference, pr_head_repo_problem
 from jj_stack.github.resolution import GithubTarget, require_github_repo, select_submit_remote
 from jj_stack.identifiers import ChangeId, CommitId, short_change_id
 from jj_stack.jj.client import JjClient
@@ -61,6 +67,7 @@ from .descriptions import preserve_external_pr_text, read_pr_template
 from .editor import edit_pr_document, parse_edited_pr_document, resume_edit_hint
 from .inputs import prepare_publication_inputs, select_submit_inputs, sign_selected_stack
 from .models import (
+    ExplicitBase,
     GeneratedDescription,
     PreparedSubmitChange,
     PRMetadataAction,
@@ -298,15 +305,8 @@ async def run_submit_async(
                         context.state_store, command="submit", mutating=not run.dry_run
                     )
                 )
-                if not run.dry_run:
-                    # Sign first so that the observation below sees the commits to push.
-                    sign_selected_stack(
-                        context.jj_client,
-                        revset=options.revset,
-                        state=context.state_store.load(),
-                    )
                 observed = await _observe_submit(
-                    run, options=options, print_selected=print_selected
+                    run, options=options, print_selected=print_selected, sign=not run.dry_run
                 )
             except CliError as error:
                 if generated_edit_path is not None:
@@ -368,22 +368,61 @@ def _apply_helper_text(
 
 
 async def _observe_submit(
-    run: GithubRun, *, options: SubmitOptions, print_selected: bool
+    run: GithubRun, *, options: SubmitOptions, print_selected: bool, sign: bool = False
 ) -> _SubmitObservation | None:
     """Observe the selected stack and its GitHub state; None when nothing is selected."""
 
     context, github_client, remote = run.context, run.github, run.target.remote
     state = context.state_store.load()
+    base_pr = None
+    if options.base_pull_request is not None:
+        if options.base_revset is None:
+            raise UsageError(
+                t"{ui.cmd('--base-pull-request')} requires {ui.cmd('--base')} to name the "
+                t"local parent change to exclude from submission.",
+                hint=t"Use {ui.cmd('jj-stack submit -b <local-parent> -B <pr> <child-head>')} "
+                t"so a force-push of the parent cannot change which local work is selected.",
+            )
+        base_pr = await load_pr(
+            github_client=github_client,
+            pr_number=parse_repo_pr_reference(
+                github_repo=github_client.repo, reference=options.base_pull_request
+            ),
+        )
+        if (problem := pr_head_repo_problem(base_pr, github_client.repo)) is not None:
+            raise CliError(problem)
+        if base_pr.state != "open":
+            raise CliError(
+                t"Parent {format_pr_label(base_pr.number, url=base_pr.html_url)} is "
+                t"{base_pr.state}; its PR must be open to submit dependent changes.",
+                hint=t"Choose an open parent PR, or after it merges fetch trunk, rebase the "
+                t"child changes onto {ui.revset('trunk()')}, and submit them without "
+                t"{ui.cmd('--base-pull-request')}.",
+            )
+    if sign:
+        # Exclude the parent before signing, then observe the commits that will be pushed.
+        sign_selected_stack(
+            context.jj_client,
+            revset=options.revset,
+            base_revset=options.base_revset,
+            state=state,
+        )
     with console.spinner(description="Preparing submit"):
         selection = select_submit_inputs(
             context=context,
             options=options,
             state=state,
+            base_pr=base_pr,
         )
     client = context.jj_client
     stack = selection.stack
     explicit_base = selection.explicit_base
-    base_branch = explicit_base.branch if explicit_base is not None else None
+    if isinstance(explicit_base, GithubPR):
+        base_branch = explicit_base.head.ref
+    elif explicit_base is not None:
+        base_branch = explicit_base.branch
+    else:
+        base_branch = None
     if print_selected:
         print_selected_line(stack.head.change_id, stack.head.subject)
 
@@ -410,7 +449,7 @@ async def _observe_submit(
             change.change_id: change for change in stack.changes
         }
         branches = {resolution.branch: resolution.change_id for resolution in resolutions}
-        if explicit_base is not None:
+        if isinstance(explicit_base, ExplicitBase):
             changes[explicit_base.change.change_id] = explicit_base.change
             branches[explicit_base.branch] = explicit_base.change.change_id
         return {
@@ -540,7 +579,29 @@ async def _observe_submit(
         stack=stack,
     )
     bottom_base_branch = trunk_branch
-    if explicit_base is not None:
+    if isinstance(explicit_base, GithubPR):
+        if remote_targets.get(explicit_base.head.ref) != explicit_base.head.sha:
+            raise CliError(
+                t"Parent {format_pr_label(explicit_base.number, url=explicit_base.html_url)} "
+                t"and its branch {ui.bookmark(explicit_base.head.ref)} no longer point to "
+                t"the same commit. jj-stack left the parent untouched.",
+                hint=t"Fetch the parent branch with {ui.cmd('jj git fetch')}, rebase the "
+                t"child changes onto its current head, then retry the same submit command.",
+            )
+        selected_prs = {change.pr.number for change in prepared_changes if change.pr is not None}
+        for github_stack in observed_stacks:
+            if (
+                explicit_base.number in github_stack.active_pr_numbers
+                and selected_prs.intersection(github_stack.active_pr_numbers)
+            ):
+                raise CliError(
+                    t"Parent {format_pr_label(explicit_base.number, url=explicit_base.html_url)} "
+                    t"shares a GitHub stack with selected child PRs. jj-stack left it untouched.",
+                    hint=t"Run {ui.cmd(f'jj-stack unstack --stack {github_stack.number}')} to "
+                    t"remove that grouping, then retry the same submit command.",
+                )
+        bottom_base_branch = explicit_base.head.ref
+    elif explicit_base is not None:
         require_published_base(
             base=explicit_base,
             lookup=lookups[explicit_base.branch],
