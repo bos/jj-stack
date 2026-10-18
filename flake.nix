@@ -132,8 +132,10 @@
             ) dependencyNames;
 
             # jj-stack shells out to jj, git (backing git repos), and gh (token lookup).
+            #
+            # *Append* the required tools here, so a tool on the user's PATH wins.
             makeWrapperArgs = [
-              "--prefix"
+              "--suffix"
               "PATH"
               ":"
               (makeBinPath [
@@ -143,32 +145,8 @@
               ])
             ];
 
-            # The integration suite needs real jj and git, writes describe helpers with
-            # `#!/usr/bin/env python3` shebangs, and signs commits with ssh-keygen.
-            nativeCheckInputs = [
-              pkgs.git
-              pkgs.jujutsu
-              pkgs.openssh
-              pkgs.python314
-            ]
-            ++ (with python3Packages; [
-              pytestCheckHook
-              fastapi
-              hypothesis
-              jsonschema
-              pytest-cov
-              pytest-randomly
-              pytest-xdist
-            ]);
-
-            # These cases write describe helpers with a `#!/usr/bin/env python3` shebang.
-            # The build sandbox has no `/usr/bin`, so the helper cannot execute there; the
-            # local `just check` run covers them instead.
-            disabledTestPaths = map (name: "tests/integration/test_submit_command.py::${name}") [
-              "test_submit_describe_with_failure_aborts_before_mutation"
-              "test_submit_refreshes_unchanged_pr_text_and_preserves_github_edits"
-              "test_submit_explicit_base_creates_and_updates_only_the_child_stack[2-0]"
-            ];
+            # CI already runs the test suite on every change (`.github/workflows/ci.yml`).
+            doCheck = false;
 
             pythonImportsCheck = [ "jj_stack" ];
 
