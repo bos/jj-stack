@@ -643,7 +643,9 @@ A PR is eligible for cleanup only when:
 A closed PR counts while its own head branch still exists. GitHub cannot reopen it without a
 base branch or retarget it while it is closed, so deleting its base would require restoring that
 branch to reopen it. If its head branch is already absent, cleanup no longer treats that PR as a
-dependent needing the base. Merged PRs do not count as dependents.
+dependent needing the base. Merged PRs do not count as dependents. Neither does a selected PR
+whose head branch the same run deletes, or which it retargets to trunk; cleanup handles it before
+its base, so one run cleans up a whole stack from the top down.
 
 Branch dependencies come from PR bases on GitHub, not local descendants. A PR that cannot be
 inspected is skipped. Once mutation starts, a failure stops cleanup and leaves later records for

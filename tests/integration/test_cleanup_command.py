@@ -217,28 +217,18 @@ def test_cleanup_preserves_a_branch_while_its_closed_dependent_can_be_reopened(
         f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
     )
 
-    # Dissolving the GitHub stack does not release the base branch. The closed member above
-    # still names it, so cleaning up the one it does not block leaves the other refused.
+    # Once the GitHub stack is gone, one run cleans up both PRs. Deleting the closed
+    # dependent's head branch first means GitHub can never reopen it, which frees its base.
     assert run_main(repo, config_path, "unstack", "--stack", "7") == 0
     capsys.readouterr()
-    partial_exit_code = run_main(repo, config_path, "cleanup")
-    partial = capsys.readouterr()
-    normalized_partial = " ".join(partial.out.split())
-
-    assert partial_exit_code == 1
-    assert f"remote branch: delete {bookmarks[1]}@origin" in normalized_partial
-    assert f"PR #{identities[1].pr_number} still uses" in normalized_partial
-    assert f"refs/heads/{bookmarks[0]}" in remote_refs(fake_repo.git_dir)
-
-    # That run deleted the closed dependent's own head branch, so GitHub can never reopen it
-    # and its base no longer needs preserving; the rerun frees the branch.
-    assert f"refs/heads/{bookmarks[1]}" not in remote_refs(fake_repo.git_dir)
     apply_exit_code = run_main(repo, config_path, "cleanup")
     applied = capsys.readouterr()
     normalized_applied = " ".join(applied.out.split())
 
     assert apply_exit_code == 0
-    assert f"remote branch: delete {bookmarks[0]}@origin" in normalized_applied
+    assert normalized_applied.index(
+        f"remote branch: delete {bookmarks[1]}@origin"
+    ) < normalized_applied.index(f"remote branch: delete {bookmarks[0]}@origin")
     assert all(change_id not in state_store.load().prs for change_id in change_ids)
     assert all(
         f"refs/heads/{bookmark}" not in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
@@ -287,6 +277,38 @@ def test_cleanup_close_retargets_an_open_dependent_and_frees_its_base_branch(
     assert top_change_id not in state_store.load().prs
 
     assert run_main(repo, config_path, "cleanup") == 0
+    assert state_store.load().prs == {}
+    assert not any(
+        ref.startswith("refs/heads/jj-stack/") for ref in remote_refs(fake_repo.git_dir)
+    )
+
+
+def test_cleanup_close_orphans_closes_an_abandoned_stack_from_the_top_down(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    change_ids = tuple(change.change_id for change in selected_stack(repo).changes)
+    state_store = TrackingStore.for_repo(repo)
+    bottom, top = (state_store.load().prs[change_id].pr_identity for change_id in change_ids)
+    fake_repo.github_stacks = {}
+    run_command(["jj", "abandon", *change_ids], repo)
+
+    exit_code = run_main(repo, config_path, "cleanup", "--pull-request", "orphans", "--close")
+    output = " ".join(capsys.readouterr().out.split())
+
+    # The open dependent moves to trunk before its base branch goes, so GitHub can reopen it.
+    assert exit_code == 0
+    assert output.index(f"retarget PR #{top.pr_number}") < output.index(
+        f"remote branch: delete {bottom.head_ref}@origin"
+    )
+    assert (fake_repo.prs[top.pr_number].base_ref, fake_repo.prs[top.pr_number].state) == (
+        "main",
+        "closed",
+    )
+    assert fake_repo.prs[bottom.pr_number].state == "closed"
     assert state_store.load().prs == {}
     assert not any(
         ref.startswith("refs/heads/jj-stack/") for ref in remote_refs(fake_repo.git_dir)

@@ -123,8 +123,8 @@ async def apply_overview_comment_cleanup(
 
 def plan_pr_cleanup(
     *,
+    detached_dependents: frozenset[int],
     observation: RepoFacts,
-    preview_detached_dependents: frozenset[int],
     state: WithPR,
 ) -> tuple[PRRefUpdate | None, CleanupAction | None]:
     """Plan branch deletion for a PR whose identity and lifecycle the caller checked."""
@@ -135,7 +135,7 @@ def plan_pr_cleanup(
     dependents = tuple(
         item
         for item in observed_dependents
-        if item.number not in preview_detached_dependents
+        if item.number not in detached_dependents
         # GitHub can never reopen a closed PR whose head branch is gone, so its base is free.
         and (item.state == "open" or item.head_branch_exists)
     )

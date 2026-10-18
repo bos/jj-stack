@@ -404,17 +404,42 @@ async def _run_tracked_pr_cleanup_pass(cleanup_pass: _CleanupPass) -> None:
         remote_name=cleanup_pass.remote.name,
         state=prepared_cleanup.state,
     )
+    # A dependent PR stops needing its base once this pass deletes its head branch or retargets
+    # it to trunk, so each round can free the branches below the previous round's PRs. Applying
+    # rounds in order cleans a stack from the top down.
     preflights: dict[ChangeId, CleanupPreflight] = {}
-    eligible_pr_numbers: list[int] = []
-    for change_id, candidate in candidates.items():
-        preflight = _preflight_tracked_pr_cleanup(
-            initial_observation=observation,
-            change_id=change_id,
-            prepared_cleanup=prepared_cleanup,
+    cleanup_order: list[ChangeId] = []
+    detached_dependents = prepared_cleanup.preview_detached_dependents
+    pending = tuple(candidates)
+    while pending:
+        for change_id in pending:
+            preflights[change_id] = _preflight_tracked_pr_cleanup(
+                detached_dependents=detached_dependents,
+                initial_observation=observation,
+                change_id=change_id,
+                prepared_cleanup=prepared_cleanup,
+            )
+        planned = {
+            change_id: plan
+            for change_id in pending
+            if isinstance(plan := preflights[change_id], PRCleanup)
+        }
+        cleanup_order.extend(planned)
+        pending = tuple(change_id for change_id in pending if change_id not in planned)
+        freed = frozenset(
+            plan.pr.number
+            for plan in planned.values()
+            if plan.update is not None or plan.pr.state == "open"
         )
-        preflights[change_id] = preflight
-        if isinstance(preflight, PRCleanup):
-            eligible_pr_numbers.append(candidate.pr_identity.pr_number)
+        if freed <= detached_dependents:
+            break
+        detached_dependents |= freed
+    cleanup_order.extend(pending)
+    eligible_pr_numbers = [
+        candidates[change_id].pr_identity.pr_number
+        for change_id in cleanup_order
+        if isinstance(preflights[change_id], PRCleanup)
+    ]
     open_plans = {
         change_id: preflight
         for change_id, preflight in preflights.items()
@@ -441,7 +466,8 @@ async def _run_tracked_pr_cleanup_pass(cleanup_pass: _CleanupPass) -> None:
         pr_numbers=tuple(eligible_pr_numbers),
         stacks=stacks,
     )
-    for change_id, candidate in candidates.items():
+    for change_id in cleanup_order:
+        candidate = candidates[change_id]
         stop_after_failure = await _cleanup_tracked_pr(
             cleanup_pass,
             preflight=preflights[change_id],
@@ -535,6 +561,7 @@ async def _cleanup_tracked_pr(
 
 def _preflight_tracked_pr_cleanup(
     *,
+    detached_dependents: frozenset[int],
     initial_observation: RepoFacts,
     change_id: ChangeId,
     prepared_cleanup: PreparedCleanup,
@@ -555,8 +582,8 @@ def _preflight_tracked_pr_cleanup(
             t"{ui.cmd(f'jj-stack cleanup --pull-request {pr.number} --close')}",
         )
     update, blocker = plan_pr_cleanup(
+        detached_dependents=detached_dependents,
         observation=initial_observation,
-        preview_detached_dependents=prepared_cleanup.preview_detached_dependents,
         state=state,
     )
     if blocker is not None:

@@ -1407,7 +1407,7 @@ def test_sync_all_finishes_exact_prs_after_an_external_fast_forward(
 ) -> None:
     repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    first, second = selected_stack(repo).changes
+    second = selected_stack(repo).changes[1]
     state_store = TrackingStore.for_repo(repo)
     identities = {number: pr.head_ref for number, pr in fake_repo.prs.items()}
     assert run_main(repo, config_path, "unstack", second.change_id) == 0
@@ -1418,21 +1418,12 @@ def test_sync_all_finishes_exact_prs_after_an_external_fast_forward(
     captured = capsys.readouterr()
 
     # The top PR's old base does not contain its head. Retargeting it to trunk would return
-    # 422, so sync closes the already-landed work on its existing base instead.
-    assert exit_code == 1, (captured.out, captured.err)
+    # 422, so sync closes the already-landed work on its existing base instead. Cleanup deletes
+    # the closed top PR's head branch before the bottom branch it uses as its base.
+    assert exit_code == 0, (captured.out, captured.err)
     assert fake_repo.prs[2].state == "closed"
     assert fake_repo.prs[2].merged_at is None
     assert fake_repo.prs[2].base_ref == identities[1]
-    assert fake_repo.ref_target(identities[2]) is None
-    assert second.change_id not in state_store.load().prs
-    # The initial cleanup observation still protects the bottom branch while the closed
-    # top PR has a head. Its successful deletion makes a fresh cleanup safe on the rerun.
-    assert first.change_id in state_store.load().prs
-
-    retry = run_main(repo, config_path, "sync", "--all")
-    retried = capsys.readouterr()
-
-    assert retry == 0, (retried.out, retried.err)
     assert state_store.load().prs == {}
     assert all(fake_repo.ref_target(branch) is None for branch in identities.values())
     assert fake_repo.ref_target("main") == second.commit_id
