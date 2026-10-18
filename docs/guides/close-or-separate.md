@@ -55,6 +55,8 @@ If you already closed the PRs through GitHub or `gh pr close`, run:
 jj-stack cleanup <head-change-id>
 ```
 
+This also removes their GitHub stack, so you do not need to run `jj-stack unstack` first.
+
 ### If cleanup keeps a branch
 
 Cleanup keeps a PR branch while another PR still uses it as its base: an open PR, or a closed PR
@@ -62,8 +64,9 @@ that GitHub could still reopen. The message names that PR. Retarget an open PR t
 closed PR, either reopen and retarget it, or delete its head branch if you no longer need to
 reopen it. Then rerun cleanup.
 
-A branch also stays while an unmerged PR in a GitHub stack needs it. Remove that stack with
-`jj-stack unstack` before retrying cleanup.
+A branch also stays while its GitHub stack holds an unmerged PR that cleanup leaves in place,
+such as an open PR. Remove that stack with `jj-stack unstack` before retrying cleanup. When
+cleanup removes every unmerged PR in a GitHub stack, it removes the stack itself.
 
 ## Close an orphaned pull request
 
@@ -84,7 +87,7 @@ number:
 jj-stack cleanup --pull-request orphans --close
 ```
 
-If the PR is still part of a GitHub stack, first remove that stack with the
-`jj-stack unstack --stack <number>` command printed in the error. Cleanup can also keep an
-orphaned PR's branch if another PR still uses it; follow [the guidance above](
+If the PR's GitHub stack also holds PRs that cleanup leaves in place, first remove that stack
+with the `jj-stack unstack --stack <number>` command printed in the error. Cleanup can also keep
+an orphaned PR's branch if another PR still uses it; follow [the guidance above](
 #if-cleanup-keeps-a-branch).

@@ -23,6 +23,7 @@ from jj_stack.stack.change_state import (
     PRMissing,
     WithPR,
 )
+from jj_stack.stack.github_stack_safety import dissolve_github_stack
 from jj_stack.stack.pr_facts import RepoFacts
 from jj_stack.ui import Message
 
@@ -177,29 +178,34 @@ def plan_pr_cleanup(
     return update, None
 
 
-def github_stack_cleanup_blockers(
+def plan_github_stack_cleanup(
     *,
     pr_numbers: tuple[int, ...],
     stacks: tuple[GithubStack, ...] | CliError,
-) -> dict[int, CleanupAction]:
-    """Block cleanup of selected PRs still needed by a GitHub stack with unmerged PRs.
+) -> tuple[dict[int, CleanupAction], tuple[GithubStack, ...]]:
+    """Find the GitHub stacks to remove first, and block PRs that another stack still needs.
 
     A merged member's branch is the base of the member above it, so a stack that still holds
-    an active member needs every branch it groups, not only the active ones.
+    an active member needs every branch it groups, not only the active ones. A stack whose
+    active members this run all cleans up has nothing left to group, so cleanup removes it.
     """
 
     if isinstance(stacks, CliError):
         return dict.fromkeys(
             pr_numbers,
-            CleanupAction(kind="remote branch", body=str(stacks), status="blocked"),
-        )
+            CleanupAction(kind="GitHub stack", body=str(stacks), status="blocked"),
+        ), ()
     selected = set(pr_numbers)
     blockers: dict[int, CleanupAction] = {}
+    removable: list[GithubStack] = []
     for stack in stacks:
         if selected.isdisjoint(stack.active_pr_numbers):
             continue
+        if selected.issuperset(stack.active_pr_numbers):
+            removable.append(stack)
+            continue
         action = CleanupAction(
-            kind="remote branch",
+            kind="GitHub stack",
             body=(
                 f"GitHub stack #{stack.number} still groups this pull request. "
                 f"Run jj-stack unstack --stack {stack.number} and retry."
@@ -207,7 +213,24 @@ def github_stack_cleanup_blockers(
             status="blocked",
         )
         blockers.update({number: action for number in stack.pr_numbers if number in selected})
-    return blockers
+    return blockers, tuple(removable)
+
+
+async def apply_github_stack_removal(
+    *,
+    dry_run: bool,
+    github_client: GithubClient,
+    stack: GithubStack,
+) -> CleanupAction:
+    """Remove a GitHub stack before cleanup deletes any branch it groups."""
+
+    if not dry_run:
+        await dissolve_github_stack(github_client=github_client, stack=stack)
+    return CleanupAction(
+        kind="GitHub stack",
+        body=t"remove GitHub stack #{stack.number}",
+        status="planned" if dry_run else "applied",
+    )
 
 
 def apply_remote_branch_cleanup(

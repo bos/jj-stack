@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from jj_stack.commands.cleanup.actions import plan_github_stack_cleanup
 from jj_stack.commands.submit.github_stack import plan_github_stack
 from jj_stack.errors import CliError, error_hint, error_message
 from jj_stack.github.resolution import GithubRepoAddress
@@ -143,3 +144,14 @@ def test_github_stack_plan_rejects_ambiguous_selected_membership(
     hint = plain_text(error_hint(caught.value) or "")
     assert all(part in message for part in message_parts)
     assert all(part in hint for part in hint_parts)
+
+
+def test_cleanup_removes_a_github_stack_only_when_it_cleans_up_every_active_member() -> None:
+    stacks = (_stack(7, 1, 2, 3, historical=(1,)), _stack(8, 4, 5))
+
+    blockers, removable = plan_github_stack_cleanup(pr_numbers=(2, 3, 4), stacks=stacks)
+
+    # Open PR #5 still needs stack #8, so cleanup must not remove it or delete PR #4's branch.
+    assert [stack.number for stack in removable] == [7]
+    assert set(blockers) == {4}
+    assert "jj-stack unstack --stack 8" in plain_text(blockers[4].body)

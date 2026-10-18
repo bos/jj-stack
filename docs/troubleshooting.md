@@ -256,7 +256,8 @@ jj-stack cleanup <head-change-id>
 ```
 
 Cleanup keeps a branch while another PR still uses it as its base (an open PR, or a closed PR
-that GitHub could still reopen), or while an unmerged PR in a GitHub stack needs it. See
+that GitHub could still reopen), or while its GitHub stack also holds an unmerged PR that
+cleanup leaves in place. See
 [what to do when cleanup keeps a branch](guides/close-or-separate.md#if-cleanup-keeps-a-branch).
 
 ## “The selector resolved to more than one commit”

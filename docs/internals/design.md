@@ -638,7 +638,8 @@ A PR is eligible for cleanup only when:
 - for a merged PR, no visible mutable local copy still needs `sync`
 - no PR in the same repo that is open, or closed but still reopenable, uses the saved head ref
   as its base
-- no active member of a GitHub stack still needs the branch
+- every active member of a GitHub stack holding the PR is also cleaned up in the same run; cleanup
+  then removes that GitHub stack before changing any PR or branch
 
 A closed PR counts while its own head branch still exists. GitHub cannot reopen it without a
 base branch or retarget it while it is closed, so deleting its base would require restoring that

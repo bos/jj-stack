@@ -167,7 +167,7 @@ def test_cleanup_close_finishes_open_and_terminal_orphans(
     assert all(fake_repo.prs[identity.pr_number].state == "closed" for identity in identities)
 
 
-def test_cleanup_preserves_a_branch_while_its_closed_dependent_can_be_reopened(
+def test_cleanup_removes_a_closed_stack_in_one_run_but_keeps_a_reopenable_base(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -205,27 +205,18 @@ def test_cleanup_preserves_a_branch_while_its_closed_dependent_can_be_reopened(
         f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
     )
 
-    blocked_exit_code = run_main(repo, config_path, "cleanup")
-    blocked = capsys.readouterr()
-    normalized_blocked = " ".join(blocked.out.split())
-
-    assert blocked_exit_code == 1
-    assert "GitHub stack #7 still groups this pull request" in normalized_blocked
-    assert "jj-stack unstack --stack 7" in normalized_blocked
-    assert all(change_id in state_store.load().prs for change_id in change_ids)
-    assert all(
-        f"refs/heads/{bookmark}" in remote_refs(fake_repo.git_dir) for bookmark in bookmarks
-    )
-
-    # Once the GitHub stack is gone, one run cleans up both PRs. Deleting the closed
-    # dependent's head branch first means GitHub can never reopen it, which frees its base.
-    assert run_main(repo, config_path, "unstack", "--stack", "7") == 0
-    capsys.readouterr()
+    # Cleaning up every active member of the GitHub stack removes the stack first, then the
+    # closed dependent's head branch, after which GitHub can never reopen it and its base is free.
     apply_exit_code = run_main(repo, config_path, "cleanup")
     applied = capsys.readouterr()
     normalized_applied = " ".join(applied.out.split())
 
     assert apply_exit_code == 0
+    # Only the merged member stays behind, as GitHub history.
+    assert fake_repo.github_stacks == {7: (identities[0].pr_number,)}
+    assert normalized_applied.index("GitHub stack: remove GitHub stack #7") < (
+        normalized_applied.index(f"remote branch: delete {bookmarks[1]}@origin")
+    )
     assert normalized_applied.index(
         f"remote branch: delete {bookmarks[1]}@origin"
     ) < normalized_applied.index(f"remote branch: delete {bookmarks[0]}@origin")

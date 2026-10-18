@@ -13,8 +13,9 @@ stack, first run `jj-stack unstack`, then close each PR from the top of the stac
 Without `--close`, open pull requests are left alone.
 
 Cleanup keeps a branch while another PR still uses it as its base (an open PR, or a closed PR
-that GitHub could still reopen), or while an unmerged PR in a GitHub stack needs it. The message
-names the PR or stack to update before retrying cleanup.
+that GitHub could still reopen), or while its GitHub stack also holds an unmerged PR that cleanup
+leaves in place. The message names the PR or stack to update before retrying cleanup. When cleanup
+removes every unmerged PR in a GitHub stack, it removes that stack first.
 """
 
 from __future__ import annotations
@@ -30,11 +31,12 @@ from jj_stack.bootstrap import CommandContext, GlobalOptions, bootstrap_context
 from jj_stack.commands.cleanup.actions import (
     UNTRUSTED_PR_STATES,
     CleanupAction,
+    apply_github_stack_removal,
     apply_overview_comment_cleanup,
     apply_remote_branch_cleanup,
     blocked_pr_action,
     close_pr_on_trunk,
-    github_stack_cleanup_blockers,
+    plan_github_stack_cleanup,
     plan_pr_cleanup,
 )
 from jj_stack.commands.github_run import GithubRun
@@ -462,10 +464,18 @@ async def _run_tracked_pr_cleanup_pass(cleanup_pass: _CleanupPass) -> None:
         github_client=github_client,
         pr_numbers=eligible_pr_numbers,
     )
-    stack_blockers = github_stack_cleanup_blockers(
+    stack_blockers, removable_stacks = plan_github_stack_cleanup(
         pr_numbers=tuple(eligible_pr_numbers),
         stacks=stacks,
     )
+    for stack in removable_stacks:
+        cleanup_pass.record_action(
+            await apply_github_stack_removal(
+                dry_run=prepared_cleanup.dry_run,
+                github_client=github_client,
+                stack=stack,
+            )
+        )
     for change_id in cleanup_order:
         candidate = candidates[change_id]
         stop_after_failure = await _cleanup_tracked_pr(
