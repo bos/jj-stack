@@ -269,9 +269,13 @@ stack's head change ID.
 
 ## “Divergent changes are not supported”
 
-Two or more local commits share a change ID. This can happen when separate workspaces modify a
+Two or more mutable commits share a change ID. This can happen when separate workspaces modify a
 change independently, or when `jj-stack checkout --pull-request` brings in a PR's version of a
 change you also edited locally. jj-stack cannot choose which version belongs in your stack.
+
+An immutable copy does not count. If someone else's branch was built on an earlier version of
+your change, jj shows the change as divergent, but jj-stack keeps working with your local copy
+and leaves theirs alone.
 
 The error's hint names a `jj converge` command that combines the versions into one commit. If
 you would rather keep one version, show the versions and compare their diffs:

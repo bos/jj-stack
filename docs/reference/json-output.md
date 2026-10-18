@@ -87,7 +87,7 @@ Known change statuses are:
 - `ambiguous`: more than one matching PR was found
 - `link_mismatch`: the saved PR has a different or missing head branch, or another PR uses it
 - `branch_moved`: the PR head moved outside jj-stack, or GitHub and the remote branch disagree
-- `divergent`: multiple visible commits exist for the same unmerged change
+- `divergent`: more than one mutable commit exists for the same unmerged change
 - `unknown`: GitHub lookup failed for this change
 
 ## `view --json`

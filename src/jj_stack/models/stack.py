@@ -24,6 +24,7 @@ class LocalCommit(BaseModel):
     conflict: bool = False
     current_working_copy: bool
     description: str
+    # More than one visible copy of the change is mutable.
     divergent: bool
     empty: bool
     hidden: bool

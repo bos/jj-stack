@@ -41,6 +41,10 @@ Publishing requires a visible, mutable change with a nonblank description, a non
 no divergence or unresolved conflicts. Recovery and inspection have different requirements,
 described in their command policies below.
 
+A change is divergent only when more than one of its visible copies is mutable. An immutable copy,
+such as one that another branch points at, belongs to that branch: it is not a local copy, and
+rewrites leave it in place.
+
 ### Local stack
 
 A local stack is a linear chain of changes from a selected head back to the nearest change on

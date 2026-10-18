@@ -264,7 +264,9 @@ def _require_rebasable(
             change.divergent
             if observed is None
             else any(
-                copy.commit_id not in github_copies and copy.commit_id != change.commit_id
+                copy.commit_id not in github_copies
+                and copy.commit_id != change.commit_id
+                and not copy.immutable
                 for copy in observed.local
             )
         )

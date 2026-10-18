@@ -285,7 +285,8 @@ def test_visible_pr_bookmark_does_not_block_broad_operations(
     raw = client.query_commits(f"change_id({change_id})")
     assert client.query_commits_by_change_ids((ChangeId(change_id),))[ChangeId(change_id)] == raw
     assert len(raw) == 2
-    assert all(commit.divergent for commit in raw)
+    # The fetched copy is immutable, so it is not a second local copy.
+    assert not any(commit.divergent for commit in raw)
     assert next(commit for commit in raw if commit.commit_id == commit_id).immutable
 
 

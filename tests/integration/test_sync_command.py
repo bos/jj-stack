@@ -608,6 +608,31 @@ def test_sync_rejects_unselected_mutable_copy_after_github_rewrite(
     assert fake_repo.prs == prs_before
 
 
+def test_sync_rebases_a_rewritten_survivor_and_leaves_another_branch_copy_alone(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    survivor = selected_stack(repo).head
+    # Another branch builds on the submitted survivor, which then changes locally.
+    update_remote_ref(fake_repo, branch="other/feature-2", target=survivor.commit_id)
+    run_command(["jj", "describe", "-r", survivor.change_id, "-m", "feature 2 rewritten"], repo)
+    _squash_merge_pr(fake_repo, 1)
+
+    exit_code = run_main(repo, config_path, "sync", survivor.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    copies = JjClient(repo).query_commits_by_change_ids((survivor.change_id,))[survivor.change_id]
+    (local,) = (commit for commit in copies if not commit.immutable)
+    assert {commit.commit_id for commit in copies} == {local.commit_id, survivor.commit_id}
+    assert local.parents == (fake_repo.ref_target("main"),)
+    assert fake_repo.ref_target(fake_repo.prs[2].head_ref) == local.commit_id
+    assert fake_repo.ref_target("other/feature-2") == survivor.commit_id
+
+
 def test_sync_applies_a_partial_merge_beside_stale_pr_bookmarks(
     tmp_path: Path,
     monkeypatch,

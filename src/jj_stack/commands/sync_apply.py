@@ -116,10 +116,7 @@ def _apply_local_convergence(
     context.jj_client.abandon_commits(plan.github_copies)
     if plan.destination is not None:
         context.jj_client.rebase_changes(
-            change_ids=tuple(
-                change.change_id
-                for change in (*plan.remaining_changes, *plan.working_copy_children)
-            ),
+            changes=(*plan.remaining_changes, *plan.working_copy_children),
             destination=plan.destination,
         )
     dependencies = _observe_removal_dependencies(context=context, plan=plan)

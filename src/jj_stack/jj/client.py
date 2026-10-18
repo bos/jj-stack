@@ -6,6 +6,7 @@ import json
 import re
 import shlex
 import subprocess
+from collections import Counter
 from collections.abc import Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -915,20 +916,28 @@ class JjClient:
     def rebase_changes(
         self,
         *,
-        change_ids: Sequence[ChangeId],
+        changes: Sequence[LocalCommit],
         destination: CommitId,
     ) -> None:
-        """Rebase the current visible commits of the named changes onto one destination.
+        """Rebase the local copies of these changes onto one destination.
 
         jj rebases a hidden commit ID as readily as a visible one, resurrecting it beside any
         later rewrite, so the changes are selected by ID after jj's own working-copy snapshot.
+        An immutable copy belongs to another branch and stays where it is, unless it is the
+        planned commit itself.
         """
 
-        ordered_change_ids = tuple(dict.fromkeys(change_ids))
-        if not ordered_change_ids:
+        if not changes:
             return
+        change_ids = tuple(dict.fromkeys(change.change_id for change in changes))
+        local = _union_revset_symbols(
+            (
+                "mutable()",
+                *(f"present({quote_revset_symbol(change.commit_id)})" for change in changes),
+            )
+        )
         self._run_jj(
-            ("rebase", "-r", change_ids_revset(ordered_change_ids), "-d", destination),
+            ("rebase", "-r", f"{change_ids_revset(change_ids)} & {local}", "-d", destination),
             manage_working_copy=True,
             ignore_immutable=True,
         )
@@ -960,7 +969,9 @@ class JjClient:
         lines = self._query_template_lines(
             revset, _COMMIT_TEMPLATE, limit=limit, cli_args=cli_args
         )
-        return [_parse_commit_line(line) for line in lines]
+        commits = [_parse_commit_line(line) for line in lines]
+        divergent = self._divergent_changes(commits, cli_args=cli_args)
+        return [_with_divergence(commit, divergent) for commit in commits]
 
     def _query_commits_with_membership(
         self,
@@ -974,8 +985,33 @@ class JjClient:
         lines = self._query_template_lines(
             revset, _membership_scan_template(membership_revsets), cli_args=cli_args
         )
-        scans = (_parse_json_line(line, command="jj log", model=_CommitScan) for line in lines)
-        return tuple((scan.commit, scan.membership) for scan in scans)
+        scans = [_parse_json_line(line, command="jj log", model=_CommitScan) for line in lines]
+        divergent = self._divergent_changes([scan.commit for scan in scans], cli_args=cli_args)
+        return tuple(
+            (_with_divergence(scan.commit, divergent), scan.membership) for scan in scans
+        )
+
+    def _divergent_changes(
+        self, commits: Sequence[LocalCommit], *, cli_args: JjCliArgs
+    ) -> set[ChangeId]:
+        """Return the changes, among those jj marks divergent, with several mutable copies.
+
+        An immutable copy belongs to another branch, such as a fetched branch built on a PR, so
+        it is not a second local copy.
+        """
+
+        candidates = tuple(
+            dict.fromkeys(commit.change_id for commit in commits if commit.divergent)
+        )
+        if not candidates:
+            return set()
+        lines = self._query_template_lines(
+            f"{change_ids_revset(candidates)} & mutable()",
+            'change_id ++ "\\n"',
+            cli_args=cli_args,
+        )
+        counts = Counter(ChangeId(line) for line in lines)
+        return {change_id for change_id, count in counts.items() if count > 1}
 
     def _query_template_lines(
         self,
@@ -1241,6 +1277,12 @@ def _parse_bookmark_rows(stdout: str) -> tuple[Bookmark, ...]:
 
 def _parse_commit_line(line: str) -> LocalCommit:
     return _parse_json_line(line, command="jj log", model=LocalCommit)
+
+
+def _with_divergence(commit: LocalCommit, divergent: set[ChangeId]) -> LocalCommit:
+    if commit.divergent and commit.change_id not in divergent:
+        return commit.model_copy(update={"divergent": False})
+    return commit
 
 
 def _membership_scan_template(membership_revsets: Sequence[str]) -> str:

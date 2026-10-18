@@ -13,7 +13,6 @@ from jj_stack.commands.submit.revision_comments import REVISION_HISTORY_COMMENT_
 from jj_stack.errors import (
     EXIT_CONFLICTS,
     EXIT_GITHUB,
-    EXIT_INCOMPLETE,
     EXIT_NO_STACK,
     EXIT_USAGE,
 )
@@ -1907,7 +1906,7 @@ def test_submit_accepts_a_matching_visible_pr_bookmark(
     assert (submitted != old_commit) is rewrite
 
 
-def test_submit_rejects_a_conflicted_visible_pr_bookmark(
+def test_submit_publishes_a_rewrite_whose_submitted_commit_another_branch_keeps(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1916,53 +1915,17 @@ def test_submit_rejects_a_conflicted_visible_pr_bookmark(
     config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
     state = TrackingStore.for_repo(repo).load()
     change_id, identity = next(iter(state.prs.items()))
-    old_commit = state.prs[change_id].submitted_baseline.commit_id
+    baseline = identity.submitted_baseline.commit_id
     run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
+    update_remote_ref(fake_repo, branch="other-pr-copy", target=baseline)
+    run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "*"], repo)
+
+    assert run_main(repo, config_path, "submit", change_id) == 0, capsys.readouterr().err
     rewritten = selected_stack(repo, change_id).head.commit_id
-    run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "*"], repo)
-    run_command(
-        ["jj", "bookmark", "create", identity.pr_identity.head_ref, "-r", rewritten], repo
-    )
+    assert read_remote_ref(fake_repo.git_dir, identity.pr_identity.head_ref) == rewritten
+    assert read_remote_ref(fake_repo.git_dir, "other-pr-copy") == baseline
 
-    assert run_main(repo, config_path, "submit", change_id) != 0
-    assert "divergent" in capsys.readouterr().err
-    assert read_remote_ref(fake_repo.git_dir, identity.pr_identity.head_ref) == old_commit
-
-
-def test_submit_rejects_divergence_kept_immutable_by_another_remote_bookmark(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
-    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
-    state = TrackingStore.for_repo(repo).load()
-    change_id = next(iter(state.prs))
-    baseline = state.prs[change_id].submitted_baseline.commit_id
-    run_command(["jj", "describe", "-r", change_id, "-m", "feature rewritten"], repo)
-    run_command(
-        [
-            "git",
-            "--git-dir",
-            str(fake_repo.git_dir),
-            "update-ref",
-            "refs/heads/other-pr-copy",
-            baseline,
-        ],
-        repo,
-    )
-    run_command(["jj", "git", "fetch", "--remote", "origin", "--branch", "*"], repo)
-
-    assert run_main(repo, config_path, "submit", change_id) == 2
-    submit_output = capsys.readouterr().err
-    assert "divergent changes are not supported" in submit_output
-    assert "jj converge -r" in submit_output
-
-    assert run_main(repo, config_path, "view", change_id) == EXIT_INCOMPLETE
-    captured = capsys.readouterr()
-    assert "feature rewritten" in captured.out
-    assert "jj converge -r" in captured.out
-    assert "divergent" in captured.out
+    assert run_main(repo, config_path, "view", change_id) == 0
 
 
 def test_submit_does_not_claim_a_visible_bookmark_for_an_untracked_change(
