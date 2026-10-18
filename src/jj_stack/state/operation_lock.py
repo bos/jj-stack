@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -110,7 +110,7 @@ def operation_lock(
     *,
     command: str,
     mutating: bool = True,
-) -> Iterator[None]:
+) -> Generator[None]:
     """Serialize a mutating command; a read-only run takes no lock and creates no state.
 
     Acquiring the lock also creates the data directory, so callers under it need no separate

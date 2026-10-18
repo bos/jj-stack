@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from time import perf_counter
@@ -33,7 +33,7 @@ _totals: dict[str, _Total] = {}
 
 
 @contextmanager
-def timed(kind: str, label: str) -> Iterator[None]:
+def timed(kind: str, label: str) -> Generator[None]:
     """Time one external call, logging it and adding it to the total for `kind`."""
 
     start = perf_counter()

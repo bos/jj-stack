@@ -6,7 +6,7 @@ import json
 import re
 import shlex
 import subprocess
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -694,7 +694,7 @@ class JjClient:
         remote: str,
         branch: str,
         expected_target: CommitId,
-    ) -> Iterator[LocalCommit]:
+    ) -> Generator[LocalCommit]:
         """Import a PR branch at its expected commit, then remove the temporary ref and bookmark.
 
         Checkout uses this to make an existing PR head a local commit.
