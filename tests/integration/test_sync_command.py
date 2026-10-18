@@ -361,7 +361,7 @@ def test_merge_and_sync_offer_safe_recovery_for_each_workspace_blocking_removal(
     error = " ".join(captured.err.split())
     assert f"Cannot remove merged {submitted.change_id[:8]}" in error
     assert "checked out in workspaces default, other." in error
-    assert "jj no longer reports a directory" in error
+    assert "cannot find a directory for other" in error
     workspace_argument = "'other'" if sys.platform == "win32" else "other"
     assert f"jj workspace forget -- {workspace_argument}" in error
     assert "If it still exists elsewhere" in error

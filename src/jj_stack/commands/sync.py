@@ -419,10 +419,11 @@ def _checked_out_workspace_hint(
     shell = " (PowerShell)" if sys.platform == "win32" else ""
     for name in workspaces:
         workspace = known.get(name)
-        if workspace is None or workspace.root is None:
+        # jj keeps reporting a recorded root after its directory is deleted.
+        if workspace is None or workspace.root is None or not workspace.root.is_dir():
             forget_command = _workspace_forget_command(name=name, platform=sys.platform)
             hint.append(
-                t"jj no longer reports a directory for {ui.code(name)}. If the workspace was "
+                t"jj-stack cannot find a directory for {ui.code(name)}. If the workspace was "
                 t"deleted, forget it:\n  {ui.cmd(forget_command)}\n"
                 t"If it still exists elsewhere, run {ui.cmd("jj new 'trunk()'")} from its "
                 t"directory.\n"
