@@ -29,7 +29,7 @@ STATE_FILENAME = "state.json"
 
 
 class TrackingStore:
-    """Load and atomically write pull request tracking state."""
+    """Load and atomically, durably write pull request tracking state."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -132,10 +132,14 @@ class TrackingStore:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as tmp:
                     tmp.write(rendered)
+                    tmp.flush()
+                    # Without this, a power loss can persist the rename before the contents.
+                    os.fsync(tmp.fileno())
                 Path(tmp_name).replace(self.path)
             except OSError:
                 Path(tmp_name).unlink(missing_ok=True)
                 raise
+            _fsync_directory(self.path.parent)
         except OSError as error:
             raise CliError(f"Could not write jj-stack data file {self.path}: {error}") from error
 
@@ -150,6 +154,18 @@ class TrackingStore:
                 t"{ui.cmd('jj-stack relink <pr> <change-id>')}."
             ),
         )
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Persist a rename in this directory; Windows cannot open a directory to sync it."""
+
+    if os.name == "nt":
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _require_identity_matches_change(identity: PRIdentity, change_id: ChangeId) -> None:
