@@ -11,7 +11,7 @@ from jj_stack.errors import CliError
 from jj_stack.formatting import format_pr_label, format_pr_number
 from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
-from jj_stack.models.github import GithubStack, GithubStackMerge
+from jj_stack.models.github import GithubPR, GithubStack, GithubStackMerge
 from jj_stack.stack.github_stack_safety import selected_github_stack
 from jj_stack.ui import Message
 
@@ -120,6 +120,29 @@ def build_async_merge_plan(
     return AsyncMergePlan(resource, merge_plan.boundary_action, merge_plan.planned_changes)
 
 
+async def prepare_merge_request(
+    github: GithubClient,
+    merge: AsyncMergePlan,
+    execution: MergeExecutionInputs,
+    prs: tuple[GithubPR, ...],
+) -> tuple[AsyncMergePlan, tuple[GithubPR, ...]]:
+    """Retarget an ordinary PR before observing the checks that govern its merge."""
+
+    if not merge.planned or merge.resource is not None:
+        return merge, prs
+    if merge.target.base_ref == execution.trunk_branch:
+        return merge, prs
+    pr_label = format_pr_label(merge.target.identity.pr_number, repo=github.repo)
+    try:
+        pr = await github.update_pr(pr_id=merge.target.pr_node_id, base=execution.trunk_branch)
+    except GithubClientError as error:
+        raise CliError(
+            t"Could not retarget {pr_label} to {ui.bookmark(execution.trunk_branch)}",
+            hint="Resolve the GitHub error above, then rerun jj-stack merge.",
+        ) from error
+    return replace(merge, planned=(replace(merge.target, base_ref=pr.base.ref),)), (pr,)
+
+
 async def execute_async_merge(
     *,
     execution: MergeExecutionInputs,
@@ -132,17 +155,6 @@ async def execute_async_merge(
     if not merge.planned:
         return MergeResult(actions=merge.actions())
     pr_label = format_pr_label(merge.target.identity.pr_number, repo=github.repo)
-    if merge.resource is None and merge.target.base_ref != execution.trunk_branch:
-        try:
-            await github.update_pr(
-                pr_id=merge.target.pr_node_id,
-                base=execution.trunk_branch,
-            )
-        except GithubClientError as error:
-            raise CliError(
-                t"Could not retarget {pr_label} to {ui.bookmark(execution.trunk_branch)}",
-                hint="Resolve the GitHub error above, then rerun jj-stack merge.",
-            ) from error
     try:
         submission = await github.submit_stack_merge(
             expected_head_sha=merge.target.commit_id,

@@ -28,6 +28,9 @@ jj-stack merge <head-change-id>
 that their PR branches and pull requests have not moved unexpectedly. GitHub decides whether
 checks, approvals, conflicts, and repo rules allow the merge.
 
+`jj-stack merge` waits for required checks on the selected PRs and stops on the first failure,
+with a link to the results. Optional checks do not delay it.
+
 `jj-stack view` marks each open pull request with ✓ when GitHub would merge it now and ✗ when
 GitHub blocks it, followed by its approvals, checks, and specific merge warnings. `needs review`
 means GitHub still requires a review. A last line says how many commits the stack is behind its
@@ -69,9 +72,8 @@ By default, `merge` selects consecutive open, non-draft PRs from the bottom of t
 still matching what you submitted. It sends one request for that group. GitHub decides whether
 reviews, checks, conflicts, and repo rules allow the group to merge.
 
-If a check or approval blocks that request, `jj-stack` reports the rejection. It does not retry
-smaller groups automatically. To merge fewer PRs, select the last PR you want to land with
-`--pull-request`.
+If GitHub rejects that request, `jj-stack` reports the rejection. It does not retry smaller groups
+automatically. To merge fewer PRs, select the last PR you want to land with `--pull-request`.
 
 For example, in A → B → C, suppose the PRs are #1, #2, and #3. To merge only A:
 
@@ -125,9 +127,9 @@ the remaining PRs and remove unused branches.
 
 ### Merge queues
 
-GitHub tests each queued PR on a temporary merge commit that combines it with the PRs ahead of
-it, so those checks appear on that commit rather than on the PR's own Checks tab. While waiting,
-`merge` shows each PR's queue position and the state of those checks.
+Required PR checks must pass before queue entry. GitHub then tests each PR on a temporary merge
+commit that combines it with the PRs ahead of it. Those checks appear on that commit rather than
+on the PR's Checks tab. While waiting, `merge` shows queue positions and check progress.
 
 If GitHub removes a PR from the queue, `merge` stops, reports GitHub's reason, links to the
 checks on that commit, and names the next step. See [queue removal recovery][queue-removal].
@@ -139,9 +141,10 @@ While any selected pull request is queued, `jj-stack submit` refuses to update t
 
 ### Leaving before GitHub finishes
 
-Use `--no-wait` to return as soon as GitHub accepts the request, or press Ctrl-C to stop
-waiting. Neither cancels the request. Rerun the same `jj-stack merge` to keep watching it, or run
-`jj-stack sync <head-change-id>` once GitHub finishes.
+`--no-wait` skips the check wait and returns once GitHub accepts the request. Ctrl-C during the
+check wait stops before requesting a merge; afterward, it stops watching without cancelling the
+request. Rerun the same `jj-stack merge` to resume waiting, or run
+`jj-stack sync <head-change-id>` after GitHub merges.
 
 ### Merges outside jj-stack
 

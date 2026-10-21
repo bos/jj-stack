@@ -28,7 +28,9 @@ _GRAPHQL_VARIABLE_PATTERN = r"\$[_A-Za-z][_0-9A-Za-z]*"
 _WEB_ORIGIN = "https://github.test"
 
 
-def _check_rollup(checks: dict[str, str]) -> dict[str, object] | None:
+def _check_rollup(
+    checks: dict[str, str], *, required: frozenset[str] = frozenset()
+) -> dict[str, object] | None:
     # Missing required checks and test-merge checks do not participate in the head rollup.
     # Observed on real PR #384 in voxel-ai/jj-stack-native-stacks-test.
     states = set(checks.values())
@@ -53,7 +55,10 @@ def _check_rollup(checks: dict[str, str]) -> dict[str, object] | None:
     return {
         "state": state,
         "contexts": {
-            "nodes": [{"name": name, "state": state} for name, state in checks.items()],
+            "nodes": [
+                {"name": name, "state": state, "isRequired": name in required}
+                for name, state in checks.items()
+            ],
             "pageInfo": {"hasNextPage": False},
         },
     }
@@ -99,6 +104,7 @@ class FakeGithubPR:
 
     def to_graphql_payload(self, repo: FakeGithubRepo) -> dict[str, object]:
         head_target = self._refresh_head_sha(repo)
+        required = frozenset(name for rules in repo.requirements(self) for name in rules.checks)
         return {
             "baseRefName": self.base_ref,
             "body": self.body,
@@ -118,7 +124,7 @@ class FakeGithubPR:
             "mergeable": "MERGEABLE",
             "number": self.number,
             "state": self.graphql_state.upper(),
-            "statusCheckRollup": _check_rollup(self.checks),
+            "statusCheckRollup": _check_rollup(self.checks, required=required),
             "potentialMergeCommit": None
             if not self.merge_checks
             else {
@@ -126,7 +132,7 @@ class FakeGithubPR:
                 "oid": hashlib.sha256(
                     f"{self.head_sha}:{repo.ref_target(self.base_ref)}".encode()
                 ).hexdigest()[:40],
-                "statusCheckRollup": _check_rollup(self.merge_checks),
+                "statusCheckRollup": _check_rollup(self.merge_checks, required=required),
             },
             "title": self.title,
             "url": f"{_WEB_ORIGIN}/{repo.full_name}/pull/{self.number}",

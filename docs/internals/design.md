@@ -388,6 +388,9 @@ queue object or a `MERGE_QUEUE` branch rule. If that lookup fails, `merge` stops
 error before requesting anything. It sends the explicit action `merge_queue` when a queue is
 found and `direct_merge` otherwise.
 
+Before requesting a merge or queue entry, `merge` waits for required PR checks and stops at the
+first failure. `--dry-run` and `--no-wait` skip this wait.
+
 `merge` waits for completion by default, then fetches and syncs the whole selected stack before
 returning, including changes above the last merged PR and commits GitHub rewrote. While a PR's
 head and branch disagree, that sync retries for a few seconds before stopping. An `enqueued`
@@ -429,10 +432,10 @@ A configured method the repo does not allow is refused by name before any reques
 A merge queue chooses its own method, so the request omits it and signed stacks need no explicit
 method; an explicit `--method` produces a warning and is ignored.
 
-Before merging or enqueueing an ordinary PR, `jj-stack` retargets it to the trunk branch and
-sends its expected head commit. Trunk advancing does not block the merge because the request
-depends on the branch name, not its commit. One PR selected from a larger GitHub stack remains
-a stack merge and is not retargeted this way.
+An ordinary PR is retargeted to trunk before waiting for checks or requesting a merge. The
+request includes its expected head commit. Trunk advancing does not block the merge because the
+request depends on the branch name, not its commit. One PR selected from a larger GitHub stack
+remains a stack merge and is not retargeted this way.
 
 A submitted change GitHub already merged is still a stop, decided from the pull request's own
 reported state rather than from trunk position. The diagnostic names `sync`, which checks trunk
@@ -444,10 +447,8 @@ A merge initiated through GitHub's UI, auto-merge, or another client is supporte
 complete native GitHub stack through GitHub's UI is also supported. A later `sync` reconciles
 either result under the rules below.
 
-`jj-stack` does not duplicate repo policy. Apart from choosing direct merge or queue
-routing for the trunk branch, it does not preflight approvals, checks, conflicts, or auto-merge
-state across the repo. GitHub applies those rules to the requested GitHub stack or
-single-PR mutation, and `jj-stack` reports the result.
+`jj-stack` leaves merge eligibility to GitHub. It observes required checks and chooses direct
+merge or queue routing; GitHub enforces approvals, conflicts, and other repo rules.
 
 A rejected merge preserves GitHub's reason and says what to do next: rebase onto trunk, resolve,
 and submit again for a conflict; address the reported issue on GitHub and retry otherwise.

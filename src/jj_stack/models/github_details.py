@@ -67,6 +67,7 @@ class GithubCheck(BaseModel):
     name: str
     state: str
     url: str | None = None
+    is_required: bool = Field(default=False, alias="isRequired", exclude=True)
 
     @model_validator(mode="before")
     @classmethod

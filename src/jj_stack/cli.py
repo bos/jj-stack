@@ -500,7 +500,8 @@ def build_parser() -> ArgumentParser:
     merge_parser.add_argument(
         "--no-wait",
         action="store_true",
-        help="Return after GitHub accepts the merge request; run jj-stack sync after it merges",
+        help="Skip waiting for checks and return once GitHub accepts the request; "
+        "run jj-stack sync after it merges",
     )
     add_help_argument(
         merge_parser,

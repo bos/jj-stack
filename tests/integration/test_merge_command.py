@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from jj_stack.commands.merge import command as merge_command
+from jj_stack.commands.merge.checks import ChecksPending
 from jj_stack.commands.merge.github_stack import PendingMerge
 from jj_stack.errors import EXIT_GITHUB, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
@@ -16,6 +17,7 @@ from jj_stack.state.store import TrackingStore
 
 from ..support.fake_github import (
     FakeGithubRepo,
+    FakeMergeRequirements,
     _complete_stack_merge,
     create_app,
 )
@@ -40,6 +42,135 @@ from .submit_command_helpers import (
     read_remote_ref,
     run_main,
 )
+
+
+@pytest.mark.parametrize("queued", [False, True])
+def test_merge_waits_for_required_checks_before_requesting_and_syncs(
+    tmp_path: Path, monkeypatch, capsys, queued: bool
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.github_stacks = {7: (1, 2)}
+    fake_repo.merge_queue_enabled = queued
+    fake_repo.branch_rules["main"] = FakeMergeRequirements(checks=("build", "test"))
+    fake_repo.prs[1].checks = {"build": "SUCCESS", "optional": "FAILURE"}
+    fake_repo.prs[2].checks = {"build": "IN_PROGRESS", "test": "SUCCESS"}
+    monkeypatch.setattr("jj_stack.commands.merge.wait._QUEUE_POLL_INTERVAL_SECONDS", 0)
+    state_store = TrackingStore.for_repo(repo)
+    before = state_store.load()
+    waits = 0
+
+    async def complete_checks(waiting: ChecksPending) -> None:
+        nonlocal waits
+        assert not fake_repo.stack_merge_requests
+        assert state_store.load() == before
+        lock = try_acquire_operation_lock(state_store.path.parent, command="probe")
+        assert lock is not None
+        with lock:
+            pass
+        # Discover a job after the first observation, then finish it on the next poll.
+        fake_repo.prs[1].checks["test"] = "IN_PROGRESS" if waits == 0 else "SUCCESS"
+        fake_repo.prs[2].checks["build"] = "SUCCESS"
+        waits += 1
+
+    monkeypatch.setattr(ChecksPending, "wait", complete_checks)
+    assert run_main(repo, config_path, "merge") == 0
+    output = capsys.readouterr()
+    assert waits == 2
+    assert "Waiting for required checks" in output.out
+    assert len(fake_repo.stack_merge_requests) == 1
+    assert all(pr.merged_at is not None for pr in fake_repo.prs.values())
+    assert state_store.load().prs == {}
+
+
+def test_merge_detects_required_failure_while_other_checks_are_pending(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.github_stacks = {7: (1, 2)}
+    fake_repo.branch_protection["main"] = FakeMergeRequirements(checks=("ci",))
+    fake_repo.prs[1].checks = {"ci": "IN_PROGRESS"}
+    fake_repo.prs[2].checks = {"ci": "FAILURE", "optional": "IN_PROGRESS"}
+    refs_before = remote_refs(fake_repo.git_dir)
+
+    assert run_main(repo, config_path, "merge") == 1
+    output = capsys.readouterr()
+    assert "Required check ci on PR #2: failure" in output.err
+    assert "/pull/2/checks" in output.err
+    assert not fake_repo.stack_merge_requests
+    assert remote_refs(fake_repo.git_dir) == refs_before
+
+
+def test_merge_rechecks_local_commits_after_waiting_without_merging_a_smaller_group(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.github_stacks = {7: (1, 2)}
+    fake_repo.branch_rules["main"] = FakeMergeRequirements(checks=("ci",))
+    for pr in fake_repo.prs.values():
+        pr.checks = {"ci": "IN_PROGRESS"}
+    top = selected_stack(repo).head
+
+    async def edit_while_waiting(waiting: ChecksPending) -> None:
+        run_command(["jj", "describe", "-r", top.change_id, "-m", "edited while waiting"], repo)
+        for pr in fake_repo.prs.values():
+            pr.checks["ci"] = "SUCCESS"
+
+    monkeypatch.setattr(ChecksPending, "wait", edit_while_waiting)
+    assert run_main(repo, config_path, "merge") == 1
+    assert "selected stack changed while waiting" in capsys.readouterr().err
+    assert not fake_repo.stack_merge_requests
+    assert all(pr.state == "open" for pr in fake_repo.prs.values())
+
+
+def test_merge_nonwaiting_modes_leave_pending_checks_to_github(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    fake_repo.branch_rules["main"] = FakeMergeRequirements(checks=("ci",))
+    fake_repo.prs[1].checks = {"ci": "IN_PROGRESS"}
+
+    async def unexpected_wait(waiting: ChecksPending) -> None:
+        pytest.fail("nonwaiting commands must not wait for checks")
+
+    monkeypatch.setattr(ChecksPending, "wait", unexpected_wait)
+    assert run_main(repo, config_path, "merge", "--dry-run") == 0
+    assert not fake_repo.stack_merge_requests
+    assert run_main(repo, config_path, "merge", "--no-wait") == 0
+    assert len(fake_repo.stack_merge_requests) == 1
+    assert "Waiting for required checks" not in capsys.readouterr().out
+
+
+def test_merge_waits_under_trunk_rules_after_retargeting_an_ordinary_pr(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    update_remote_ref(
+        fake_repo, branch="old-base", target=read_remote_ref(fake_repo.git_dir, "main")
+    )
+    fake_repo.prs[1].base_ref = "old-base"
+    fake_repo.branch_rules["old-base"] = FakeMergeRequirements(checks=("old-ci",))
+    fake_repo.branch_rules["main"] = FakeMergeRequirements(checks=("main-ci",))
+    fake_repo.prs[1].checks = {"old-ci": "FAILURE", "main-ci": "IN_PROGRESS"}
+    waited = False
+
+    async def complete_trunk_check(waiting: ChecksPending) -> None:
+        nonlocal waited
+        assert fake_repo.prs[1].base_ref == "main"
+        assert not fake_repo.stack_merge_requests
+        fake_repo.prs[1].checks["main-ci"] = "SUCCESS"
+        waited = True
+
+    monkeypatch.setattr(ChecksPending, "wait", complete_trunk_check)
+    assert run_main(repo, config_path, "merge", "--dry-run") == 0
+    assert fake_repo.prs[1].base_ref == "old-base"
+    assert run_main(repo, config_path, "merge") == 0
+    assert waited and fake_repo.prs[1].merged_at is not None
+    assert "Required check old-ci" not in capsys.readouterr().err
 
 
 def test_merge_no_wait_resumes_a_pending_or_queued_request_and_syncs_after_waiting(
@@ -90,6 +221,11 @@ def test_merge_no_wait_resumes_a_pending_or_queued_request_and_syncs_after_waiti
     assert "In merge queue" in queued.out
     assert "jj-stack sync" in queued.out
     assert fake_repo.stack_merge_requests == [request]
+
+    # PR-head checks no longer decide eligibility after admission: the queue runs its own
+    # checks on temporary commits. Resuming must follow that queue rather than the old head.
+    fake_repo.branch_rules["main"] = FakeMergeRequirements(checks=("ci",))
+    fake_repo.prs[1].checks = {"ci": "FAILURE"}
 
     # While GitHub works through its queue, other jj-stack commands can still run: each queue
     # observation finds the repo's operation lock free. The local update afterwards holds it.

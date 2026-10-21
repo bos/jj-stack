@@ -1543,8 +1543,14 @@ def _pr_merge_details_query(
                 rollup = f"""statusCheckRollup {{
                       contexts(first: {PR_PAGE_SIZE}{after}) {{
                         nodes {{
-                          ... on CheckRun {{ name status conclusion url: detailsUrl }}
-                          ... on StatusContext {{ name: context state url: targetUrl }}
+                          ... on CheckRun {{
+                            name status conclusion url: detailsUrl
+                            isRequired(pullRequestNumber: {number})
+                          }}
+                          ... on StatusContext {{
+                            name: context state url: targetUrl
+                            isRequired(pullRequestNumber: {number})
+                          }}
                         }}
                         {page_info}
                       }}

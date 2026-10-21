@@ -130,7 +130,10 @@ def test_merge_details_paginate_without_mixing_pr_heads_or_bases(changed: str | 
         }
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        variables = json.loads(request.content)["variables"]
+        payload = json.loads(request.content)
+        if "PullRequestMergeDetails" in payload["query"]:
+            assert "isRequired(pullRequestNumber: 1)" in payload["query"]
+        variables = payload["variables"]
         if "checks_1" not in variables:
             page = {
                 "headRefOid": pr.head.sha,
@@ -181,7 +184,12 @@ def test_merge_details_paginate_without_mixing_pr_heads_or_bases(changed: str | 
                 "statusCheckRollup": {
                     "contexts": connection(
                         [
-                            {"name": "lint", "status": "COMPLETED", "conclusion": "FAILURE"},
+                            {
+                                "name": "lint",
+                                "status": "COMPLETED",
+                                "conclusion": "FAILURE",
+                                "isRequired": True,
+                            },
                             {"name": "deploy", "state": "PENDING", "url": "https://check"},
                         ]
                     )
@@ -209,6 +217,8 @@ def test_merge_details_paginate_without_mixing_pr_heads_or_bases(changed: str | 
             ("lint", "FAILURE", None),
             ("deploy", "PENDING", "https://check"),
         ]
+        assert details.checks[-2].is_required
+        assert not details.checks[-1].is_required
 
 
 def test_github_client_caps_and_announces_a_long_rate_limit_wait(

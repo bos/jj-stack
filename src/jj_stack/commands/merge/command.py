@@ -1,15 +1,15 @@
 """Ask GitHub to merge pull requests at the bottom of a stack.
 
 Starting at the bottom of the stack, `jj-stack` selects consecutive open, non-draft pull
-requests. Each must still match the commit that was last submitted; GitHub decides whether
-reviews, checks, conflicts, and repo rules allow the merge.
+requests. Each must match the commit last submitted. It waits for required checks and stops on
+the first failure; GitHub decides whether the merge is allowed.
 
-The command waits for GitHub to finish, including through a merge queue. It then fetches trunk,
-removes the merged changes from the local stack, rebases any remaining changes onto the updated
-trunk, and updates their existing pull requests.
+By default, it waits for GitHub to merge, including through a queue, then fetches trunk, removes
+merged local changes, rebases remaining changes onto trunk, and updates their PRs.
 
-Use `--no-wait` to return once GitHub accepts the request, or press Ctrl-C to stop waiting;
-neither cancels the request. After GitHub finishes, run `jj-stack sync <head-change-id>`.
+Use `--no-wait` to skip the check wait and return once GitHub accepts the request. Ctrl-C during
+the check wait stops before requesting a merge; afterward it stops waiting without cancelling.
+After GitHub finishes, run `jj-stack sync <head-change-id>`.
 
 For a direct merge, one that GitHub performs without a merge queue, `--method` chooses among the
 merge methods the repo allows. Without it, the command uses `jj-stack.merge_method` from your jj
@@ -63,8 +63,14 @@ from jj_stack.stack.selection import (
 from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.state.operation_lock import OperationLockBusyError, operation_lock
 
-from .github_stack import PendingMerge, build_async_merge_plan, execute_async_merge
-from .plan import MergeExecutionInputs, MergeResult, build_merge_plan
+from .checks import ChecksPending, inspect_required_checks
+from .github_stack import (
+    PendingMerge,
+    build_async_merge_plan,
+    execute_async_merge,
+    prepare_merge_request,
+)
+from .plan import MergeChange, MergeExecutionInputs, MergeResult, build_merge_plan
 from .wait import retry_while_github_catches_up
 
 _RERUN_HINT = "Resolve the GitHub error above, then rerun jj-stack merge."
@@ -72,12 +78,22 @@ HELP = "Merge pull requests at the bottom of a stack"
 
 
 @dataclass(frozen=True, slots=True)
+class MergeOptions:
+    """Fixed command options shared by preparation, check waiting, and completion."""
+
+    dry_run: bool
+    merge_method: MergeMethod | None
+    no_wait: bool
+    pr: str | None
+    revset: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedMerge:
     """Locally prepared merge inputs before GitHub planning and execution."""
 
-    dry_run: bool
     context: CommandContext
-    merge_method: MergeMethod | None
+    options: MergeOptions
     stack: LocalStack
     state: TrackingState
     target: GithubTarget
@@ -103,11 +119,9 @@ def merge(
     return asyncio.run(
         _run_merge(
             context=context,
-            dry_run=dry_run,
-            merge_method=merge_method,
-            no_wait=no_wait,
-            pr=pr,
-            revset=revset,
+            options=MergeOptions(
+                dry_run=dry_run, merge_method=merge_method, no_wait=no_wait, pr=pr, revset=revset
+            ),
         )
     )
 
@@ -115,43 +129,20 @@ def merge(
 async def _run_merge(
     *,
     context: CommandContext,
-    dry_run: bool,
-    merge_method: MergeMethod | None,
-    no_wait: bool,
-    pr: str | None,
-    revset: str | None,
+    options: MergeOptions,
 ) -> int:
     target = require_github_target(resolve_github_target(context.jj_client.list_git_remotes()))
     async with context.open_github_client(repo=target.repo) as github_client:
-        # Other jj-stack commands may run while GitHub works: the lock covers inspecting the
-        # stack and requesting the merge, and again the local update once GitHub has finished.
-        with operation_lock(context.state_store, command="merge", mutating=not dry_run):
-            selected_revset, target_change_id = _resolve_merge_target(
-                context=context,
-                pr=pr,
-                revset=revset,
-            )
-            with console.spinner(description="Inspecting jj stack"):
-                prepared = prepare_local_stack(
-                    containing_change_id=target_change_id,
-                    context=context,
-                    fetch_remote_state=True,
-                    revset=selected_revset,
-                )
-            prepared_merge = PreparedMerge(
-                context=context,
-                dry_run=dry_run,
-                merge_method=merge_method,
-                stack=prepared.stack,
-                state=prepared.state,
-                target=target,
-                target_change_id=target_change_id,
-            )
-            outcome, trunk = await _request_merge_async(prepared_merge, github_client)
+        outcome, trunk, prepared_merge = await _request_when_checks_pass(
+            context=context,
+            options=options,
+            target=target,
+            github_client=github_client,
+        )
         if isinstance(outcome, PendingMerge):
             _print_merge_result(outcome.result())
             _report_merge_requested(outcome, head_change_id=prepared_merge.stack.head.change_id)
-            if no_wait:
+            if options.no_wait:
                 console.output(
                     t"After GitHub finishes merging, run "
                     t"{ui.cmd(f'jj-stack sync {prepared_merge.sync_head}')}.",
@@ -197,6 +188,63 @@ async def _run_merge(
         if exit_code:
             _warn_incomplete_post_merge_sync(prepared_merge.sync_head, has_recovery_hint=True)
         return exit_code
+
+
+async def _request_when_checks_pass(
+    *,
+    context: CommandContext,
+    options: MergeOptions,
+    target: GithubTarget,
+    github_client: GithubClient,
+) -> tuple[MergeResult | PendingMerge, ObservedTrunk, PreparedMerge]:
+    expected_changes: tuple[MergeChange, ...] | None = None
+    previous_progress: tuple[str, ...] | None = None
+    selected_revset = options.revset
+    target_change_id: ChangeId | None = None
+    while True:
+        with operation_lock(context.state_store, command="merge", mutating=not options.dry_run):
+            if expected_changes is None:
+                selected_revset, target_change_id = _resolve_merge_target(
+                    context=context, pr=options.pr, revset=options.revset
+                )
+            with console.spinner(description="Inspecting jj stack"):
+                prepared = prepare_local_stack(
+                    containing_change_id=target_change_id if expected_changes is None else None,
+                    context=context,
+                    fetch_remote_state=expected_changes is None,
+                    revset=selected_revset,
+                )
+            if prepared.github_target != target:
+                raise CliError(
+                    "The GitHub remote changed while preparing the merge.",
+                    hint="Inspect it with jj-stack doctor, then rerun jj-stack merge.",
+                )
+            prepared_merge = PreparedMerge(
+                context=context,
+                options=options,
+                stack=prepared.stack,
+                state=prepared.state,
+                target=target,
+                target_change_id=target_change_id,
+            )
+            outcome, trunk = await _request_merge_async(
+                prepared_merge,
+                github_client,
+                wait_for_checks=not (options.dry_run or options.no_wait),
+                expected_changes=expected_changes,
+            )
+        if not isinstance(outcome, ChecksPending):
+            return outcome, trunk, prepared_merge
+        if previous_progress is None:
+            console.output("Waiting for required checks. Ctrl-C stops before requesting a merge.")
+        if outcome.progress != previous_progress:
+            console.output("\n".join(outcome.progress))
+        previous_progress = outcome.progress
+        expected_changes = outcome.changes
+        # Resolve a moving revset only once. Every later pass observes this same stack again,
+        # including local edits and saved links changed by commands run while the lock was free.
+        selected_revset = prepared.stack.head.change_id
+        await outcome.wait()
 
 
 async def _update_local_stack(
@@ -259,8 +307,12 @@ def _resolve_merge_target(
 
 
 async def _request_merge_async(
-    prepared_merge: PreparedMerge, github_client: GithubClient
-) -> tuple[MergeResult | PendingMerge, ObservedTrunk]:
+    prepared_merge: PreparedMerge,
+    github_client: GithubClient,
+    *,
+    wait_for_checks: bool,
+    expected_changes: tuple[MergeChange, ...] | None,
+) -> tuple[MergeResult | PendingMerge | ChecksPending, ObservedTrunk]:
     stack = prepared_merge.stack
     github_repo = prepared_merge.target.repo
     remote = prepared_merge.target.remote
@@ -298,17 +350,12 @@ async def _request_merge_async(
     stacks_task = asyncio.create_task(observe_github_stacks(github=github_client))
     await wait_for_read_tasks(queue_task, prs_task, stacks_task)
     if queue_task.result():
-        if prepared_merge.merge_method is not None:
-            console.warning(
-                t"The base branch {ui.bookmark(trunk_branch)} uses a merge queue; ignoring "
-                t"{ui.cmd('--method')}."
-            )
         method = None
     else:
         method = _resolve_merge_method(
             changes=stack.changes,
             configured=prepared_merge.context.config.merge_method,
-            merge_method=prepared_merge.merge_method,
+            merge_method=prepared_merge.options.merge_method,
             repo_state=github_repo_state,
         )
     plan = build_merge_plan(
@@ -317,6 +364,11 @@ async def _request_merge_async(
         changes=stack.changes,
         target_change_id=prepared_merge.target_change_id,
     )
+    if expected_changes is not None and plan.planned_changes != expected_changes:
+        raise CliError(
+            "The selected stack changed while waiting for required checks.",
+            hint="Inspect it with jj-stack view, then rerun jj-stack merge.",
+        )
     stacks = stacks_task.result()
     execution = MergeExecutionInputs(
         repo=github_client.repo,
@@ -325,7 +377,13 @@ async def _request_merge_async(
         trunk_branch=trunk_branch,
     )
     async_merge = build_async_merge_plan(plan, stacks, execution)
-    if prepared_merge.dry_run:
+    if queue_task.result() and prepared_merge.options.merge_method is not None:
+        if expected_changes is None:
+            console.warning(
+                t"The base branch {ui.bookmark(trunk_branch)} uses a merge queue; ignoring "
+                t"{ui.cmd('--method')}."
+            )
+    if prepared_merge.options.dry_run:
         action = (
             async_merge.action(
                 method=method,
@@ -336,6 +394,16 @@ async def _request_merge_async(
             else None
         )
         return MergeResult(actions=async_merge.actions(action)), trunk
+    prs = tuple(
+        pr
+        for change in async_merge.planned
+        if (pr := prs_task.result().prs[change.change_id].pr) is not None
+    )
+    async_merge, prs = await prepare_merge_request(github_client, async_merge, execution, prs)
+    if wait_for_checks and async_merge.planned:
+        waiting = await inspect_required_checks(github_client, async_merge.planned, prs)
+        if waiting is not None:
+            return waiting, trunk
     return await execute_async_merge(
         execution=execution,
         github=github_client,

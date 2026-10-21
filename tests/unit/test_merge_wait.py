@@ -6,6 +6,7 @@ from collections.abc import Iterator
 import httpx2
 import pytest
 
+from jj_stack.commands.merge.checks import _pending_checks
 from jj_stack.commands.merge.plan import MergeChange, MergeExecutionInputs
 from jj_stack.commands.merge.wait import wait_for_merge
 from jj_stack.console import configured_console
@@ -14,7 +15,11 @@ from jj_stack.github.client import GithubClient, GithubClientError
 from jj_stack.github.resolution import GithubRepoAddress
 from jj_stack.identifiers import ChangeId, CommitId
 from jj_stack.models.github import GithubBranchRef, GithubPR, GithubPRHead, GithubStackMerge
-from jj_stack.models.github_details import GithubMergeQueueEntry
+from jj_stack.models.github_details import (
+    GithubCheck,
+    GithubMergeQueueEntry,
+    GithubPRMergeDetails,
+)
 from jj_stack.models.tracking import PRIdentity
 from jj_stack.ui import plain_text
 
@@ -34,6 +39,38 @@ def _queued_pr(number: int) -> GithubPR:
         title="feature",
         merge_queue_entry=GithubMergeQueueEntry(),
     )
+
+
+def test_required_test_merge_result_overrides_head_result_without_waiting_for_optional_checks():
+    evidence = GithubPRMergeDetails(
+        required_checks=("ci", "external"),
+        checks=(
+            GithubCheck(name="ci", state="FAILURE", isRequired=True),
+            # A configured name can also be reported by an app whose check is not required.
+            GithubCheck(name="external", state="FAILURE", isRequired=False),
+        ),
+        merge_checks=(
+            GithubCheck(name="ci", state="NEUTRAL", isRequired=True),
+            GithubCheck(name="optional", state="IN_PROGRESS"),
+        ),
+    )
+    assert _pending_checks(_queued_pr(1), evidence) == ()
+
+
+def test_required_check_and_commit_status_with_the_same_name_must_both_pass():
+    evidence = GithubPRMergeDetails(
+        required_checks=("ci",),
+        checks=(
+            GithubCheck(name="ci", state="SUCCESS", isRequired=True),
+            GithubCheck(
+                name="ci", state="TIMED_OUT", url="https://ci.test/failed", isRequired=True
+            ),
+            GithubCheck(name="ci", state="FAILURE", isRequired=False),
+        ),
+    )
+    with pytest.raises(CliError, match="timed out") as caught:
+        _pending_checks(_queued_pr(1), evidence)
+    assert "https://ci.test/failed" in plain_text(caught.value.message)
 
 
 async def _wait(snapshots: Iterator[tuple[GithubPR, ...] | BaseException]):
