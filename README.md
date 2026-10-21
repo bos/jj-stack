@@ -122,6 +122,32 @@ python -m pip install jj-stack
 To upgrade an installation made with `uv`, run `uv tool upgrade jj-stack`. If the command is
 not on your shell `PATH`, run `uv tool update-shell`.
 
+The repository also provides a Nix flake. You can run it directly:
+
+```bash
+nix run github:bos/jj-stack -- --help
+```
+
+Or add it to your configs:
+
+```nix
+{
+   # add the input
+   inputs.jj-stack.url = "github:bos/jj-stack";
+}
+```
+
+```nix
+{
+   environment.systemPackages = [
+     inputs.jj-stack.packages.${pkgs.stdenv.hostPlatform.system}.jj-stack
+   ];
+}
+```
+
+From a checkout, `nix build` builds the package and `nix develop` enters a development shell with
+`uv`, `jj`, and `just`.
+
 ## Learn more
 
 - [How jj-stack works](https://www.serpentine.com/software/jj-stack/mental-model/)
@@ -155,5 +181,6 @@ included in this repo.
 
 ## Development
 
-With `uv`, `jj`, and `just` installed, run `just` to list the development workflows. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for setup and validation instructions.
+With `uv`, `jj`, and `just` installed, or in a `nix develop` shell that provides them, run `just`
+to list the development workflows. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and
+validation instructions.

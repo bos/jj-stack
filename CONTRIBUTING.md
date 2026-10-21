@@ -20,6 +20,8 @@ You need `uv`, Git, `jj` 0.45.1 or newer, and `just`. The project requires Pytho
 just setup
 ```
 
+With Nix, `nix develop` opens a shell with `uv`, `jj`, `just`, and `git` already installed.
+
 Run `just` on its own to list every recipe.
 
 ## Working on a change
