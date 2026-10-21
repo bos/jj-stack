@@ -27,6 +27,9 @@ jobs:
         with:
           languages: python
           build-mode: none
+          config: |
+            paths-ignore:
+              - "tests/**"
 
       - name: Analyze
         uses: github/codeql-action/analyze@v4.38.3
