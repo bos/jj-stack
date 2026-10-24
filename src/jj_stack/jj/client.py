@@ -9,7 +9,7 @@ import subprocess
 from collections import Counter
 from collections.abc import Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from itertools import batched
 from pathlib import Path
@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+import jj_stack.console as console
 import jj_stack.ui as ui
 from jj_stack.errors import (
     AmbiguousSelectionError,
@@ -712,7 +713,8 @@ class JjClient:
                     "--no-write-fetch-head",
                     configured_remote.fetch_url,
                     f"+{ref}:{_PR_BRANCH_TEMP_REF}",
-                )
+                ),
+                may_prompt=True,
             )
             if self.pr_branch_temp_ref_target() != expected_target:
                 raise DriftError(
@@ -733,7 +735,9 @@ class JjClient:
         """Fetch commits by ID into the backing Git store without creating any ref."""
 
         url = self._git_remote(remote).fetch_url
-        self._run_git(("fetch", "--no-tags", "--no-write-fetch-head", url, *commit_ids))
+        self._run_git(
+            ("fetch", "--no-tags", "--no-write-fetch-head", url, *commit_ids), may_prompt=True
+        )
 
     def rebased_tree(
         self, commit_id: CommitId, *, parent: CommitId, onto: CommitId
@@ -788,7 +792,8 @@ class JjClient:
                     "--no-write-fetch-head",
                     self._git_remote(remote).fetch_url,
                     commit_id,
-                )
+                ),
+                may_prompt=True,
             )
             return self._read_git_commit_metadata(commit_id)
 
@@ -820,7 +825,9 @@ class JjClient:
         """Fetch ordinary repo state using its configured selection."""
 
         # Normal fetch also imports backing-Git ref changes in a colocated repo.
-        self._run_jj(("git", "fetch", "--remote", remote), manage_working_copy=True)
+        self._run_jj(
+            ("git", "fetch", "--remote", remote), manage_working_copy=True, may_prompt=True
+        )
 
     def mutate_remote_pr_branch_refs(
         self,
@@ -861,7 +868,7 @@ class JjClient:
             desired = update.desired_target or ""
             command.append(f"{desired}:{ref}")
         try:
-            self._run_git(command)
+            self._run_git(command, may_prompt=True)
         except JjCommandError as error:
             if not error.stderr:
                 raise
@@ -1035,6 +1042,7 @@ class JjClient:
         ignore_immutable: bool = False,
         color: JjColorWhen = "never",
         cli_args: JjCliArgs = _NO_CLI_ARGS,
+        may_prompt: bool = False,
     ) -> str:
         """Run jj without touching the working copy unless the caller explicitly requires it.
 
@@ -1057,6 +1065,7 @@ class JjClient:
             ["jj", *self._cli_args.argv, *cli_args.argv, *extra_args, *args],
             missing_tool_message=t"{ui.cmd('jj')} is not installed or is not on PATH.",
             detect_stale_workspace=True,
+            may_prompt=may_prompt,
         )
 
     def _run_git(
@@ -1065,6 +1074,7 @@ class JjClient:
         *,
         allowed_returncodes: frozenset[int] = frozenset({0}),
         lossy_text: bool = False,
+        may_prompt: bool = False,
     ) -> str:
         return self._run_command(
             ["git", "--git-dir", str(self._backing_git_root()), *args],
@@ -1072,6 +1082,7 @@ class JjClient:
             detect_stale_workspace=False,
             allowed_returncodes=allowed_returncodes,
             lossy_text=lossy_text,
+            may_prompt=may_prompt,
         )
 
     def _backing_git_root(self) -> Path:
@@ -1144,9 +1155,13 @@ class JjClient:
         detect_stale_workspace: bool,
         allowed_returncodes: frozenset[int] = frozenset({0}),
         lossy_text: bool = False,
+        may_prompt: bool = False,
     ) -> str:
+        # A command that reaches a remote can make ssh or a credential helper ask on the
+        # terminal, where live progress would redraw over the prompt.
+        prompt_guard = console.suspend_live_progress() if may_prompt else nullcontext()
         try:
-            with timed(command[0], _redact_http_url_userinfo(shlex.join(command))):
+            with timed(command[0], _redact_http_url_userinfo(shlex.join(command))), prompt_guard:
                 completed = subprocess.run(
                     command,
                     capture_output=True,

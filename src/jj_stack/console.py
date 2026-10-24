@@ -22,6 +22,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import threading
 import time
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
@@ -594,6 +595,46 @@ def _jsonl_status(description: str, *, total: int | None = None) -> Generator[_J
         _write_jsonl({"type": "status", "text": None})
 
 
+_LIVE_DISPLAY: Status | Progress | None = None
+_LIVE_DISPLAY_LOCK = threading.Lock()
+_SUSPENDED_DEPTH = 0
+
+
+@contextmanager
+def _live_display(display: Status | Progress) -> Generator[None]:
+    """Track the active live display so a prompting subprocess can hide it."""
+
+    global _LIVE_DISPLAY
+    _LIVE_DISPLAY = display
+    try:
+        yield
+    finally:
+        _LIVE_DISPLAY = None
+
+
+@contextmanager
+def suspend_live_progress() -> Generator[None]:
+    """Hide live progress while a child process may prompt on the terminal.
+
+    ssh and credential helpers write their prompts straight to the terminal, where the next
+    spinner redraw would erase them. The display resumes when the outermost caller finishes.
+    """
+
+    global _SUSPENDED_DEPTH
+    with _LIVE_DISPLAY_LOCK:
+        display = _LIVE_DISPLAY
+        if display is not None and _SUSPENDED_DEPTH == 0:
+            display.stop()
+        _SUSPENDED_DEPTH += 1
+    try:
+        yield
+    finally:
+        with _LIVE_DISPLAY_LOCK:
+            _SUSPENDED_DEPTH -= 1
+            if display is not None and _SUSPENDED_DEPTH == 0:
+                display.start()
+
+
 @contextmanager
 def spinner(*, description: str, report_changes: bool = False) -> Generator[SpinnerLike]:
     """Render a transient spinner, optionally logging changed status when stderr is redirected."""
@@ -607,7 +648,7 @@ def spinner(*, description: str, report_changes: bool = False) -> Generator[Spin
             handle.update(description)
             yield handle
         else:
-            with _STDERR_CONSOLE._console.status(description) as status:
+            with _STDERR_CONSOLE._console.status(description) as status, _live_display(status):
                 yield _RichSpinnerHandle(status=status)
 
 
@@ -626,14 +667,17 @@ def progress(*, description: str, total: int) -> Generator[ProgressLike]:
         yield _NullProgress()
         return
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=_STDERR_CONSOLE._console,
-        transient=True,
-    ) as progress_render:
+    with (
+        Progress(
+            SpinnerColumn(),
+            TextColumn("{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=_STDERR_CONSOLE._console,
+            transient=True,
+        ) as progress_render,
+        _live_display(progress_render),
+    ):
         task_id = progress_render.add_task(description, total=total)
         yield _RichProgressHandle(progress=progress_render, task_id=task_id)
 

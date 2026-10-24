@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
+import jj_stack.console as console
 from jj_stack.cli import main
 from jj_stack.errors import CliError
 from jj_stack.identifiers import ChangeId, CommitId
@@ -475,3 +477,69 @@ def _change_id(repo: Path, revset: str) -> ChangeId:
             repo,
         ).stdout.strip()
     )
+
+
+_FAKE_SSH = """#!/bin/sh
+# ssh without the key in its agent: ask on the terminal, then run the git service locally.
+printf '%s' 'Enter passphrase for key: ' >> "$JJ_STACK_TEST_TERMINAL"
+sleep 0.3
+printf '\\n' >> "$JJ_STACK_TEST_TERMINAL"
+eval "exec git ${2#git-}"
+"""
+
+
+class _SharedTerminal(io.TextIOWrapper):
+    """A terminal stand-in that subprocesses can also write to, by path."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+@pytest.mark.parametrize("remote_command", ("push", "fetch"))
+def test_remote_git_commands_keep_an_ssh_prompt_visible_under_a_spinner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remote_command: str,
+) -> None:
+    """A passphrase prompt that the spinner erases looks like a hang (issue #120)."""
+
+    repo = init_repo(tmp_path)
+    remote = tmp_path / "remote.git"
+    run_command(["git", "init", "--bare", str(remote)], tmp_path)
+    run_command(["jj", "git", "remote", "add", "origin", f"ssh://localhost{remote}"], repo)
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text(_FAKE_SSH, encoding="utf-8")
+    fake_ssh.chmod(0o755)
+    terminal_path = tmp_path / "terminal"
+    monkeypatch.setenv("GIT_SSH_COMMAND", str(fake_ssh))
+    monkeypatch.setenv("GIT_SSH_VARIANT", "simple")
+    monkeypatch.setenv("JJ_STACK_TEST_TERMINAL", str(terminal_path))
+    client = JjClient(repo)
+    commit = jj_commit_id(repo, "@-")
+
+    terminal = _SharedTerminal(
+        terminal_path.open("ab"), encoding="utf-8", newline="", write_through=True
+    )
+    with (
+        terminal,
+        console.configured_console(color="never", stderr=terminal, stdout=io.StringIO()),
+        console.spinner(description="Reaching the remote"),
+    ):
+        if remote_command == "push":
+            client.mutate_remote_pr_branch_refs(
+                remote="origin",
+                updates=(
+                    PRRefUpdate(
+                        branch="jj-stack/feature", expected_target=None, desired_target=commit
+                    ),
+                ),
+            )
+        else:
+            client.fetch_remote(remote="origin")
+
+    # Without newline="" the carriage return that starts each redraw would read as a newline.
+    transcript = terminal_path.read_text(encoding="utf-8", newline="")
+    assert "Enter passphrase for key: \n" in transcript, transcript
+    assert "Reaching the remote" in transcript.rsplit("Enter passphrase", 1)[1], transcript
+    if remote_command == "push":
+        assert remote_refs(remote)["refs/heads/jj-stack/feature"] == commit
