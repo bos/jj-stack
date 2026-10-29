@@ -176,6 +176,9 @@ Install the bundled skill to give coding agents instructions for working with `j
 gh skill install bos/jj-stack jj-stack
 ```
 
+With Nix, the skill ships inside the `jj-stack` package at `share/skills/jj-stack/jj-stack`; point
+your agent's skill directory at that path in the package output.
+
 The [skill source](skills/jj-stack/SKILL.md) and [evaluation notes](evals/jj-stack-skill.md) are
 included in this repo.
 
