@@ -149,15 +149,13 @@ def build_selected_convergence_plan(
     if on_trunk:
         destination = prepared.stack.trunk.commit_id
     elif (
-        states
-        and isinstance(rewritten := states[0], Rewritten)
-        and not prepared.client.on_first_parent_chain(
-            rewritten.rewrite_parent, tip=remaining_changes[0].parents[0]
-        )
+        root := _github_rebase_root(states)
+    ) is not None and not prepared.client.on_first_parent_chain(
+        root, tip=remaining_changes[0].parents[0]
     ):
         # GitHub rebased the stack without merging any of it, onto a trunk commit it chose.
         # A stack already at or past that commit stays where it is.
-        destination = rewritten.rewrite_parent
+        destination = root
     return SelectedConvergencePlan(
         on_trunk=tuple(on_trunk),
         remaining_prs={change_id: item.pr for change_id, item in submitted.items()},
@@ -167,6 +165,32 @@ def build_selected_convergence_plan(
         github_copies=tuple(github_copies),
         publish=bool(on_trunk)
         or any(item.pr.head.sha != item.tracked.submitted_baseline.commit_id for item in states),
+    )
+
+
+def _github_rebase_root(states: tuple[WithPR, ...]) -> CommitId | None:
+    """The trunk commit under GitHub's rewrites: the first rewrite parent outside these PRs.
+
+    GitHub rewrites along its own stack, so after a local reorder its bottom commit need not
+    belong to the bottom local change.
+    """
+
+    ours = {
+        commit
+        for item in states
+        for commit in (
+            item.pr.head.sha,
+            item.tracked.submitted_baseline.commit_id,
+            item.selected.commit_id if item.selected is not None else None,
+        )
+    }
+    return next(
+        (
+            item.rewrite_parent
+            for item in states
+            if isinstance(item, Rewritten) and item.rewrite_parent not in ours
+        ),
+        None,
     )
 
 

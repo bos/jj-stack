@@ -58,18 +58,18 @@ async def find_head_rewrites(
     *,
     remote: str,
     trunk_branch: str,
-    chain: Sequence[ChangeObservation],
+    changes: Sequence[ChangeObservation],
 ) -> dict[ChangeId, CommitId | None]:
     """Map each change with a moved PR head to that head's parent if it may be overwritten.
 
-    A head that may not be overwritten maps to None. `chain` lists one local stack's changes
-    from the bottom. Merged PRs are left out, so the lowest open PR is judged against trunk,
-    where GitHub roots its rewrites. A failed read of GitHub's trunk stops the command.
+    A head that may not be overwritten maps to None. `changes` are one local stack's tracked
+    changes, in any order; merged PRs are left out. A failed read of GitHub's trunk stops the
+    command.
     """
 
     heads = {
         item.change_id: PRHead.of(item.tracked, item.pr, item.selected)
-        for item in chain
+        for item in changes
         if item.tracked is not None
         and isinstance(item.pr, GithubPR)
         and item.pr.state != "merged"
@@ -145,26 +145,28 @@ def _observe_head_rewrites(
 
 
 def _replaceable_heads(
-    chain: Sequence[PRHead], rewrites: dict[CommitId, HeadRewrite]
+    heads: Sequence[PRHead], rewrites: dict[CommitId, HeadRewrite]
 ) -> tuple[bool, ...]:
-    """Whether each PR head, bottom first, may be overwritten with the local commit.
+    """Whether each PR head may be overwritten with the local commit.
 
     A head qualifies when it is the submitted or local commit, or a rewrite of the submitted
-    commit with the same content: rooted on trunk's first-parent history for the bottom PR,
-    and on the PR below otherwise. Anything else is someone else's work.
+    commit with the same content whose parent is on trunk's first-parent history or is a
+    commit of one of these PRs. GitHub roots its rewrites along its own stack, which need not
+    match the local order. Anything else may be someone else's work.
     """
 
-    result: list[bool] = []
-    below: tuple[CommitId | None, ...] = ()
-    for item in chain:
-        rewrite = rewrites.get(item.head)
-        result.append(
-            not item.moved
-            or (
-                rewrite is not None
-                and rewrite.same_content
-                and (rewrite.parent in below if below else rewrite.parent_on_trunk)
-            )
+    ours = {
+        commit
+        for item in heads
+        for commit in (item.head, item.submitted, item.local)
+        if commit is not None
+    }
+    return tuple(
+        not item.moved
+        or (
+            (rewrite := rewrites.get(item.head)) is not None
+            and rewrite.same_content
+            and (rewrite.parent in ours or rewrite.parent_on_trunk)
         )
-        below = (item.head, item.submitted, item.local)
-    return tuple(result)
+        for item in heads
+    )

@@ -434,7 +434,8 @@ class StackMachine(RuleBasedStateMachine):
         """Labels whose moved PR head makes the same change as the submitted commit.
 
         An interrupted submit can leave such heads with new messages. Submit replaces them when
-        each is rooted on trunk or on the PR below, as it does GitHub's own rewrites.
+        each is rooted on trunk or on another PR of the path, as it does GitHub's own rewrites,
+        which follow GitHub's stack rather than the local order.
         """
 
         git = self.fake._run_backing_git
@@ -444,25 +445,24 @@ class StackMachine(RuleBasedStateMachine):
 
         trunk = self.fake.ref_target("main")
         assert trunk is not None
+        heads = {
+            label: (
+                self.fake.ref_target(pr.head_ref),
+                self.submitted[label].submitted_baseline.commit_id,
+                self.jj.resolve_commit(self.ids[label]).commit_id,
+            )
+            for label in path
+            if label in self.submitted and (pr := self.open_pr(label)) is not None
+        }
+        ours = {commit for commits in heads.values() for commit in commits}
+        trunk_history = set(git("rev-list", "--first-parent", trunk).split())
         result: set[str] = set()
-        below: tuple[str | None, ...] = ()
-        for label in path:
-            pr = self.open_pr(label)
-            if label not in self.submitted or pr is None:
-                continue
-            head = self.fake.ref_target(pr.head_ref)
-            submitted = self.submitted[label].submitted_baseline.commit_id
-            local = self.jj.resolve_commit(self.ids[label]).commit_id
+        for label, (head, submitted, local) in heads.items():
             if head is not None and head not in (submitted, local):
                 parents = git("rev-list", "--parents", "-n", "1", head).split()[1:]
-                rooted = (
-                    parents[0] in below
-                    if below
-                    else parents[0] in git("rev-list", "--first-parent", trunk).split()
-                )
+                rooted = parents[0] in ours or parents[0] in trunk_history
                 if len(parents) == 1 and patch(head) == patch(submitted) and rooted:
                     result.add(label)
-            below = (head, submitted, local)
         return result
 
     def submit_failures(self, path: tuple[str, ...]) -> set[tuple[int, str | None]]:

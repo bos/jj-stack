@@ -357,7 +357,7 @@ async def _run_selected_convergence(run: GithubRun, *, prepared: PreparedLocalSt
             github,
             remote=remote.name,
             trunk_branch=trunk.branch,
-            chain=tuple(
+            changes=tuple(
                 replace(observation.prs[change.change_id], selected=change)
                 for change in selected
                 if change.change_id in observation.prs

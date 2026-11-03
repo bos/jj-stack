@@ -566,7 +566,7 @@ async def _observe_submit(
         github_client,
         remote=remote.name,
         trunk_branch=trunk_branch,
-        chain=tuple(lookups[resolution.branch] for resolution in branch_resolutions),
+        changes=tuple(lookups[resolution.branch] for resolution in branch_resolutions),
     )
     lookups = {
         branch: replace(lookup, rewrite_parent=rewrite_parents.get(lookup.change_id, UNOBSERVED))

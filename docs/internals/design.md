@@ -500,10 +500,11 @@ remaining local changes only when:
 
 A PR branch can be replaced when its head is the submitted commit, the current local commit, or a
 rewrite of the submitted commit with the same content: applying the submitted change to the head's
-only parent gives exactly the head's tree. The bottom PR's head must have its parent on trunk's
-first-parent history, and each head above must have its parent at the head, submitted commit, or
-local commit of the PR below. This covers the PRs GitHub rewrites when it merges part of a GitHub
-stack or rebases one, whichever trunk commit it chose. Only content counts, so a push by anyone
+only parent gives exactly the head's tree. That parent must be on trunk's first-parent history or
+be the head, submitted commit, or local commit of another PR in the stack, in any local order:
+GitHub rewrites along its own stack, which a local reorder does not change. This covers the PRs
+GitHub rewrites when it merges part of a GitHub stack or rebases one, whichever trunk commit it
+chose. Only content counts, so a push by anyone
 that changes just a commit message or author is replaced too. GitHub's commits are fetched only
 for this comparison; they never become local changes or submitted baselines. Any other head is
 someone else's work and stops `sync`. A PR whose head and branch disagree also stops it, since

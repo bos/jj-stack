@@ -13,7 +13,7 @@ from jj_stack.identifiers import short_change_id
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import TrackingStore
 
-from ..support.fake_github import _complete_stack_merge
+from ..support.fake_github import FakeStackMergeOperation, _complete_stack_merge
 from ..support.integration_helpers import (
     commit_file,
     enable_sign_on_push,
@@ -528,6 +528,100 @@ def test_sync_replaces_a_survivor_github_rewrote_with_the_local_rebase_onto_trun
     assert fake_repo.prs[2].base_ref == "main"
     assert fake_repo.github_stacks == {7: (1, 2)}
     assert jj.query_commits_by_change_ids((on_trunk.change_id,))[on_trunk.change_id] == ()
+
+
+def _merge_through_github_ui(fake_repo, pr_number: int) -> None:
+    """Rebase-merge a PR as GitHub's UI does, rewriting the rest of its GitHub stack."""
+
+    operation = FakeStackMergeOperation(
+        expected_head_sha=fake_repo.ref_target(fake_repo.prs[pr_number].head_ref),
+        merge_action="direct_merge",
+        merge_method="rebase",
+        pr_number=pr_number,
+        uuid="ui",
+    )
+    _complete_stack_merge(fake_repo, operation)
+    assert operation.status == "merged"
+
+
+def _assert_prs_follow_local_stack(fake_repo, repo: Path, head: str) -> None:
+    state = TrackingStore.for_repo(repo).load()
+    base = "main"
+    for change in selected_stack(repo, head).changes:
+        pr = fake_repo.prs[state.prs[change.change_id].pr_identity.pr_number]
+        assert (pr.state, pr.base_ref) == ("open", base)
+        assert fake_repo.ref_target(pr.head_ref) == change.commit_id
+        assert state.prs[change.change_id].submitted_baseline.commit_id == change.commit_id
+        base = pr.head_ref
+
+
+def test_sync_replaces_rewrites_that_follow_the_github_stack_after_a_local_reshape(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """GitHub rewrites the PRs left after a merge along its own stack, not the local one.
+
+    A separately submitted change moved below the top one leaves the GitHub stack as it was, so
+    GitHub roots the top PR's rewrite on the middle PR, where the local stack now has the moved
+    change. The rewrite still holds only the top change, so sync replaces it and publishes the
+    local order.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    bottom, middle, top = selected_stack(repo).changes
+    run_command(["jj", "new", "main"], repo)
+    commit_file(repo, "feature 4", "feature-4.txt")
+    inserted = selected_stack(repo).head
+    assert run_main(repo, config_path, "submit", inserted.change_id) == 0
+    run_command(["jj", "rebase", "-r", inserted.change_id, "-A", middle.change_id], repo)
+    assert (1, 2, 3) in fake_repo.github_stacks.values()
+    _merge_through_github_ui(fake_repo, 1)
+    capsys.readouterr()
+
+    exit_code = run_main(repo, config_path, "sync", top.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    changes = selected_stack(repo, top.change_id).changes
+    assert tuple(change.change_id for change in changes) == (
+        middle.change_id,
+        inserted.change_id,
+        top.change_id,
+    )
+    assert changes[0].parents == (fake_repo.ref_target("main"),)
+    assert bottom.change_id not in TrackingStore.for_repo(repo).load().prs
+    _assert_prs_follow_local_stack(fake_repo, repo, top.change_id)
+
+
+def test_sync_moves_a_reordered_stack_onto_the_trunk_commit_github_rebased_onto(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """After a local reorder, GitHub's bottom rewrite belongs to a change higher up locally.
+
+    The stack moves onto the trunk commit under GitHub's rewrites, not onto GitHub's copy of one
+    of its own changes.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    first, second = selected_stack(repo).changes
+    run_command(["jj", "rebase", "-r", second.change_id, "-B", first.change_id], repo)
+    fake_repo.github_stacks = {7: (1, 2)}
+    trunk = fake_repo.advance_branch("main", path="trunk.txt", contents="new trunk\n")
+    fake_repo.rebase_stack_onto_base(7, base_ref="main")
+
+    exit_code = run_main(repo, config_path, "sync", first.change_id)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    changes = selected_stack(repo, first.change_id).changes
+    assert tuple(change.change_id for change in changes) == (second.change_id, first.change_id)
+    assert changes[0].parents == (trunk,)
+    _assert_prs_follow_local_stack(fake_repo, repo, first.change_id)
 
 
 def test_sync_signs_the_survivor_it_rebases_when_sign_on_push_is_set(
