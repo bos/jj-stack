@@ -38,25 +38,32 @@ def _moved_head() -> GithubPR:
     )
 
 
-def test_trunk_evidence_needs_the_pr_head_at_the_submitted_commit_and_a_result_on_trunk() -> None:
+def test_trunk_evidence_needs_the_submitted_head_or_its_rewrite_and_a_result_on_trunk() -> None:
     merged = _pr(state="merged", merge_commit_sha="merge-1")
-    rows: tuple[tuple[GithubPR, CommitAncestry, CommitAncestry | None, str | None], ...] = (
-        (_pr(), "on_trunk", None, "exact"),
-        (_pr(), "not_on_trunk", None, None),
-        (_pr(), "unresolved", None, None),
-        (_moved_head(), "on_trunk", None, None),
-        (_pr(state="merged"), "not_on_trunk", None, None),
-        (merged, "not_on_trunk", "unresolved", None),
-        (merged, "not_on_trunk", "not_on_trunk", None),
-        (merged, "not_on_trunk", "on_trunk", "rewritten"),
+    merged_moved = _moved_head().model_copy(
+        update={"state": "merged", "merge_commit_sha": "merge-1"}
+    )
+    rows: tuple[tuple[GithubPR, bool, CommitAncestry, CommitAncestry | None, str | None], ...] = (
+        (_pr(), False, "on_trunk", None, "exact"),
+        (_pr(), False, "not_on_trunk", None, None),
+        (_pr(), False, "unresolved", None, None),
+        (_moved_head(), False, "on_trunk", None, None),
+        # Only a merge result counts for a rewritten head; the submitted commit is not its head.
+        (_moved_head(), True, "on_trunk", None, None),
+        (_pr(state="merged"), False, "not_on_trunk", None, None),
+        (merged, False, "not_on_trunk", "unresolved", None),
+        (merged, False, "not_on_trunk", "not_on_trunk", None),
+        (merged, False, "not_on_trunk", "on_trunk", "rewritten"),
+        (merged_moved, False, "not_on_trunk", "on_trunk", None),
+        (merged_moved, True, "not_on_trunk", "on_trunk", "rewritten"),
     )
 
-    for pr, submitted_ancestry, merge_ancestry, expected in rows:
+    for pr, head_rewritten, submitted_ancestry, merge_ancestry, expected in rows:
         ancestries: dict[CommitId, CommitAncestry] = {CommitId("submitted-1"): submitted_ancestry}
         if merge_ancestry is not None:
             ancestries[CommitId("merge-1")] = merge_ancestry
         kind, reason = classify_trunk_evidence(
-            ancestries=ancestries, candidate=_candidate(), pr=pr
+            ancestries=ancestries, candidate=_candidate(), head_rewritten=head_rewritten, pr=pr
         )
 
         assert kind == expected

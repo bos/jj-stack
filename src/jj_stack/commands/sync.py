@@ -201,7 +201,7 @@ async def _run_global_plan(
             facts = await observe_global_sync(
                 context=run.context,
                 github=run.github,
-                remote_name=run.target.remote.name,
+                remote=run.target.remote,
                 trunk_commit_id=trunk_commit_id,
             )
         except GithubClientError as error:
@@ -352,15 +352,16 @@ async def _run_selected_convergence(run: GithubRun, *, prepared: PreparedLocalSt
             observation=observation,
             trunk_commit_id=prepared.stack.trunk.commit_id,
         )
+        selected_by_id = {change.change_id: change for change in selected}
         rewrite_parents = await find_head_rewrites(
             context.jj_client,
             github,
             remote=remote.name,
             trunk_branch=trunk.branch,
+            # Merged members of the GitHub stack count too, whether or not a local copy remains.
             changes=tuple(
-                replace(observation.prs[change.change_id], selected=change)
-                for change in selected
-                if change.change_id in observation.prs
+                replace(item, selected=selected_by_id.get(change_id))
+                for change_id, item in observation.prs.items()
             ),
         )
         observation = replace(

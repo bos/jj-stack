@@ -9,7 +9,7 @@ import pytest
 import jj_stack.commands.sync_apply as sync_apply
 from jj_stack.errors import EXIT_GITHUB, EXIT_INCOMPLETE, CliError
 from jj_stack.github.client import GithubClient, GithubClientError
-from jj_stack.identifiers import short_change_id
+from jj_stack.identifiers import short_change_id, short_commit_id
 from jj_stack.jj.client import JjClient
 from jj_stack.state.store import TrackingStore
 
@@ -390,8 +390,8 @@ def test_sync_keeps_tracking_and_names_the_recovery_when_a_merged_pr_head_change
     (submitted,) = selected_stack(repo).changes
     state_store = TrackingStore.for_repo(repo)
     pr = fake_repo.prs[1]
-    # Someone pushed to the PR branch before GitHub squash-merged it.
-    fake_repo.force_push_pr_head(pr)
+    # Someone pushed other content to the PR branch before GitHub squash-merged it.
+    fake_repo.replace_pr_head_contents(pr, path="reviewer.txt", contents="reviewer edit\n")
     fake_repo.apply_squash_merge(pr)
 
     assert run_main(repo, config_path, "sync", "--all") == 1
@@ -403,11 +403,12 @@ def test_sync_keeps_tracking_and_names_the_recovery_when_a_merged_pr_head_change
 
     assert exit_code == 1
     assert "PR #1" in captured.err
-    assert f"jj abandon {short_change_id(submitted.change_id)}" in captured.err
+    abandon = f"jj abandon --restore-descendants {short_commit_id(submitted.commit_id)}"
+    assert abandon in " ".join(captured.err.split())
     assert "trunk()" not in captured.err
 
     # The recovery the hint names forgets the link once the local change is gone.
-    run_command(["jj", "abandon", submitted.change_id], repo)
+    run_command(["jj", "abandon", "--restore-descendants", submitted.commit_id], repo)
     assert run_main(repo, config_path, "cleanup") == 0
     assert submitted.change_id not in state_store.load().prs
 
@@ -622,6 +623,40 @@ def test_sync_moves_a_reordered_stack_onto_the_trunk_commit_github_rebased_onto(
     assert tuple(change.change_id for change in changes) == (second.change_id, first.change_id)
     assert changes[0].parents == (trunk,)
     _assert_prs_follow_local_stack(fake_repo, repo, first.change_id)
+
+
+@pytest.mark.parametrize("selection", ("stack", "all"))
+def test_sync_removes_changes_github_merged_from_its_own_rewrites(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    selection: str,
+) -> None:
+    """A PR merged from the head GitHub rewrote after an earlier merge still counts as merged.
+
+    Merging a GitHub stack's PRs one at a time merges each later one from GitHub's rewrite, not
+    the submitted commit. That head holds only the submitted change, so the merge result on
+    trunk is this change's work and sync removes the local copy itself.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=3)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    bottom, middle, top = selected_stack(repo).changes
+    _merge_through_github_ui(fake_repo, 1)
+    _merge_through_github_ui(fake_repo, 2)
+    capsys.readouterr()
+
+    args = ("sync", top.change_id) if selection == "stack" else ("sync", "--all")
+    exit_code = run_main(repo, config_path, *args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, (captured.out, captured.err)
+    copies = JjClient(repo).query_commits_by_change_ids((bottom.change_id, middle.change_id))
+    assert all(copy.immutable for commits in copies.values() for copy in commits)
+    assert TrackingStore.for_repo(repo).load().prs.keys() == {top.change_id}
+    (survivor,) = selected_stack(repo, top.change_id).changes
+    assert survivor.parents == (fake_repo.ref_target("main"),)
+    _assert_prs_follow_local_stack(fake_repo, repo, top.change_id)
 
 
 def test_sync_signs_the_survivor_it_rebases_when_sign_on_push_is_set(

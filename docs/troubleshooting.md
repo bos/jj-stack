@@ -79,15 +79,17 @@ If GitHub changed the branch while merging or rebasing your stack, run
 local stack. `jj-stack view` cannot tell these cases apart, so it suggests `jj-stack sync`, which
 stops and names the steps above if a PR branch holds work you did not submit.
 
-If someone else pushed to your PR branch and GitHub then merged the PR, what merged came from
-their commit, not from the one jj-stack pushed. `jj-stack sync` cannot tell whether your change is
-part of it, so it stops rather than delete your local change. Check the files the PR changed on
-GitHub against `jj diff -r <change-id>`:
+If someone else pushed different files to your PR branch and GitHub then merged the PR, what
+merged came from their commit, not from the one jj-stack pushed. `jj-stack sync` cannot tell
+whether your change is part of it, so it stops rather than delete your local change. The error
+names your local copy by commit ID, because a rebase merge leaves a copy with the same change ID
+on trunk. Check the files the PR changed on GitHub against `jj diff -r <commit>`:
 
-- If your change is in them, run `jj abandon <change-id>` and then `jj-stack cleanup`, which
-  forgets the merged PR's link.
-- If it is not, run `jj-stack unstack --local <change-id>` to forget the saved links for that
-  local stack, then submit again. The change gets a new pull request.
+- If your change is in them, run `jj abandon --restore-descendants <commit>` and then
+  `jj-stack cleanup`, which forgets the merged PR's link. `--restore-descendants` leaves the
+  changes above it as they were.
+- If it is not, run `jj-stack unstack --local <commit>` to forget the saved links for that local
+  stack, then submit again. The change gets a new pull request.
 
 `jj-stack view` reports any changes above the merged one as moved; the steps above apply to them.
 

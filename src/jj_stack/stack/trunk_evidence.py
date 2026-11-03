@@ -1,8 +1,9 @@
 """Pure classification of whether a tracked pull request's work is on trunk.
 
 Check whether the submitted commit or GitHub's rewritten merge result is an ancestor of trunk.
-Both checks first require the PR head to still be the submitted commit. A PR's merged state alone
-does not show that its work reached this repo's trunk.
+The first check requires the PR head to still be the submitted commit; the second also accepts
+GitHub's rewrite of it with the same content. A PR's merged state alone does not show that its
+work reached this repo's trunk.
 """
 
 from __future__ import annotations
@@ -25,16 +26,21 @@ def classify_trunk_evidence(
     *,
     ancestries: Mapping[CommitId, CommitAncestry],
     candidate: TrackedPR,
+    head_rewritten: bool,
     pr: GithubPR,
 ) -> tuple[TrunkEvidenceKind | None, Message]:
-    """Return the kind of evidence that the work reached trunk, or why neither check passed."""
+    """Return the kind of evidence that the work reached trunk, or why neither check passed.
+
+    `head_rewritten` says the PR head is GitHub's rewrite of the submitted commit with the same
+    content. Merging a GitHub stack one PR at a time merges each later PR from such a rewrite.
+    """
 
     pr_label = format_pr_label(pr.number, url=pr.html_url)
     submitted = candidate.submitted_baseline.commit_id
-    if pr.head.sha != submitted:
+    head_submitted = pr.head.sha == submitted
+    if not head_submitted and not head_rewritten:
         return None, t"{pr_label} no longer points to the last submitted commit"
-    ancestry = ancestries[submitted]
-    if ancestry == "on_trunk":
+    if head_submitted and ancestries[submitted] == "on_trunk":
         return "exact", ""
     if pr.state != "merged":
         return None, t"{pr_label} is {pr.state} without a result on trunk"

@@ -463,8 +463,10 @@ work reached this repo's trunk:
   PR is a snapshot match. A PR belonging to a GitHub stack must also report merged before `sync`
   may act on it.
 - **Selected PR's rewritten merge result on trunk**: the saved PR is an identity match, reports
-  merged, still reports the submitted head, and reports a merge-result commit that is an ancestor
-  of trunk. This covers squash and rebase results.
+  merged, reports the submitted head or a rewrite of it with the same content as defined below,
+  and reports a merge-result commit that is an ancestor of trunk. This covers squash and rebase
+  results, and the later PRs of a GitHub stack merged one at a time, which GitHub merges from
+  its own rewrites.
 
 `sync` may use either result. `sync --all` uses each rewritten merge result to select and
 reconcile its affected local paths; it does not apply one PR's evidence to unrelated work. It

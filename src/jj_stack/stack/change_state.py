@@ -543,7 +543,10 @@ def classify(
     reason: Message | None = None
     if ancestries is not None:
         evidence, reason = classify_trunk_evidence(
-            ancestries=ancestries, candidate=o.tracked, pr=o.pr
+            ancestries=ancestries,
+            candidate=o.tracked,
+            head_rewritten=isinstance(o.rewrite_parent, str),
+            pr=o.pr,
         )
     return _classify_pr(o, common, open_prs, o.pr, o.tracked, evidence, reason)
 

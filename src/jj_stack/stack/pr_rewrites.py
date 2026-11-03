@@ -62,17 +62,15 @@ async def find_head_rewrites(
 ) -> dict[ChangeId, CommitId | None]:
     """Map each change with a moved PR head to that head's parent if it may be overwritten.
 
-    A head that may not be overwritten maps to None. `changes` are one local stack's tracked
-    changes, in any order; merged PRs are left out. A failed read of GitHub's trunk stops the
-    command.
+    A head that may not be overwritten maps to None. `changes` are tracked changes in any order,
+    and a rewrite may be rooted on any of their commits. A merged PR is included because GitHub
+    may have merged it from its own rewrite. A failed read of GitHub's trunk stops the command.
     """
 
     heads = {
         item.change_id: PRHead.of(item.tracked, item.pr, item.selected)
         for item in changes
-        if item.tracked is not None
-        and isinstance(item.pr, GithubPR)
-        and item.pr.state != "merged"
+        if item.tracked is not None and isinstance(item.pr, GithubPR)
     }
     moved = tuple(head.head for head in heads.values() if head.moved)
     if not moved:

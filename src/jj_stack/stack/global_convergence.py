@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from jj_stack.bootstrap import CommandContext
 from jj_stack.concurrency import wait_for_read_tasks
 from jj_stack.formatting import format_pr_label
 from jj_stack.github.client import GithubClient
 from jj_stack.identifiers import ChangeId, CommitId
+from jj_stack.models.git import GitRemote
 from jj_stack.models.github import GithubStack
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import TrackedPR, TrackingState
@@ -36,7 +37,9 @@ from jj_stack.stack.pr_facts import (
     observe_github_stacks,
     observe_prs,
 )
+from jj_stack.stack.pr_rewrites import find_head_rewrites
 from jj_stack.stack.repo import observe_repo_paths
+from jj_stack.stack.trunk import observe_trunk_branch
 from jj_stack.stack.trunk_evidence import CommitAncestry
 from jj_stack.ui import Message
 
@@ -64,7 +67,7 @@ async def observe_global_sync(
     *,
     context: CommandContext,
     github: GithubClient,
-    remote_name: str,
+    remote: GitRemote,
     trunk_commit_id: CommitId,
 ) -> GlobalSyncFacts:
     """Observe tracked pull requests from tracking toward affected local paths."""
@@ -92,13 +95,19 @@ async def observe_global_sync(
             context=context,
             github_client=github,
             local_commits=observed,
-            remote_name=remote_name,
+            remote_name=remote.name,
             state=state,
         )
     )
     stacks_task = asyncio.create_task(observe_github_stacks(github=github))
     await wait_for_read_tasks(prs_task, stacks_task)
-    pr_observations = prs_task.result()
+    pr_observations = await _observe_merged_rewrites(
+        context=context,
+        github=github,
+        observation=prs_task.result(),
+        remote=remote,
+        trunk_commit_id=trunk_commit_id,
+    )
     stacks = stacks_task.result()
     return GlobalSyncFacts(
         ancestries=classify_observed_commit_ancestries(
@@ -111,6 +120,48 @@ async def observe_global_sync(
         pr_facts=pr_observations,
         stacks=stacks,
         state=state,
+    )
+
+
+async def _observe_merged_rewrites(
+    *,
+    context: CommandContext,
+    github: GithubClient,
+    observation: RepoFacts,
+    remote: GitRemote,
+    trunk_commit_id: CommitId,
+) -> RepoFacts:
+    """Mark merged PRs whose head is GitHub's rewrite of the submitted commit."""
+
+    if not any(
+        item.pr is not None
+        and item.pr.state == "merged"
+        and item.pr.head.sha != item.tracked.submitted_baseline.commit_id
+        for item in observation.prs.values()
+    ):
+        return observation
+    merged = tuple(
+        item
+        for item in observation.prs.values()
+        if item.pr is not None and item.pr.state == "merged"
+    )
+    trunk_branch, _targets = observe_trunk_branch(
+        jj_client=context.jj_client,
+        github_repo_state=observation.github_repo,
+        remote=remote,
+        trunk_commit_id=trunk_commit_id,
+    )
+    rewrites = await find_head_rewrites(
+        context.jj_client, github, remote=remote.name, trunk_branch=trunk_branch, changes=merged
+    )
+    return replace(
+        observation,
+        prs={
+            change_id: replace(item, rewrite_parent=rewrites[change_id])
+            if change_id in rewrites
+            else item
+            for change_id, item in observation.prs.items()
+        },
     )
 
 

@@ -420,14 +420,17 @@ def _trunk_evidence_hint(state: WithPR, *, rerun: str) -> ui.Message:
             t"rerun {ui.cmd(rerun)}."
         )
     pr_label = format_pr_label(state.pr.number, url=state.pr.html_url)
-    short = short_change_id(state.change_id)
+    # A rebase merge leaves a copy with this change ID on trunk, so the commands name a commit.
+    mutable = tuple(copy for copy in state.local if not copy.immutable)
+    copy = state.selected or (mutable[0] if len(mutable) == 1 else None)
+    rev = short_change_id(state.change_id) if copy is None else short_commit_id(copy.commit_id)
     return (
         t"{pr_label} merged from commit {ui.commit_id(state.pr.head.sha)}, not from the commit "
         t"jj-stack pushed, so jj-stack cannot tell whether this change is part of what merged. "
-        t"Check the files {pr_label} changed on GitHub against {ui.cmd(f'jj diff -r {short}')}. "
-        t"If this change is in them, run {ui.cmd(f'jj abandon {short}')} and then "
-        t"{ui.cmd('jj-stack cleanup')}; if not, run "
-        t"{ui.cmd(f'jj-stack unstack --local {short}')} and submit again."
+        t"Check the files {pr_label} changed on GitHub against {ui.cmd(f'jj diff -r {rev}')}. "
+        t"If this change is in them, run {ui.cmd(f'jj abandon --restore-descendants {rev}')} "
+        t"and then {ui.cmd('jj-stack cleanup')}; if not, run "
+        t"{ui.cmd(f'jj-stack unstack --local {rev}')} and submit again."
     )
 
 
