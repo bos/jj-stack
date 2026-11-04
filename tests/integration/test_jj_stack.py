@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import os
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -479,12 +481,25 @@ def _change_id(repo: Path, revset: str) -> ChangeId:
     )
 
 
-_FAKE_SSH = """#!/bin/sh
+_FAKE_SSH = """import os
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+
 # ssh without the key in its agent: ask on the terminal, then run the git service locally.
-printf '%s' 'Enter passphrase for key: ' >> "$JJ_STACK_TEST_TERMINAL"
-sleep 0.3
-printf '\\n' >> "$JJ_STACK_TEST_TERMINAL"
-eval "exec git ${2#git-}"
+with Path(os.environ["JJ_STACK_TEST_TERMINAL"]).open(
+    "a", encoding="utf-8", newline=""
+) as terminal:
+    terminal.write("Enter passphrase for key: ")
+    terminal.flush()
+    time.sleep(0.3)
+    terminal.write("\\n")
+command, path = shlex.split(sys.argv[2])
+if os.name == "nt":
+    path = path.removeprefix("/")
+sys.exit(subprocess.call(["git", command.removeprefix("git-"), path]))
 """
 
 
@@ -506,12 +521,12 @@ def test_remote_git_commands_keep_an_ssh_prompt_visible_under_a_spinner(
     repo = init_repo(tmp_path)
     remote = tmp_path / "remote.git"
     run_command(["git", "init", "--bare", str(remote)], tmp_path)
-    run_command(["jj", "git", "remote", "add", "origin", f"ssh://localhost{remote}"], repo)
-    fake_ssh = tmp_path / "ssh"
+    remote_url = remote.as_uri().replace("file://", "ssh://localhost", 1)
+    run_command(["jj", "git", "remote", "add", "origin", remote_url], repo)
+    fake_ssh = tmp_path / "ssh.py"
     fake_ssh.write_text(_FAKE_SSH, encoding="utf-8")
-    fake_ssh.chmod(0o755)
     terminal_path = tmp_path / "terminal"
-    monkeypatch.setenv("GIT_SSH_COMMAND", str(fake_ssh))
+    monkeypatch.setenv("GIT_SSH_COMMAND", shlex.join((sys.executable, str(fake_ssh))))
     monkeypatch.setenv("GIT_SSH_VARIANT", "simple")
     monkeypatch.setenv("JJ_STACK_TEST_TERMINAL", str(terminal_path))
     client = JjClient(repo)
