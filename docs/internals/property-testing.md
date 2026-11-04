@@ -6,6 +6,12 @@ These constraints supplement the [testing philosophy](testing-philosophy.md):
   leave room for local edits before sync; an interrupted submit must leave room for edits or
   remote changes before retry. Combining these actions would hide the inconsistent states the
   harness exists to test.
+- Gate an action only on what its command or GitHub itself requires. `server_merge` merges any
+  PR GitHub's UI would, whether or not the local stack still matches the GitHub stack and before
+  any sync, because GitHub merges by PR and rewrites along its own stack. `merge` requires only
+  that the merged changes match their PRs, and `submit` may stop at a change in the middle of a
+  path. A precondition that waits for local history and GitHub to agree hides the states where
+  they do not.
 - An external stack merge may leave the survivors' rewrite pending, and `server_rewrite`
   completes it later, rooted on trunk's tip at that time as GitHub does, optionally after
   advancing trunk itself. Keep the merge and the rewrite separate actions so local work and
@@ -22,8 +28,9 @@ These constraints supplement the [testing philosophy](testing-philosophy.md):
   saved failure.
 - The generated search runs through `just property` and CI's smoke job; `just check` runs only
   the fixed scenarios in `tests/property`. The runner ends by listing the rules the sequences
-  fired and the rules none reached. Treat an unreached rule as a search problem, not as missing
-  coverage: give it a richer starting state or fix its precondition.
+  fired and the rules none reached, including the `state:` entries in `STATES` for cross-system
+  states the harness exists to reach. Treat an unreached rule or state as a search problem, not
+  as missing coverage: give it a richer starting state or fix its precondition.
 - A rule is eligible only when it has work to do; compute its candidates in a helper that its
   precondition shares. Hypothesis picks uniformly among eligible rules, so a rule that finds
   nothing wastes a step and a model check.

@@ -61,7 +61,7 @@ def test_a_closed_pr_blocks_publishing_an_inserted_change(machine: StackMachine)
 
 def test_cleanup_requires_sync_after_an_external_squash_merge(machine: StackMachine) -> None:
     machine.start(size=1, submitted=True)
-    machine.server_merge(0, 1, "squash")
+    machine.merge_on_server("c1", "squash")
     machine.cleanup_before_sync(0)
     machine.sync_path(0)
 
@@ -69,7 +69,7 @@ def test_cleanup_requires_sync_after_an_external_squash_merge(machine: StackMach
 def test_partial_rebase_merge_preserves_surviving_ids_and_reviews(machine: StackMachine) -> None:
     machine.start(size=4, submitted=True)
     machine.apply_edit(0, StackEditOperation("insert_after", "c4", new_label="c5"))
-    machine.server_merge(0, 2, "rebase")
+    machine.merge_on_server("c2", "rebase")
     machine.apply_edit(0, StackEditOperation("rewrite", "c5"))
     machine.sync_path(0)
 
@@ -78,9 +78,23 @@ def test_sync_replaces_survivors_github_rewrote_after_trunk_advanced(
     machine: StackMachine,
 ) -> None:
     machine.start(size=3, submitted=True)
-    machine.server_merge(0, 1, "squash", rewrite=False)
+    machine.merge_on_server("c1", "squash", rewrite=False)
     machine.drift("trunk_advanced")
     assert machine.fake.rewrite_pending_survivors()
+    machine.sync_path(0)
+
+
+def test_merging_a_reshaped_stack_one_pr_at_a_time_follows_github_rewrites(
+    machine: StackMachine,
+) -> None:
+    # A change submitted on its own moves into the GitHub stack locally. GitHub keeps rewriting
+    # along its own stack, and merges its second PR from its rewrite of the submitted commit.
+    machine.start(size=3, submitted=True)
+    machine.new_stack(1)
+    machine.submit_path(1)
+    machine.move_between(1, 0, 0, 1, before=False)
+    machine.merge_path(0, 1, "rebase")
+    machine.merge_on_server("c2", "rebase")
     machine.sync_path(0)
 
 
@@ -88,7 +102,7 @@ def test_sync_all_finishes_a_merged_pr_left_by_an_interrupted_sync(
     machine: StackMachine,
 ) -> None:
     machine.start(size=2, submitted=True)
-    machine.server_merge(0, 1, "squash")
+    machine.merge_on_server("c1", "squash")
     machine.interrupted_sync(0)
     machine.sync_all_paths()
 

@@ -690,14 +690,26 @@ class FakeGithubRepo:
         raise AssertionError(f"Unknown fake GitHub merge method {merge_method!r}.")
 
     def apply_rebase_merge(self, pr: FakeGithubPR) -> str:
-        """Replay one submitted commit onto its base while preserving its message."""
+        """Replay the PR's commits onto its base, preserving their messages.
+
+        Like `git rebase`, commits whose changes the base already has are skipped.
+        """
 
         heads = self.branch_heads()
-        rebase_commit = self._replay_commit(
-            commit_id=heads[pr.head_ref],
-            extra_header="x-fake-rebase-merge true",
-            parent_commit_id=heads[pr.base_ref],
-        )
+        rebase_commit = heads[pr.base_ref]
+        for commit in self._run_backing_git(
+            "rev-list",
+            "--reverse",
+            "--right-only",
+            "--cherry-pick",
+            "--no-merges",
+            f"{heads[pr.base_ref]}...{heads[pr.head_ref]}",
+        ).split():
+            rebase_commit = self._replay_commit(
+                commit_id=commit,
+                extra_header="x-fake-rebase-merge true",
+                parent_commit_id=rebase_commit,
+            )
         self._run_backing_git(
             "update-ref",
             f"refs/heads/{pr.base_ref}",
@@ -1740,6 +1752,9 @@ def _complete_stack_merge(
         previous_base = base_ref
         for pr_number in remaining_pr_numbers:
             pr = repo.prs[pr_number]
+            # As for a pending rewrite, a closed survivor or one without a branch ends the chain.
+            if pr.state != "open" or repo.ref_target(pr.head_ref) is None:
+                break
             repo.rewrite_pr_onto_base(
                 pr,
                 base_ref=previous_base,

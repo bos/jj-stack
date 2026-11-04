@@ -64,7 +64,9 @@ Drift = Literal[
     "trunk_advanced",
 ]
 MergeMethod = Literal["squash", "rebase"]
-RULE_NAMES: set[str] = set()
+# States the harness exists to reach; the reach report lists them with the rules.
+STATES = ("state:merge_while_local_differs", "state:merge_from_github_rewrite")
+RULE_NAMES: set[str] = set(STATES)
 
 
 def rule(**strategies: Any) -> Callable[[FunctionType], Callable[..., Any]]:
@@ -98,6 +100,16 @@ def pr_state(pr: FakeGithubPR) -> dict[str, object]:
 def blob(contents: str) -> str:
     data = contents.encode()
     return sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+
+
+def tree_changes(diff: str) -> dict[str, tuple[str, str]]:
+    """Map each file a `git diff-tree -r` listing changes to its status and new blob."""
+
+    return {
+        name: (entry.split()[4], entry.split()[3])
+        for line in diff.splitlines()
+        for entry, name in (line.split("\t"),)
+    }
 
 
 def tree_entries(output: str) -> dict[str, str]:
@@ -178,7 +190,7 @@ class StackMachine(RuleBasedStateMachine):
             self.approve(path)
             # Every recovery rule needs a merged PR first; let some sequences begin there.
             if merged and not queue:
-                self.server_merge(0, 1, "squash")
+                self.merge_on_server(path[0], "squash")
         else:
             self.new_stack(size)
 
@@ -334,6 +346,70 @@ class StackMachine(RuleBasedStateMachine):
             and not self.sync_conflicts(self.paths[i])
         ]
 
+    def merge_candidates(self) -> list[tuple[int, int]]:
+        """Paths and prefix sizes `jj-stack merge` takes; the changes above may differ freely.
+
+        Merge needs only the merged changes to match their PRs exactly: the local commit and the
+        PR head are the submitted commit, and the PRs are GitHub's stack prefix.
+        """
+
+        if self.fake.merge_queue_enabled:
+            return [
+                (i, count)
+                for i in self.ready()
+                for count in range(1, len(self.published(self.paths[i])) + 1)
+            ]
+        candidates: list[tuple[int, int]] = []
+        for i, path in enumerate(self.paths):
+            numbers = {self.pr(label).number for label in self.published(path)}
+            if (
+                self.merged(path)
+                or self.queued(path)
+                or set(path) & (self.foreign | self.rebased)
+                or self.github_stack_stops(path)
+                # Merge needs a GitHub stack for a local stack with more than one PR.
+                or (
+                    len(numbers) > 1
+                    and not any(
+                        numbers & set(group) for group in self.fake.github_stacks.values()
+                    )
+                )
+            ):
+                continue
+            for count, commit in enumerate(self.stack_commits(path), start=1):
+                label = path[count - 1]
+                if (
+                    label not in self.submitted
+                    or {commit, self.fake.ref_target(self.pr(label).head_ref)}
+                    != {self.submitted[label].submitted_baseline.commit_id}
+                    or self.server_merge_prefix(label) != path[:count]
+                ):
+                    break
+                candidates.append((i, count))
+        return candidates
+
+    def github_stack_stops(self, path: tuple[str, ...]) -> bool:
+        """Whether a command selecting this path stops on GitHub stack membership.
+
+        The path may touch one GitHub stack that still has unmerged members and must include
+        all of them; their local order does not matter.
+        """
+
+        selected = {self.pr(label).number for label in self.published(path)}
+        overlapping = [
+            members
+            for members in self.fake.github_stacks.values()
+            if selected.intersection(members)
+        ]
+        active = [
+            {n for n in members if not self.fake.prs[n].merged_at} for members in overlapping
+        ]
+        dissolvable = [members for members in active if members & selected]
+        if len(dissolvable) > 1 or (not dissolvable and len(overlapping) > 1):
+            return True
+        chosen = dissolvable[0] if dissolvable else active[0] if active else set()
+        return bool(chosen - selected)
+
     def grouped(self, path: tuple[str, ...]) -> bool:
         numbers = tuple(self.pr(label).number for label in path)
         groups = [
@@ -390,10 +466,13 @@ class StackMachine(RuleBasedStateMachine):
             error = error.__cause__
         return None
 
-    def submit_path(self, index: int) -> None:
-        path = self.paths[index]
+    def submit_path(self, index: int, top: int | None = None) -> None:
+        """Submit the path up to its change at `top`, by default the whole path."""
+
+        maximal = top is None or top == len(self.paths[index]) - 1
+        path = self.paths[index] if top is None else self.paths[index][: top + 1]
         head = self.ids[path[-1]]
-        failures = self.submit_failures(path)
+        failures = self.submit_failures(path, maximal=maximal)
         if failures:
             before = self.snapshot()
             selected = {self.pr(label).number for label in self.published(path)}
@@ -465,11 +544,25 @@ class StackMachine(RuleBasedStateMachine):
                     result.add(label)
         return result
 
-    def submit_failures(self, path: tuple[str, ...]) -> set[tuple[int, str | None]]:
+    def submit_failures(
+        self, path: tuple[str, ...], *, maximal: bool = True
+    ) -> set[tuple[int, str | None]]:
         if self.foreign.intersection(path):
+            # A deleted branch or closed PR can stop the command before the fetched copy does.
             return {
                 (2, "unsupported_stack:divergent_change"),
                 (2, "unsupported_stack:immutable_commit"),
+                *(
+                    (1, "remote_branch_missing")
+                    if self.fake.ref_target(self.pr(label).head_ref) is None
+                    else (1, "pr_not_open")
+                    for label in path
+                    if label in self.submitted
+                    and (
+                        self.fake.ref_target(self.pr(label).head_ref) is None
+                        or self.pr(label).state == "closed"
+                    )
+                ),
             }
         failures: set[tuple[int, str | None]] = set()
         if self.conflicts.intersection(path):
@@ -502,6 +595,9 @@ class StackMachine(RuleBasedStateMachine):
             # Sync removes the merged changes before replacing these heads.
             failures.add((1, "remote_branch_moved"))
         selected = {self.pr(label).number for label in path if label in self.submitted}
+        live = {
+            self.pr(label).number for p in self.paths for label in p if label in self.submitted
+        }
         for members in self.fake.github_stacks.values():
             active = {number for number in members if self.fake.prs[number].merged_at is None}
             if (
@@ -510,6 +606,9 @@ class StackMachine(RuleBasedStateMachine):
                 and (
                     selected - set(members)
                     or any(self.fake.is_queued(number) for number in active - selected)
+                    # Stopping below a member that still has a local change would truncate
+                    # a GitHub stack the rest of the local stack may still extend.
+                    or (not maximal and (active - selected) & live)
                 )
             ):
                 failures.add((1, None))
@@ -734,13 +833,66 @@ class StackMachine(RuleBasedStateMachine):
         else:
             pr.is_draft = not pr.is_draft
 
-    def server_merge(
-        self, index: int, count: int, method: MergeMethod, *, rewrite: bool = True
-    ) -> None:
-        labels = self.published(self.paths[index])[:count]
-        pr = self.pr(labels[-1])
+    def server_merge_prefix(self, label: str) -> tuple[str, ...] | None:
+        """The labels GitHub's UI merges with this one's PR, bottom first, if it would merge."""
+
+        pr = self.pr(label)
+        if pr.state != "open":
+            return None
+        stack = self.fake.stack_number_for_pr(pr.number)
+        active = (
+            (pr.number,)
+            if stack is None
+            else tuple(
+                n for n in self.fake.github_stacks[stack] if not self.fake.prs[n].merged_at
+            )
+        )
+        numbers = active[: active.index(pr.number) + 1]
+        labels = {record.pr_identity.pr_number: item for item, record in self.submitted.items()}
+        prs = tuple(self.fake.prs[number] for number in numbers)
+        if (
+            prs[0].base_ref != "main"
+            or any(
+                candidate.state != "open"
+                or candidate.is_draft
+                or self.fake.is_queued(candidate.number)
+                or self.fake.merge_blocked(candidate)
+                or candidate.number not in labels
+                for candidate in prs
+            )
+            or {labels[number] for number in numbers} & (self.foreign | self.rebased)
+        ):
+            return None
+        return tuple(labels[number] for number in numbers)
+
+    def server_mergeable(self) -> list[str]:
+        if self.fake.merge_queue_enabled or self.fake.pending_survivor_rewrites:
+            return []
+        return [label for label in self.submitted if self.server_merge_prefix(label)]
+
+    def merge_on_server(self, label: str, method: MergeMethod, *, rewrite: bool = True) -> None:
+        """Merge one PR through GitHub's UI, with the rest of its GitHub stack below it."""
+
+        labels = self.server_merge_prefix(label)
+        assert labels is not None
+        index = next((i for i, path in enumerate(self.paths) if label in path), None)
+        if index is not None and index not in self.ready():
+            self.fired.add(STATES[0])
+        if any(
+            self.fake.ref_target(self.pr(item).head_ref)
+            != self.submitted[item].submitted_baseline.commit_id
+            for item in labels
+        ):
+            self.fired.add(STATES[1])
+        pr = self.pr(label)
         head = self.fake.ref_target(pr.head_ref)
         assert head is not None
+        # GitHub merges every commit between trunk and the head, which an interrupted submit can
+        # leave on top of a change that has no pull request yet.
+        git = self.fake._run_backing_git
+        landed = tree_changes(
+            git("diff-tree", "--no-abbrev", "-r", git("merge-base", "main", head), head)
+        )
         before = self.store.load()
         operation = FakeStackMergeOperation(
             expected_head_sha=head,
@@ -752,16 +904,25 @@ class StackMachine(RuleBasedStateMachine):
         _complete_stack_merge(self.fake, operation, rewrite_survivors=rewrite)
         assert operation.status == "merged"
         assert self.store.load() == before
-        self.land(labels)
+        self.apply_to_trunk(landed)
 
     def land(self, labels: tuple[str, ...]) -> None:
         for label in labels:
             baseline = self.submitted[label].submitted_baseline.commit_id
-            for name, (kind, oid) in self.file_changes(baseline).items():
-                if kind == "D":
-                    self.trunk.pop(name)
-                else:
-                    self.trunk[name] = oid
+            self.apply_to_trunk(
+                tree_changes(
+                    self.jj._run_git(
+                        ("diff-tree", "--no-commit-id", "--no-abbrev", "-r", baseline)
+                    )
+                )
+            )
+
+    def apply_to_trunk(self, changes: dict[str, tuple[str, str]]) -> None:
+        for name, (kind, oid) in changes.items():
+            if kind == "D":
+                self.trunk.pop(name)
+            else:
+                self.trunk[name] = oid
 
     def enqueue_path(self, index: int, count: int) -> None:
         path = self.paths[index]
@@ -870,8 +1031,10 @@ class StackMachine(RuleBasedStateMachine):
         self.fake.rebase_stack_onto_base(stack, base_ref="main")
         self.rebased.add(path[0])
 
-    def sync_conflicts(self, path: tuple[str, ...]) -> set[str]:
-        merged = self.merged(path)
+    def sync_conflicts(
+        self, path: tuple[str, ...], merged: tuple[str, ...] | None = None
+    ) -> set[str]:
+        merged = self.merged(path) if merged is None else merged
         if not any(
             self.contents[label].keys() & self.trunk.keys()
             for label in path
@@ -895,11 +1058,10 @@ class StackMachine(RuleBasedStateMachine):
                 versions[name] = wanted
         return conflicts
 
-    def sync_blocked(self, path: tuple[str, ...]) -> bool:
-        merged = self.merged(path)
+    def sync_blocked(self, path: tuple[str, ...], merged: tuple[str, ...] | None = None) -> bool:
+        merged = self.merged(path) if merged is None else merged
         remaining = path[len(merged) :]
         published = self.published(remaining)
-        selected = tuple(self.pr(label).number for label in self.published(path))
         commits = {
             change.change_id: change.commit_id
             for change in selected_stack(self.repo, self.ids[path[-1]]).changes
@@ -908,18 +1070,7 @@ class StackMachine(RuleBasedStateMachine):
             path[: len(merged)] != merged
             or remaining[: len(published)] != published
             or any(self.pr(label).state != "open" for label in published)
-            or any(
-                set(members).intersection(selected)
-                and (
-                    any(
-                        number not in selected and self.fake.prs[number].merged_at is None
-                        for number in members
-                    )
-                    or tuple(number for number in members if number in selected)
-                    != tuple(number for number in selected if number in members)
-                )
-                for members in self.fake.github_stacks.values()
-            )
+            or self.github_stack_stops(path)
             or any(
                 commits[self.ids[label]] != self.submitted[label].submitted_baseline.commit_id
                 for label in merged
@@ -964,7 +1115,7 @@ class StackMachine(RuleBasedStateMachine):
         merged = self.merged(path)
         self.conflicts.update(conflicts)
         if not conflicts & self.submitted.keys():
-            self.accept_merge(index, len(merged))
+            self.accept_merge(index, len(merged), refs)
             return
         # A conflict stops sync before it publishes, so no PR branch or baseline moves.
         for label in self.published(path):
@@ -980,13 +1131,19 @@ class StackMachine(RuleBasedStateMachine):
     def sync_all_paths(self) -> None:
         live = {label for path in self.paths for label in path}
         orphans = self.merged(tuple(set(self.submitted) - live))
-        # A merged PR with no local copy is cleaned up by syncing the live path whose open PRs
-        # share its GitHub stack; the rest are finished directly unless another PR depends on
-        # them.
+        # A merged PR with no local copy is cleaned up by syncing the live path whose unmerged
+        # PRs share its GitHub stack; the rest are finished directly unless another PR depends
+        # on them.
         via_path = {
             label: i
             for i, path in enumerate(self.paths)
             for label in self.recovery_scope(path)[len(path) :]
+            if any(
+                not self.pr(item).merged_at
+                and self.fake.stack_number_for_pr(self.pr(item).number)
+                == self.fake.stack_number_for_pr(self.pr(label).number)
+                for item in self.published(path)
+            )
         }
         direct = tuple(label for label in orphans if label not in via_path)
         finishes = tuple(label for label in direct if not self.dependents(label))
@@ -1042,33 +1199,47 @@ class StackMachine(RuleBasedStateMachine):
             self.dependents(label, excluding=path)
             for label in (*path[:count], *scope[len(path) :])
         )
+        refs = remote_refs(self.fake.git_dir)
+        local = self.stack_commits(path)
+        # Merge syncs the path once GitHub merges, so decide how that sync ends beforehand.
+        self.land(path[:count])
+        stopped = self.sync_blocked(path, merged=path[:count])
+        conflicts = set() if stopped else self.sync_conflicts(path, merged=path[:count])
         code, output = self.cli(
             "merge",
             *(() if method is None else ("--method", method)),
             "--pull-request",
             str(boundary.pr_identity.pr_number),
         )
-        assert code == int(blocked), output
+        expected = 1 if stopped else 3 if conflicts & self.submitted.keys() else int(blocked)
+        assert code == expected, (self.last_error, output)
         assert self.fake.stack_merge_requests[-1] == (
             boundary.pr_identity.pr_number,
             method,
             "merge_queue" if method is None else "direct_merge",
             boundary.submitted_baseline.commit_id,
         )
-        self.land(path[:count])
-        self.accept_merge(index, count)
+        if stopped:
+            # GitHub's merge stands; the local stack waits for a later sync.
+            assert self.stack_commits(path) == local
+            return
+        self.accept_sync(index, conflicts, refs)
         assert self.outside(scope, advancing=advancing) == outside
 
-    def accept_merge(self, index: int, count: int, *, cleaned: bool = True) -> None:
+    def accept_merge(
+        self, index: int, count: int, before: dict[str, str], *, cleaned: bool = True
+    ) -> None:
+        """Check a completed sync; `before` holds the remote refs from before the command."""
+
         path = self.paths[index]
         refs = remote_refs(self.fake.git_dir)
         for label in (*path[:count], *self.recovery_scope(path)[len(path) :]):
             pr = self.pr(label)
             assert pr.merged_at is not None
             retained = self.dependents(label) or not cleaned
-            assert refs.get(f"refs/heads/{pr.head_ref}") == (
-                self.submitted[label].submitted_baseline.commit_id if retained else None
-            )
+            ref = f"refs/heads/{pr.head_ref}"
+            # GitHub may have merged its own rewrite, so a kept branch stays wherever it was.
+            assert refs.get(ref) == (before.get(ref) if retained else None)
             self.check_removed(label)
             if not retained:
                 del self.submitted[label]
@@ -1123,13 +1294,14 @@ class StackMachine(RuleBasedStateMachine):
         path = self.paths[index]
         scope = self.recovery_scope(path)
         outside = self.outside(scope)
+        refs = remote_refs(self.fake.git_dir)
         with pytest.MonkeyPatch.context() as patch:
             install_submit_fault(patch, self.fake, "cleanup", "")
             code, output = self.cli("sync", self.ids[path[-1]])
             assert code != 0, output
         # The local stack and the surviving PRs are updated; the merged PRs keep their saved
         # links and branches until a later sync or cleanup removes them.
-        self.accept_merge(index, len(self.merged(path)), cleaned=False)
+        self.accept_merge(index, len(self.merged(path)), refs, cleaned=False)
         assert self.outside(scope) == outside
 
     def interrupted_submit(self, index: int, point: str, position: int) -> None:
@@ -1211,14 +1383,6 @@ class StackMachine(RuleBasedStateMachine):
 
     def trunk_files(self) -> dict[str, str]:
         return tree_entries(self.fake._run_backing_git("ls-tree", "-r", "main"))
-
-    def file_changes(self, commit: str) -> dict[str, tuple[str, str]]:
-        diff = self.jj._run_git(("diff-tree", "--no-commit-id", "--no-abbrev", "-r", commit))
-        return {
-            name: (entry.split()[4], entry.split()[3])
-            for line in diff.splitlines()
-            for entry, name in (line.split("\t"),)
-        }
 
     def check_contents(self, label: str, commit: str, *, conflict: bool) -> None:
         # A commit's contents never change, so one already checked against the same
@@ -1319,7 +1483,11 @@ class StackMachine(RuleBasedStateMachine):
     @rule(data=st.data())
     def submit(self, data: st.DataObject) -> None:
         indices = [i for i, p in enumerate(self.paths) if not self.merged(p)]
-        self.submit_path(data.draw(st.sampled_from(indices), label="stack"))
+        index = data.draw(st.sampled_from(indices), label="stack")
+        last = len(self.paths[index]) - 1
+        # Half the submits publish only the changes up to one in the middle.
+        top = data.draw(st.just(last) | st.integers(0, last), label="head")
+        self.submit_path(index, top)
 
     @precondition(lambda self: len(self.ready()) >= 2)
     @rule(data=st.data())
@@ -1341,28 +1509,26 @@ class StackMachine(RuleBasedStateMachine):
         anchor = data.draw(st.integers(0, len(self.paths[target]) - 1), label="destination")
         self.move_between(source, target, position, anchor, before)
 
-    @precondition(lambda self: bool(self.ready()))
-    @rule(
-        data=st.data(),
-        method=st.sampled_from(get_args(MergeMethod)),
-        external=st.booleans(),
-        rewrite=st.booleans(),
-    )
-    def merge(
-        self, data: st.DataObject, method: MergeMethod, external: bool, rewrite: bool
-    ) -> None:
-        index = data.draw(st.sampled_from(self.ready()), label="stack")
-        count = data.draw(st.integers(1, len(self.published(self.paths[index]))), label="prefix")
+    @precondition(lambda self: bool(self.merge_candidates()))
+    @rule(data=st.data(), method=st.sampled_from(get_args(MergeMethod)))
+    def merge(self, data: st.DataObject, method: MergeMethod) -> None:
+        index, count = data.draw(st.sampled_from(self.merge_candidates()), label="prefix")
         if self.fake.merge_queue_enabled:
             if data.draw(st.booleans(), label="wait"):
                 failing = data.draw(st.none() | st.integers(0, count - 1), label="failing entry")
                 self.wait_for_queue(index, count, failing)
             else:
                 self.enqueue_path(index, count)
-        elif external:
-            self.server_merge(index, count, method, rewrite=rewrite)
         else:
             self.merge_path(index, count, method)
+
+    @precondition(lambda self: bool(self.server_mergeable()))
+    @rule(data=st.data(), method=st.sampled_from(get_args(MergeMethod)), rewrite=st.booleans())
+    def server_merge(self, data: st.DataObject, method: MergeMethod, rewrite: bool) -> None:
+        # GitHub's UI merges whatever GitHub allows, whether or not the local stack still
+        # matches the GitHub stack, and again before any sync.
+        label = data.draw(st.sampled_from(self.server_mergeable()), label="change")
+        self.merge_on_server(label, method, rewrite=rewrite)
 
     def syncable(self) -> list[int]:
         return [
@@ -1440,6 +1606,20 @@ class StackMachine(RuleBasedStateMachine):
             if any(self.fake.is_queued(number) for number in members)
             for number in members
         }
+        # The model cannot follow a change with a second visible copy, so a fetched branch only
+        # points at an unedited change; its ancestors in the path turn immutable with it.
+        unedited = (
+            {
+                label
+                for p in self.paths
+                if not self.foreign.intersection(p)
+                for label, commit in zip(p, self.stack_commits(p), strict=True)
+                if label in self.submitted
+                and commit == self.submitted[label].submitted_baseline.commit_id
+            }
+            if kind == "foreign_branch_fetched"
+            else set()
+        )
         return [
             label
             for p in self.paths
@@ -1453,6 +1633,7 @@ class StackMachine(RuleBasedStateMachine):
                 kind != "reopened_pr"
                 or (self.pr(label).head_ref in refs and self.pr(label).base_ref in refs)
             )
+            and (kind != "foreign_branch_fetched" or label in unedited)
         ]
 
     @precondition(lambda self: self.disturbances < 3)
