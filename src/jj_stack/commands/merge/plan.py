@@ -238,7 +238,8 @@ def _merge_change(observation: RepoFacts, change: LocalCommit) -> MergeChange | 
 
 
 def _boundary(change: LocalCommit, reason: Message) -> Message:
+    subject = f" ({change.subject})" if change.subject else ""
     return (
-        t"before {change.subject} {ui.change_id(change.change_id)} because ",
+        t"before change {ui.change_id(change.change_id)}{subject} because ",
         reason,
     )

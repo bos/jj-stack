@@ -428,7 +428,7 @@ def test_merge_draft_blocks_the_candidate_prefix(
 
     assert exit_code == 1
     assert "Merge blocked:" in captured.out
-    assert "is now a draft" in captured.out
+    assert "is now a draft" in " ".join(captured.out.split())
     assert fake_repo.prs[1].state == "open"
     assert fake_repo.prs[2].state == "open"
     assert read_remote_ref(fake_repo.git_dir, "main") == trunk_before
