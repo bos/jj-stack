@@ -265,6 +265,35 @@ def test_sync_all_rebases_a_workspace_child_of_an_exact_merge_side_copy(
     assert rewritten.parents == (landed_commit_id,)
 
 
+def test_sync_all_does_not_hand_a_merged_pr_to_a_fetched_copy_of_its_stack(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """A fetched branch can show old, immutable copies of a merged change and the one above.
+
+    No local work sits on them, so sync --all treats the merged PR as having no local copy and
+    says why its cleanup waits. Syncing the stack of the mutable copy above instead never reaches
+    the merged change, and reported success on every run.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_stack(tmp_path, size=2)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    first, second = selected_stack(repo).changes
+    fake_repo.github_stacks = {}
+    run_command(["jj", "abandon", first.change_id], repo)
+    fake_repo.apply_squash_merge(fake_repo.prs[1])
+    update_remote_ref(fake_repo, branch="agent/feature-2", target=second.commit_id)
+    run_command(["jj", "git", "fetch", "--remote", "origin"], repo)
+
+    exit_code = run_main(repo, config_path, "sync", "--all")
+    captured = capsys.readouterr()
+
+    assert exit_code == 1, (captured.out, captured.err)
+    assert "because PR #2 still uses" in " ".join(captured.out.split())
+    assert first.change_id in TrackingStore.for_repo(repo).load().prs
+
+
 def test_sync_all_exact_merge_does_not_select_an_unrelated_post_trunk_stack(
     tmp_path: Path,
     monkeypatch,

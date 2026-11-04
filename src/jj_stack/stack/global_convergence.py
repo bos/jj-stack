@@ -267,12 +267,16 @@ def _candidate_path_heads(
     copies = {commit.commit_id for commit in facts.local_copies[change_id]}
     if not copies:
         return ()
-    heads = tuple(
-        path.stack.head.change_id
+    paths = tuple(
+        path
         for path in facts.paths
         if any(change.commit_id in copies for change in path.stack.changes)
     )
-    return heads or None
+    if not paths:
+        return None
+    # A path ending in an immutable commit, such as a fetched branch, holds no local work, and
+    # its head's change ID would select a different, mutable copy.
+    return tuple(path.stack.head.change_id for path in paths if not path.stack.head.immutable)
 
 
 def _detached_stack_members(

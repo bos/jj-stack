@@ -472,10 +472,11 @@ work reached this repo's trunk:
 reconcile its affected local paths; it does not apply one PR's evidence to unrelated work. It
 continues with independent stacks when one is blocked. If no local copy remains, it uses that
 evidence only for ordinary cleanup, or syncs the local stack still holding the open PRs of the
-same GitHub stack, which cleans up the merged PR itself. A `sync` whose selected change has a
-saved link but no visible commit after the fetch runs only cleanup for the merged PRs of that
-change's GitHub stack. A native GitHub stack rebase without a merge requires `sync` for that
-stack; `sync --all` discovers work from merge evidence.
+same GitHub stack, which cleans up the merged PR itself. A copy with only immutable commits above
+it, such as one a fetched branch shows, holds no local work and does not count. A `sync` whose
+selected change has a saved link but no visible commit after the fetch runs only cleanup for the
+merged PRs of that change's GitHub stack. A native GitHub stack rebase without a merge requires
+`sync` for that stack; `sync --all` discovers work from merge evidence.
 
 When an unmerged local change sits below a submitted change whose submitted commit or merge result
 is on trunk, `sync` stops without mutation. Rebasing would silently decide whether that local
