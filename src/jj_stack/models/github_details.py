@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import AliasPath, BaseModel, Field, model_validator
+from pydantic import AliasPath, BaseModel, Field, field_validator, model_validator
 
 
 class GithubCheckStateCount(BaseModel):
@@ -68,6 +68,15 @@ class GithubCheck(BaseModel):
     state: str
     url: str | None = None
     is_required: bool = Field(default=False, alias="isRequired", exclude=True)
+    run_id: int | None = Field(default=None, alias="databaseId", exclude=True)
+    app_id: int | None = Field(
+        default=None, validation_alias=AliasPath("checkSuite", "app", "databaseId"), exclude=True
+    )
+    workflow_id: int | None = Field(
+        default=None,
+        validation_alias=AliasPath("checkSuite", "workflowRun", "workflow", "databaseId"),
+        exclude=True,
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -87,6 +96,26 @@ class GithubPRMergeDetails(BaseModel):
     unresolved_threads: tuple[GithubReviewThread, ...] = ()
     checks: tuple[GithubCheck, ...] = ()
     merge_checks: tuple[GithubCheck, ...] = ()
+
+    @field_validator("checks", "merge_checks")
+    @classmethod
+    def _latest_check_runs(cls, checks: tuple[GithubCheck, ...]) -> tuple[GithubCheck, ...]:
+        # Rollups include superseded runs. Check-run IDs distinguish replacements even
+        # before a queued job starts; start/completion times can put older runs last.
+        # Keep distinct apps/workflows and commit statuses independently required.
+        latest: dict[tuple[str, int | None, int | None], GithubCheck] = {}
+        for check in checks:
+            if check.run_id is not None:
+                key = (check.name, check.app_id, check.workflow_id)
+                prior = latest.get(key)
+                if prior is None or check.run_id > (prior.run_id or 0):
+                    latest[key] = check
+        return tuple(
+            check
+            for check in checks
+            if check.run_id is None
+            or latest[(check.name, check.app_id, check.workflow_id)] is check
+        )
 
     @property
     def missing_checks(self) -> tuple[str, ...]:

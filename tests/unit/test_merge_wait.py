@@ -61,7 +61,7 @@ def test_required_check_and_commit_status_with_the_same_name_must_both_pass():
     evidence = GithubPRMergeDetails(
         required_checks=("ci",),
         checks=(
-            GithubCheck(name="ci", state="SUCCESS", isRequired=True),
+            GithubCheck(name="ci", state="SUCCESS", isRequired=True, databaseId=20),
             GithubCheck(
                 name="ci", state="TIMED_OUT", url="https://ci.test/failed", isRequired=True
             ),
@@ -71,6 +71,59 @@ def test_required_check_and_commit_status_with_the_same_name_must_both_pass():
     with pytest.raises(CliError, match="timed out") as caught:
         _pending_checks(_queued_pr(1), evidence)
     assert "https://ci.test/failed" in plain_text(caught.value.message)
+
+
+@pytest.mark.parametrize("latest", ["SUCCESS", "FAILURE", "CANCELLED", "QUEUED"])
+def test_required_checks_use_the_latest_run_even_before_it_starts(latest: str):
+    def run(run_id: int, state: str) -> GithubCheck:
+        return GithubCheck.model_validate(
+            {
+                "name": "ci",
+                "status": "QUEUED" if state == "QUEUED" else "COMPLETED",
+                "conclusion": None if state == "QUEUED" else state,
+                "startedAt": None if state == "QUEUED" else "2026-11-05T02:47:43Z",
+                "databaseId": run_id,
+                "isRequired": True,
+                "checkSuite": {
+                    "app": {"databaseId": 1},
+                    "workflowRun": {"workflow": {"databaseId": 2}},
+                },
+            }
+        )
+
+    older = run(10, "CANCELLED" if latest == "SUCCESS" else "SUCCESS")
+    newest = run(20, latest)
+    for checks in ((older, newest), (newest, older)):
+        evidence = GithubPRMergeDetails(required_checks=("ci",), checks=checks)
+        if latest in {"FAILURE", "CANCELLED"}:
+            with pytest.raises(CliError, match=latest.lower()):
+                _pending_checks(_queued_pr(1), evidence)
+        else:
+            expected = ("PR #1: ci",) if latest == "QUEUED" else ()
+            assert _pending_checks(_queued_pr(1), evidence) == expected
+
+
+@pytest.mark.parametrize("other_source", [(2, 1), (1, 2)])
+def test_same_named_checks_from_distinct_apps_or_workflows_remain_required(other_source):
+    def run(run_id, state, app, workflow):
+        return GithubCheck.model_validate(
+            {
+                "name": "ci",
+                "state": state,
+                "databaseId": run_id,
+                "isRequired": True,
+                "checkSuite": {
+                    "app": {"databaseId": app},
+                    "workflowRun": {"workflow": {"databaseId": workflow}},
+                },
+            }
+        )
+
+    evidence = GithubPRMergeDetails(
+        checks=(run(10, "FAILURE", 1, 1), run(20, "SUCCESS", *other_source))
+    )
+    with pytest.raises(CliError, match="failure"):
+        _pending_checks(_queued_pr(1), evidence)
 
 
 async def _wait(snapshots: Iterator[tuple[GithubPR, ...] | BaseException]):

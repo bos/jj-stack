@@ -1544,7 +1544,11 @@ def _pr_merge_details_query(
                       contexts(first: {PR_PAGE_SIZE}{after}) {{
                         nodes {{
                           ... on CheckRun {{
-                            name status conclusion url: detailsUrl
+                            databaseId name status conclusion url: detailsUrl
+                            checkSuite {{
+                              app {{ databaseId }}
+                              workflowRun {{ workflow {{ databaseId }} }}
+                            }}
                             isRequired(pullRequestNumber: {number})
                           }}
                           ... on StatusContext {{

@@ -133,6 +133,8 @@ def test_merge_details_paginate_without_mixing_pr_heads_or_bases(changed: str | 
         payload = json.loads(request.content)
         if "PullRequestMergeDetails" in payload["query"]:
             assert "isRequired(pullRequestNumber: 1)" in payload["query"]
+            assert "databaseId name status conclusion" in payload["query"]
+            assert "workflowRun { workflow { databaseId } }" in payload["query"]
         variables = payload["variables"]
         if "checks_1" not in variables:
             page = {
@@ -189,6 +191,11 @@ def test_merge_details_paginate_without_mixing_pr_heads_or_bases(changed: str | 
                                 "status": "COMPLETED",
                                 "conclusion": "FAILURE",
                                 "isRequired": True,
+                                "databaseId": 20,
+                                "checkSuite": {
+                                    "app": {"databaseId": 1},
+                                    "workflowRun": {"workflow": {"databaseId": 2}},
+                                },
                             },
                             {"name": "deploy", "state": "PENDING", "url": "https://check"},
                         ]
@@ -218,6 +225,8 @@ def test_merge_details_paginate_without_mixing_pr_heads_or_bases(changed: str | 
             ("deploy", "PENDING", "https://check"),
         ]
         assert details.checks[-2].is_required
+        assert (details.checks[-2].run_id, details.checks[-2].app_id) == (20, 1)
+        assert details.checks[-2].workflow_id == 2
         assert not details.checks[-1].is_required
 
 
