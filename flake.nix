@@ -145,6 +145,24 @@
               ])
             ];
 
+            # The bundled agent skill ships in the same output. The `installAgentSkills` hook
+            # installs every `**/SKILL.md` under the unpacked source to
+            # `$out/share/skills/$pname/<skill directory>` from its pre-install hook.
+            nativeBuildInputs = [ pkgs.installAgentSkills ];
+
+            # The hook installs whatever its `**/SKILL.md` glob finds, so we can explicitly
+            # check and cause the build to fail if the skill can't be found.
+            #
+            # Can't use `installCheckPhase` because `mk-python-derivation.nix` replaces it
+            # with `checkPhase` and derives `doInstallCheck` from `doCheck`, which is disabled
+            # below.
+            postInstall = ''
+              if ! test -f "$out/share/skills/jj-stack/jj-stack/SKILL.md"; then
+                echo "SKILL.md is missing from $out; did skills/jj-stack move?" >&2
+                exit 1
+              fi
+            '';
+
             # CI already runs the test suite on every change (`.github/workflows/ci.yml`).
             doCheck = false;
 
