@@ -67,7 +67,11 @@ _CHANGE_VERSION_TEMPLATE = dedent(
 _BOOKMARK_TEMPLATE = dedent(
     r"""
     "{\"name\":" ++ json(self.name()) ++
-    ",\"target\":" ++ json(self.added_targets().map(|commit| commit.commit_id())) ++
+    ",\"target\":" ++ if(
+        self.present(),
+        json(self.added_targets().map(|commit| commit.commit_id())),
+        "[]"
+    ) ++
     ",\"remote\":" ++ json(self.remote()) ++
     ",\"tracked\":" ++ json(self.tracked()) ++ "}\n"
     """
