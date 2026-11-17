@@ -135,13 +135,14 @@ def test_generated_commands(shard: int) -> None:
     machines: list[StackMachine] = []
 
     @seed(int(os.environ["JJ_STACK_PROPERTY_SEED"]) + shard)
-    def factory() -> StackMachine:
-        machines.append(StackMachine())
-        return machines[-1]
+    class ShardMachine(StackMachine):
+        def __init__(self) -> None:
+            super().__init__()
+            machines.append(self)
 
     try:
         run_state_machine_as_test(
-            factory,
+            ShardMachine,
             settings=settings(
                 max_examples=int(os.environ["JJ_STACK_PROPERTY_EXAMPLES"]),
                 stateful_step_count=int(os.environ["JJ_STACK_PROPERTY_STEPS"]),
