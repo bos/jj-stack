@@ -888,27 +888,28 @@ class JjClient:
             ) from error
 
     def sign_before_push(self, revset: str, *, pushed: Sequence[CommitId]) -> None:
-        """Sign commits as `jj git push` does when `git.sign-on-push` is set.
+        """Sign commits as `jj git push` does under `revsets.git-sign-on-push`.
 
-        Like jj, sign only the user's own unsigned mutable commits that are not already pushed,
-        and rebase their descendants.
+        Like jj, sign the mutable commits in `revset` that `revsets.git-sign-on-push` selects and
+        that aren't in `pushed`, and rebase their descendants.
         """
 
-        if self._settings is not None:
-            enabled = self._settings.table("git").get("sign-on-push") is True
-        else:
-            enabled = self.get_config_string("git.sign-on-push") == "true"
-        if not enabled:
+        sign_on_push = self.get_config_string("revsets.git-sign-on-push")
+        # Signing is off by default, because jj's default for this setting is none(). In that
+        # case, return before evaluating the caller's revset. If the user made a typo in their
+        # revset, the code that selects the stack then reports it with a clearer error.
+        if sign_on_push is None or sign_on_push == "none()":
             return
         pushed_revset = " | ".join(f"present({quote_revset_symbol(c)})" for c in pushed)
-        self._run_jj(
-            (
-                "sign",
-                "-r",
-                f"({revset}) & mine() & ~signed() & mutable() ~ ({pushed_revset or 'none()'})",
-            ),
-            manage_working_copy=True,
+        needs_signing = (
+            f"({revset}) & ({sign_on_push}) & mutable() ~ ({pushed_revset or 'none()'})"
         )
+        # jj git push only signs when some commit needs it, but jj sign fails without a signing
+        # backend even when nothing matches. Check for a match first, so that someone without a
+        # backend can still push when the revset selects none of their commits.
+        if not self._query_template_lines(needs_signing, 'commit_id ++ "\\n"', limit=1):
+            return
+        self._run_jj(("sign", "-r", needs_signing), manage_working_copy=True)
 
     def edit_commit(self, commit_id: CommitId, *, cli_args: JjCliArgs) -> None:
         """Edit the given commit in the current workspace.

@@ -6,7 +6,7 @@ GitHub. Existing PRs follow their change IDs, keeping comments and review histor
 
 ## Quick start
 
-You need Python 3.14 or newer, `jj` 0.45.1 or newer, and a repo on github.com where you can push
+You need Python 3.14 or newer, `jj` 0.47.1 or newer, and a repo on github.com where you can push
 branches and open pull requests. `jj-stack` uses `GITHUB_TOKEN`, then `GH_TOKEN`, then your GitHub
 CLI login for authentication.
 

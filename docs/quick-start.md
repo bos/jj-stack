@@ -12,7 +12,7 @@ changes A, B, and C. Follow along with three changes of your own.
 
 ## Install
 
-You need Python 3.14 or newer, `jj` 0.45.1 or newer, and a GitHub repo you can push to.
+You need Python 3.14 or newer, `jj` 0.47.1 or newer, and a GitHub repo you can push to.
 Install `jj-stack` with [`uv`](https://docs.astral.sh/uv/):
 
 ```console
