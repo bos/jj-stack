@@ -129,10 +129,16 @@ def observe_pr_bookmarks(
     ]
     for row in bookmarks:
         targets.setdefault(row.name, set()).update(row.target)
+    # The bookmark query drops the absent side of a conflict. So a bookmark that was moved to
+    # the baseline in one operation and deleted in a concurrent one lists the baseline as its
+    # only target, even though it isn't really there. Treat a conflicted bookmark as never
+    # being at its baseline.
+    conflicted = {row.name for row in bookmarks if row.conflict}
     matching = {
         change_id: item
         for change_id, item in sorted(state.prs.items())
         if namespace.contains(branch := item.pr_identity.head_ref)
+        and branch not in conflicted
         and targets.get(branch) == {item.submitted_baseline.commit_id}
     }
     claims = Counter(item.pr_identity.head_ref for item in matching.values())

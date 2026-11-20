@@ -67,11 +67,9 @@ _CHANGE_VERSION_TEMPLATE = dedent(
 _BOOKMARK_TEMPLATE = dedent(
     r"""
     "{\"name\":" ++ json(self.name()) ++
-    ",\"target\":" ++ if(
-        self.present(),
-        json(self.added_targets().map(|commit| commit.commit_id())),
-        "[]"
-    ) ++
+    ",\"target\":" ++
+    json(self.added_targets().filter(|commit| commit).map(|commit| commit.commit_id())) ++
+    ",\"conflict\":" ++ json(self.conflict()) ++
     ",\"remote\":" ++ json(self.remote()) ++
     ",\"tracked\":" ++ json(self.tracked()) ++ "}\n"
     """
@@ -160,10 +158,18 @@ class _ConfigOrigin(BaseModel):
 
 
 class Bookmark(BaseModel):
+    """One local or remote bookmark from `jj bookmark list`.
+
+    `target` lists only the sides of the bookmark that point at a commit. A conflicted bookmark
+    whose other side was deleted therefore lists a single target, so check `conflict` before
+    treating the bookmark as being at that target.
+    """
+
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     name: str
     target: tuple[CommitId, ...]
+    conflict: bool
     remote: str | None = None
     tracked: bool
 

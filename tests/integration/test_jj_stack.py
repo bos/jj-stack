@@ -193,6 +193,28 @@ def test_deleted_tracked_bookmark_does_not_block_stack_observation(tmp_path: Pat
     assert path.stack.changes == ()
 
 
+def test_bookmark_conflicted_between_a_move_and_a_delete_does_not_block_stack_observation(
+    tmp_path: Path,
+) -> None:
+    repo = init_repo(tmp_path)
+    commit_file(repo, "moved", "moved.txt")
+    moved = jj_commit_id(repo, "@-")
+    run_command(["jj", "bookmark", "create", "unrelated", "-r", "main"], repo)
+    base_operation = current_operation_id(repo)
+    run_command(["jj", "bookmark", "set", "unrelated", "-r", moved], repo)
+    run_command(["jj", f"--at-op={base_operation}", "bookmark", "delete", "unrelated"], repo)
+
+    client = JjClient(repo)
+    path = select_stack_path(jj_client=client, state=TrackingState())
+
+    assert [change.commit_id for change in path.stack.changes] == [moved]
+    assert [
+        (row.target, row.conflict)
+        for row in client.query_bookmarks("unrelated")
+        if row.remote is None
+    ] == [((moved,), True)]
+
+
 def test_visible_pr_bookmark_targets_exclude_removed_conflict_terms(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     commit_file(repo, "left", "left.txt")
