@@ -19,6 +19,7 @@ from jj_stack.stack.selected import select_stack_path
 
 from ..support.integration_helpers import (
     commit_file,
+    current_operation_id,
     init_repo,
     jj_commit_id,
     remote_refs,
@@ -201,10 +202,7 @@ def test_visible_pr_bookmark_targets_exclude_removed_conflict_terms(tmp_path: Pa
     right = jj_commit_id(repo, "@-")
     branch = "jj-stack/conflicted"
     run_command(["jj", "bookmark", "create", branch, "-r", "main"], repo)
-    base_operation = run_command(
-        ["jj", "op", "log", "--no-graph", "-n", "1", "-T", 'id ++ "\\n"'],
-        repo,
-    ).stdout.strip()
+    base_operation = current_operation_id(repo)
     run_command(["jj", "bookmark", "set", branch, "-r", left], repo)
     run_command(["jj", f"--at-op={base_operation}", "bookmark", "set", branch, "-r", right], repo)
 

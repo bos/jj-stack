@@ -444,6 +444,13 @@ def jj_commit_id(repo: Path, revset: str) -> CommitId:
     )
 
 
+def current_operation_id(repo: Path) -> str:
+    return run_command(
+        ["jj", "op", "log", "--no-graph", "-n", "1", "-T", "id"],
+        repo,
+    ).stdout.strip()
+
+
 def expose_pr_branch_namespace(repo: Path) -> None:
     """Undo the reserved-namespace fetch exclusion, as a plain clone leaves it."""
 
