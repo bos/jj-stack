@@ -13,7 +13,7 @@ discussion.
 
 ## Development setup
 
-You need `uv`, Git, `jj` 0.45.1 or newer, and `just`. The project requires Python 3.14 or newer;
+You need `uv`, Git, `jj` 0.47.1 or newer, and `just`. The project requires Python 3.14 or newer;
 `uv` can provide the interpreter when it creates the locked development environment:
 
 ```console

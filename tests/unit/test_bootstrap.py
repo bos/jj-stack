@@ -23,17 +23,17 @@ def test_check_jj_version_enforces_minimum_version() -> None:
     old_version = subprocess.CompletedProcess(
         args=["jj", "--version"],
         returncode=0,
-        stdout="jj 0.45.0\n",
+        stdout="jj 0.47.0\n",
         stderr="",
     )
     with patch("subprocess.run", return_value=old_version):
-        with pytest.raises(CliError, match="requires jj 0.45.1 or later"):
+        with pytest.raises(CliError, match="requires jj 0.47.1 or later"):
             check_jj_version()
 
     minimum_version = subprocess.CompletedProcess(
         args=["jj", "--version"],
         returncode=0,
-        stdout="jj 0.45.1-d9689cd9b51b\n",
+        stdout="jj 0.47.1-d16ee1fc88a7\n",
         stderr="",
     )
     with patch("subprocess.run", return_value=minimum_version):

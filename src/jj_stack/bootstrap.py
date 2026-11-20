@@ -22,7 +22,7 @@ from jj_stack.pr_branch_namespace import install_pr_branch_namespace
 from jj_stack.state.store import TrackingStore
 from jj_stack.timing import timed
 
-_MINIMUM_JJ_VERSION = (0, 45, 1)
+_MINIMUM_JJ_VERSION = (0, 47, 1)
 _jj_version_verified = False
 
 time_output_active: bool = False
@@ -176,7 +176,7 @@ def check_jj_version() -> None:
 def _parse_jj_version(version_output: str) -> tuple[int, ...] | None:
     """Parse version tuple from `jj --version` output.
 
-    Expected formats: ``"jj 0.45.1"`` or ``"jj 0.45.1-<build-hash>"``.
+    Expected formats: ``"jj 0.47.1"`` or ``"jj 0.47.1-<build-hash>"``.
     Returns ``None`` if the output does not match the expected format.
     """
 

@@ -147,7 +147,7 @@ def preflight_publication_stack(client: JjClient, stack: LocalStack) -> None:
 
 
 def sign_unsubmitted_commits(client: JjClient, *, revset: str, state: TrackingState) -> None:
-    """Apply `git.sign-on-push` to commits in `revset` other than the ones already submitted."""
+    """Apply `revsets.git-sign-on-push` to commits in `revset` that are not already submitted."""
 
     client.sign_before_push(
         revset,
@@ -158,7 +158,10 @@ def sign_unsubmitted_commits(client: JjClient, *, revset: str, state: TrackingSt
 def sign_selected_stack(
     client: JjClient, *, revset: str | None, base_revset: str | None, state: TrackingState
 ) -> None:
-    """Apply `git.sign-on-push` to the stack below a submit selection, before reading it."""
+    """Apply `revsets.git-sign-on-push` to the stack below a submit selection.
+
+    Call this before reading the stack, so that the stack you read has the signed commits.
+    """
 
     if revset is None:
         head = "@"

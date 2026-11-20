@@ -1875,6 +1875,43 @@ def test_submit_signs_own_unpublished_commits_when_sign_on_push_is_set(
         assert read_remote_ref(fake_repo.git_dir, branch) == change.commit_id
 
 
+def test_submit_signs_only_what_the_sign_on_push_revset_selects(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """Like `jj git push`, push without a signing backend when the revset selects nothing.
+
+    The revset leaves out the user's own commits, so this fails if submit ignores the revset
+    and signs them anyway, or if it runs `jj sign` when there is nothing to sign.
+    """
+
+    repo, fake_repo = init_fake_github_repo_with_submitted_feature(tmp_path)
+    config_path = configure_submit_environment(monkeypatch, tmp_path, fake_repo)
+    run_command(
+        [
+            "jj",
+            "config",
+            "set",
+            "--repo",
+            "revsets.git-sign-on-push",
+            'author_email("nobody@example.com")',
+        ],
+        repo,
+    )
+    commit_file(repo, "feature 2", "feature-2.txt")
+
+    exit_code = run_main(repo, config_path, "submit")
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, captured.err
+    changes = selected_stack(repo).changes
+    assert not any(change.signed for change in changes)
+    for change in changes:
+        branch = TrackingStore.for_repo(repo).load().prs[change.change_id].pr_identity.head_ref
+        assert read_remote_ref(fake_repo.git_dir, branch) == change.commit_id
+
+
 @pytest.mark.parametrize(
     ("rewrite", "tracked"),
     ((False, False), (True, False), (True, True)),

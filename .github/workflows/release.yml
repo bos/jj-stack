@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  JJ_VERSION: v0.45.1
+  JJ_VERSION: v0.47.1
 
 jobs:
   build:

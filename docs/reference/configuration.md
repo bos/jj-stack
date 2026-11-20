@@ -59,8 +59,10 @@ SSH hostname aliases such as `git@github-work:owner/repo.git` are supported. The
 connect to `github.com`: jj-stack takes the `owner/repo` path from the remote URL and always
 uses GitHub's public API. GitHub Enterprise Server is not supported.
 
-Like `jj git push`, jj-stack honors jj's `git.sign-on-push` setting: before pushing PR branches,
-it signs the unsigned commits you authored that you have not already submitted.
+Like `jj git push`, jj-stack honors jj's `revsets.git-sign-on-push` setting. Before pushing PR
+branches, it signs the mutable commits in that revset that you have not already submitted. If
+you still set the older `git.sign-on-push = true`, jj treats it as
+`revsets.git-sign-on-push = "~signed() & mine()"`, so jj-stack signs your own unsigned commits.
 
 ## Authentication
 
