@@ -26,7 +26,11 @@ from jj_stack.jj.client import (
 )
 from jj_stack.models.stack import LocalCommit
 from jj_stack.models.tracking import PRIdentity, SubmittedBaseline, TrackedPR, TrackingState
-from jj_stack.stack.observation import observe_change_copies, observe_stack_commits
+from jj_stack.stack.observation import (
+    observe_change_copies,
+    observe_pr_bookmarks,
+    observe_stack_commits,
+)
 from tests.support.change_helpers import make_change
 
 _REPO_GIT_DIR = str(Path("/repo/.git"))
@@ -181,10 +185,34 @@ def test_remote_bookmarks_at_commit_include_untracked_remote_bookmarks(
     """`jj bookmark list --revision` filters on local targets, hiding untracked remote rows."""
 
     rows = (
-        {"name": "main", "target": ["trunk"], "remote": None, "tracked": False},
-        {"name": "main", "target": ["trunk"], "remote": "origin", "tracked": True},
-        {"name": "release", "target": ["trunk"], "remote": "origin", "tracked": False},
-        {"name": "feature", "target": ["other"], "remote": "origin", "tracked": False},
+        {
+            "name": "main",
+            "target": ["trunk"],
+            "conflict": False,
+            "remote": None,
+            "tracked": False,
+        },
+        {
+            "name": "main",
+            "target": ["trunk"],
+            "conflict": False,
+            "remote": "origin",
+            "tracked": True,
+        },
+        {
+            "name": "release",
+            "target": ["trunk"],
+            "conflict": False,
+            "remote": "origin",
+            "tracked": False,
+        },
+        {
+            "name": "feature",
+            "target": ["other"],
+            "conflict": False,
+            "remote": "origin",
+            "tracked": False,
+        },
     )
     responses: dict[tuple[str, ...], str] = {
         ("jj", "bookmark", "list", "--remote", "origin", "-T", _BOOKMARK_TEMPLATE): "".join(
@@ -366,6 +394,7 @@ def test_stack_observation_bounds_change_scopes_and_reads_bookmarks_once(
                 {
                     "name": tracked.pr_identity.head_ref,
                     "target": [tracked.submitted_baseline.commit_id],
+                    "conflict": False,
                     "tracked": False,
                 }
                 for tracked in state.prs.values()
@@ -412,6 +441,52 @@ def test_stack_observation_bounds_change_scopes_and_reads_bookmarks_once(
     assert bookmark_reads == 2
     assert len(selected.rows) == 1
     assert selected.rows[0][0] == copies[change_ids[0]][0]
+
+
+@pytest.mark.parametrize("local_conflict", (False, True))
+def test_conflicted_pr_bookmark_does_not_match_its_submitted_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    local_conflict: bool,
+) -> None:
+    change_id = ChangeId("k" * 32)
+    branch = f"jj-stack/feature-{change_id}"
+    baseline = CommitId("a" * 40)
+    state = TrackingState(
+        prs={
+            change_id: TrackedPR(
+                pr_identity=PRIdentity(pr_number=1, head_ref=branch),
+                submitted_baseline=SubmittedBaseline(commit_id=baseline),
+            )
+        }
+    )
+    # In the conflicted case, the local bookmark was moved to the baseline in one operation and
+    # deleted in a concurrent one. The bookmark query drops the deleted side, so the row lists
+    # only the baseline, exactly like the bookmark in the unconflicted case.
+    rows = (
+        {"name": branch, "target": [baseline], "conflict": local_conflict, "tracked": False},
+        {
+            "name": branch,
+            "target": [baseline],
+            "conflict": False,
+            "remote": "origin",
+            "tracked": False,
+        },
+    )
+    responses: dict[tuple[str, ...], str] = {
+        ("jj", "bookmark", "list", "--all-remotes", "-T", _BOOKMARK_TEMPLATE): "".join(
+            json.dumps(row) + "\n" for row in rows
+        ),
+    }
+
+    cli_args, expected = observe_pr_bookmarks(
+        jj_client=_client(monkeypatch, responses), state=state
+    )
+
+    matches = not local_conflict
+    # The immutability override names the baseline only when the branch matches it. That
+    # override is what lets jj-stack rewrite the baseline, so it is the boundary under test.
+    assert (f"'{baseline}'" in "".join(cli_args.argv)) == matches
+    assert expected == ({change_id: baseline} if matches else {})
 
 
 def test_remote_pr_branch_ref_mutation_uses_one_atomic_exact_lease_push(
@@ -561,6 +636,7 @@ def test_temp_ref_cleanup_removes_raw_ref_when_forgetting_bookmark_fails(
                 {
                     "name": "jj-stack-tmp/checkout",
                     "target": [commit_id],
+                    "conflict": False,
                     "tracked": False,
                 }
             )
